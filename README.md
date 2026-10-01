@@ -1,5 +1,26 @@
 # Teaching Robot Agent
 
+## 队友可直接使用的代码接口
+
+- `domain/services.py`：图片、音频、观察、转写、播放与服务错误的数据结构。
+- `perception/interfaces.py`：感知负责人实现 `CameraSource`、`VisionProvider`、`PerceptionService`。
+- `speech/interfaces.py`：语音负责人实现 `AudioRecorder`、`ASRProvider`、`TTSProvider`、`AudioPlayer`。
+- `storage/evidence.py`：可直接使用的内存 `EvidenceStore`，按编号保存与读取媒体，默认总容量 64 MiB。
+- `app/team_gateway.py`：核心提供的任务创建、快照、动作提交、任务取消、文字输入、最终语音去重和观察入口。
+- `perception/simulated.py`：无需相机和模型的模拟感知，使用真实登记的占位图片，结果明确标记模拟。
+
+运行完整调用示例：
+
+```bash
+uv run python -m app.team_demo
+```
+
+队友实现接口中的异步方法后，把实例注入核心服务即可，Python Protocol 无需显式继承。视觉适配器实现 `VisionProvider.analyze()`，实际宇树模型协议确定后再连接本地推理服务。
+
+当前是可调用的 Python 接口；HTTP/SSE、教学输入消费器、真实音频实现与真实 VLM 调用尚未实现。`TeamGateway.create_task()` 只创建记录，不自动启动教学模型。取消任务会取消 Runtime 动作并拒绝迟到观察/输入，但不会声称已取消尚未接入的录音设备或 GPU 推理。事件广播与完整资源取消仍按 HTTP 合同后续实现。
+
+内部观察使用不可变元组和 `frame`、`analysis` 组合，序列化成 HTTP 字段的转换尚未实现；请导入实际 Python 数据模型，不要照文档重复定义模型。语音播放终态使用 `PlaybackState`，不额外定义同结构的 `PlaybackResult`。
+
 教学机器人的最小可运行基础层。当前实现了数据模型、模拟设备、相对移动 Skill、异步动作 Runtime、任务协调器和内存存储，运行只依赖 Python 3.12+ 标准库。
 
 ## 运行
