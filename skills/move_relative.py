@@ -1,3 +1,6 @@
+# skills/move_relative.py
+"""相对移动动作的参数校验、执行与到位验证."""
+
 import math
 from typing import override
 
@@ -8,15 +11,17 @@ from skills.base import RobotSkill
 
 
 class MoveRelativeSkill(RobotSkill):
-    """沿当前朝向移动一段距离，负距离代表后退；不提供目标点导航。"""
+    """沿当前朝向移动一段距离，负距离代表后退；不提供目标点导航."""
 
     name: str = "move_relative"
 
     @override
     def validate(self, args: dict[str, object]) -> None:
+        """检查动作参数，非法输入抛出异常."""
         _ = self._parse_arguments(args)
 
     def _parse_arguments(self, args: object) -> tuple[float, float]:
+        """校验移动参数并返回距离与速度，单位为米和米每秒."""
         arguments = string_key_dict(args, "arguments")
         unknown = arguments.keys() - {"distance_m", "speed_m_s"}
         if unknown:
@@ -35,6 +40,7 @@ class MoveRelativeSkill(RobotSkill):
     async def execute(
         self, robot: RobotAdapter, args: dict[str, object]
     ) -> SkillResult:
+        """执行动作并收集证据，完成判定由验证阶段负责."""
         distance, speed = self._parse_arguments(args)
         await self.check_preconditions(robot)
         before = await robot.get_state()
@@ -66,6 +72,7 @@ class MoveRelativeSkill(RobotSkill):
 
     @override
     async def verify(self, robot: RobotAdapter, result: SkillResult) -> bool:
+        """结合设备反馈和结果证据判断动作是否完成."""
         state = await robot.get_state()
         if not state.is_connected or state.is_moving:
             return False

@@ -27,6 +27,12 @@ uv run python -m unittest discover -s tests -v
 
 Ruff 负责代码检查、导入排序和统一格式；basedpyright 使用 `recommended` 模式，警告也会使检查失败，业务代码与测试均纳入检查。具体开发约定见 `AGENTS.md`。
 
+编码规范的适用范围和目录对应关系见 [编码规范说明](docs/CODING_SPEC.md)。显式构造函数的关键字参数按规范使用前导下划线，例如 `SimulatedAdapter(_mode=..., _time_scale=...)`、`ActionManager(..., _store=..., _cleanup_timeout_s=...)`。日志级别由环境变量 `LOG_LEVEL` 控制；`.env.example` 提供配置示例，程序不自动加载环境文件。
+
+代码与接口合同由项目负责人本人审核。HTTP 接口将在 [接口合同](API_CONTRACT.md) 中先定义、确认后实现，当前没有已批准的网络端点。
+
+团队联调先阅读 [接口合同草案](API_CONTRACT.md) 和 [模块协作合同](docs/MODULE_CONTRACT.md)：前者定义核心提供给展示端的任务、输入、观察、录音、取消和事件接口；后者定义感知、语音模块的异步方法、共享数据、证据服务以及本地 VLM 适配边界。二者当前均待审核，不代表这些接口已运行。
+
 ## 模拟范围
 
 所有设备动作都是**模拟相对移动**，没有连接真实硬件，也不代表目标点导航。成功证据含 `simulated: True`。模拟器的 `time_scale` 只压缩执行时间，距离和速度参数仍使用米和米/秒。

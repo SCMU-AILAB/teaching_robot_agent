@@ -2,3 +2,16 @@
 __pycache__/
 *.py[cod]
 .ruff_cache/
+.env
+.env.*
+!.env.example
+*.egg-info/
+dist/
+build/
+.dart_tool/
+.packages
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.zed/

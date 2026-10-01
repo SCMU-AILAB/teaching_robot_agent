@@ -1,4 +1,5 @@
-"""异步模拟设备，支持正常、失败和挂起三种执行模式。"""
+# robot/simulated.py
+"""异步模拟设备，支持正常、失败和挂起三种执行模式."""
 
 import asyncio
 import math
@@ -12,23 +13,28 @@ from robot.base import RobotAdapter
 
 
 class SimulationMode(StrEnum):
+    """模拟设备的成功、失败和挂起模式."""
+
     SUCCESS = "success"
     FAILURE = "failure"
     HANG = "hang"
 
 
 class SimulatedAdapter(RobotAdapter):
+    """在内存中模拟相对移动及设备异常."""
+
     is_simulated: bool = True
 
     def __init__(
         self,
-        mode: SimulationMode = SimulationMode.SUCCESS,
-        time_scale: float = 0.01,
+        _mode: SimulationMode = SimulationMode.SUCCESS,
+        _time_scale: float = 0.01,
     ) -> None:
-        scale = finite_float(time_scale, "time_scale")
+        """初始化依赖与实例状态，不启动后台任务."""
+        scale = finite_float(_time_scale, "time_scale")
         if scale <= 0:
             raise ValueError("time_scale must be a finite positive number")
-        self.mode: SimulationMode = SimulationMode(mode)
+        self.mode: SimulationMode = SimulationMode(_mode)
         self.time_scale: float = scale
         self._connected: bool = False
         self._moving: bool = False
@@ -38,17 +44,20 @@ class SimulatedAdapter(RobotAdapter):
 
     @override
     async def connect(self) -> None:
+        """建立设备连接并更新状态."""
         self._connected = True
         self._updated_at = time.time()
 
     @override
     async def disconnect(self) -> None:
+        """停止设备并释放连接."""
         await self.stop()
         self._connected = False
         self._updated_at = time.time()
 
     @override
     async def get_state(self) -> RobotState:
+        """返回当前连接、运动和位姿快照."""
         return RobotState(
             is_connected=self._connected,
             is_moving=self._moving,
@@ -58,6 +67,7 @@ class SimulatedAdapter(RobotAdapter):
 
     @override
     async def move_relative(self, distance_m: float, speed_m_s: float) -> None:
+        """沿当前朝向移动指定距离，等待执行返回."""
         distance_m = finite_float(distance_m, "distance_m")
         speed_m_s = finite_float(speed_m_s, "speed_m_s")
         if speed_m_s <= 0:
@@ -105,6 +115,7 @@ class SimulatedAdapter(RobotAdapter):
 
     @override
     async def stop(self) -> None:
+        """请求设备停止并更新运动状态."""
         if self._stop_event is not None:
             self._stop_event.set()
         self._moving = False

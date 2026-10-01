@@ -1,4 +1,7 @@
-from app.demo import main
+# main.py
+"""命令行入口，仅调用应用启动函数."""
+
+from app.demo import run_app
 
 if __name__ == "__main__":
-    main()
+    run_app()

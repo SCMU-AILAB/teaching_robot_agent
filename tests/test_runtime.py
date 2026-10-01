@@ -1,4 +1,5 @@
-"""Exercise observable runtime behavior without hardware or external services."""
+# tests/test_runtime.py
+"""通过模拟设备验证可观察行为，不依赖真实硬件或外部服务."""
 
 import asyncio
 import unittest
@@ -22,15 +23,17 @@ from storage.memory import InMemoryStore
 
 
 class UnstoppableAdapter(SimulatedAdapter):
-    """Model a device that cannot acknowledge stopping after a fault."""
+    """模拟故障后无法确认停止的设备."""
 
     def __init__(self) -> None:
-        super().__init__(mode=SimulationMode.HANG, time_scale=0.01)
+        """初始化依赖与实例状态，不启动后台任务."""
+        super().__init__(_mode=SimulationMode.HANG, _time_scale=0.01)
         self.stop_failed: bool = False
         self.shutting_down: bool = False
 
     @override
     async def stop(self) -> None:
+        """请求设备停止并更新运动状态."""
         if self.shutting_down:
             return await super().stop()
         self.stop_failed = True
@@ -38,13 +41,15 @@ class UnstoppableAdapter(SimulatedAdapter):
 
     @override
     async def disconnect(self) -> None:
-        # The fixture can power down even when its normal stop command fails.
+        # 测试设备保留独立断电路径，避免停止故障阻止测试资源释放。
+        """停止设备并释放连接."""
         self.shutting_down = True
         self.stop_failed = False
         await super().disconnect()
 
     @override
     async def get_state(self) -> RobotState:
+        """返回当前连接、运动和位姿快照."""
         state = await super().get_state()
         if self.stop_failed:
             return replace(state, is_moving=True)
@@ -52,40 +57,52 @@ class UnstoppableAdapter(SimulatedAdapter):
 
 
 class UnconfirmedStopAdapter(UnstoppableAdapter):
+    """模拟停止指令被接受但设备仍在运动."""
+
     @override
     async def stop(self) -> None:
+        """请求设备停止并更新运动状态."""
         if self.shutting_down:
             return await SimulatedAdapter.stop(self)
-        # Accepting the command alone is not evidence that motion stopped.
+        # 接受停止命令不代表设备已经停止，必须检查实际状态。
         self.stop_failed: bool = True
 
 
 class GatedStopAdapter(SimulatedAdapter):
+    """通过事件控制停止完成时机，复现清理过程的竞态."""
+
     def __init__(self) -> None:
-        super().__init__(mode=SimulationMode.HANG)
+        """初始化依赖与实例状态，不启动后台任务."""
+        super().__init__(_mode=SimulationMode.HANG)
         self.stop_entered: asyncio.Event = asyncio.Event()
         self.allow_stop: asyncio.Event = asyncio.Event()
         self.move_calls: int = 0
 
     @override
     async def move_relative(self, distance_m: float, speed_m_s: float) -> None:
+        """沿当前朝向移动指定距离，等待执行返回."""
         self.move_calls += 1
         await super().move_relative(distance_m, speed_m_s)
 
     @override
     async def stop(self) -> None:
+        """请求设备停止并更新运动状态."""
         self.stop_entered.set()
         _ = await self.allow_stop.wait()
         await super().stop()
 
     @override
     async def disconnect(self) -> None:
+        """停止设备并释放连接."""
         self.allow_stop.set()
         await super().disconnect()
 
 
 class GatedConnectAdapter(SimulatedAdapter):
+    """通过事件控制连接时机，验证启动与关闭交错."""
+
     def __init__(self) -> None:
+        """初始化依赖与实例状态，不启动后台任务."""
         super().__init__()
         self.connect_entered: asyncio.Event = asyncio.Event()
         self.allow_connect: asyncio.Event = asyncio.Event()
@@ -94,32 +111,42 @@ class GatedConnectAdapter(SimulatedAdapter):
 
     @override
     async def connect(self) -> None:
+        """建立设备连接并更新状态."""
         self.connect_calls += 1
-        # Model a partially opened SDK connection before initialization finishes.
+        # 连接初始化尚未完成时也可能已占用设备，需要验证取消后的清理。
         await super().connect()
         self.connect_entered.set()
         _ = await self.allow_connect.wait()
 
     @override
     async def disconnect(self) -> None:
+        """停止设备并释放连接."""
         self.disconnect_calls += 1
         await super().disconnect()
 
 
 class DeviceTimeoutAdapter(SimulatedAdapter):
+    """模拟设备自身抛出的通信超时."""
+
     @override
     async def move_relative(self, distance_m: float, speed_m_s: float) -> None:
+        """沿当前朝向移动指定距离，等待执行返回."""
         raise TimeoutError("SDK movement acknowledgement timed out")
 
 
 class FalseCompletionAdapter(SimulatedAdapter):
+    """模拟驱动返回成功但机器人没有到位."""
+
     @override
     async def move_relative(self, distance_m: float, speed_m_s: float) -> None:
-        # A driver returning successfully cannot substitute for arrival evidence.
+        # 驱动正常返回不能代替到位证据，验证层仍需检查实际位置。
+        """沿当前朝向移动指定距离，等待执行返回."""
         return
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    """验证动作、任务及设备资源的完整生命周期."""
+
     @overload
     def make_runtime[T: SimulatedAdapter](
         self, mode: SimulationMode = SimulationMode.SUCCESS, *, robot: T
@@ -136,19 +163,21 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         *,
         robot: SimulatedAdapter | None = None,
     ) -> tuple[ActionManager, SimulatedAdapter, InMemoryStore]:
-        robot = robot or SimulatedAdapter(mode=mode, time_scale=0.01)
+        """创建运行时与模拟设备，保留传入设备的具体类型."""
+        robot = robot or SimulatedAdapter(_mode=mode, _time_scale=0.01)
         store = InMemoryStore()
         runtime = ActionManager(
             robot,
             SkillRegistry([MoveRelativeSkill()]),
-            store=store,
-            cleanup_timeout_s=0.1,
+            _store=store,
+            _cleanup_timeout_s=0.1,
         )
         return runtime, robot, store
 
     def request(
         self, *, task_id: int = 1, distance: float = 0.3, timeout: float = 1.0
     ) -> ActionRequest:
+        """创建包含距离、速度和执行期限的测试请求."""
         return ActionRequest(
             task_id=task_id,
             skill_name="move_relative",
@@ -159,6 +188,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def wait_until_running(
         self, runtime: ActionManager, robot: SimulatedAdapter, action_id: int
     ) -> None:
+        """等待动作实际开始运动，提前结束时令测试失败."""
         async with asyncio.timeout(2):
             while True:
                 record = runtime.get_action(action_id)
@@ -175,10 +205,12 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.001)
 
     async def terminal(self, runtime: ActionManager, action_id: int) -> ActionRecord:
+        """在限定时间内等待动作终态."""
         async with asyncio.timeout(2):
             return await runtime.wait_for_action(action_id)
 
     async def test_success_has_verified_position_and_simulation_evidence(self) -> None:
+        """成功动作必须具备到位、停止和模拟标记证据."""
         runtime, robot, _ = self.make_runtime()
         async with runtime:
             submitted = await runtime.submit_action(self.request())
@@ -201,6 +233,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(completed.started_at, completed.ended_at)
 
     async def test_device_failure_is_recorded_and_stopped(self) -> None:
+        """设备执行失败时记录原因并确认停止."""
         runtime, robot, _ = self.make_runtime(SimulationMode.FAILURE)
         async with runtime:
             submitted = await runtime.submit_action(self.request())
@@ -210,6 +243,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await robot.get_state()).is_moving)
 
     async def test_timeout_stops_a_hanging_device(self) -> None:
+        """执行超时后停止挂起设备并记录超时终态."""
         runtime, robot, _ = self.make_runtime(SimulationMode.HANG)
         async with runtime:
             submitted = await runtime.submit_action(self.request(timeout=0.03))
@@ -219,6 +253,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await robot.get_state()).is_moving)
 
     async def test_running_cancellation_waits_for_stop(self) -> None:
+        """取消运动中动作必须等待设备停止."""
         runtime, robot, _ = self.make_runtime(SimulationMode.HANG)
         async with runtime:
             submitted = await runtime.submit_action(self.request())
@@ -229,6 +264,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await robot.get_state()).is_moving)
 
     async def test_queued_cancellation_does_not_stop_running_action(self) -> None:
+        """取消排队动作不影响正在执行的动作."""
         runtime, robot, _ = self.make_runtime(SimulationMode.HANG)
         async with runtime:
             first = await runtime.submit_action(self.request())
@@ -249,6 +285,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             _ = await self.terminal(runtime, first.action_id)
 
     async def test_actions_execute_serially(self) -> None:
+        """多个动作按队列顺序执行且位移正确累加."""
         runtime, robot, _ = self.make_runtime()
         async with runtime:
             first = await runtime.submit_action(self.request(distance=0.3))
@@ -265,6 +302,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual((await robot.get_state()).position.x, 0.5)
 
     async def test_invalid_requests_are_rejected_without_creating_actions(self) -> None:
+        """非法请求在创建动作前被拒绝."""
         runtime, _, _ = self.make_runtime()
         cases = [
             replace(self.request(), skill_name="does_not_exist"),
@@ -290,7 +328,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 replace(self.request(), args={"distance_m": 0.2, "speed_m_s": invalid})
             )
         for invalid in (True, "1", float("nan"), float("inf"), -1, 0):
-            # Deliberately cross the static contract to exercise runtime validation.
+            # 故意传入静态契约之外的数据，以验证运行时输入检查。
             cases.append(replace(self.request(), timeout_s=cast(float, invalid)))
 
         async with runtime:
@@ -305,6 +343,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(runtime.list_actions(), [])
 
     async def test_request_and_record_snapshots_do_not_mutate_runtime(self) -> None:
+        """修改请求和记录副本不会污染内部执行状态."""
         runtime, robot, _ = self.make_runtime()
         async with runtime:
             request = self.request(distance=0.3)
@@ -330,6 +369,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(stored_result.evidence["simulated"], True)
 
     async def test_cancelling_a_waiter_does_not_cancel_action(self) -> None:
+        """取消结果等待者不会取消后台动作."""
         runtime, robot, _ = self.make_runtime(SimulationMode.HANG)
         async with runtime:
             submitted = await runtime.submit_action(self.request())
@@ -351,6 +391,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_shutdown_cancels_running_and_queued_actions_and_disconnects(
         self,
     ) -> None:
+        """关闭时取消所有未完成动作并断开设备."""
         runtime, robot, _ = self.make_runtime(SimulationMode.HANG)
         async with runtime:
             first = await runtime.submit_action(self.request())
@@ -370,6 +411,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             _ = await runtime.submit_action(self.request())
 
     async def test_unconfirmed_stop_blocks_queued_and_future_movement(self) -> None:
+        """无法确认停止时阻止排队动作和新动作执行."""
         for adapter_type in (UnstoppableAdapter, UnconfirmedStopAdapter):
             with self.subTest(adapter=adapter_type.__name__):
                 runtime, robot, _ = self.make_runtime(robot=adapter_type())
@@ -389,6 +431,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                         _ = await runtime.submit_action(self.request())
 
     async def test_success_events_report_state_progression(self) -> None:
+        """成功动作的事件顺序符合状态生命周期."""
         runtime, _, _ = self.make_runtime()
         async with runtime:
             submitted = await runtime.submit_action(self.request())
@@ -411,6 +454,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_task_completion_is_explicit_after_all_actions_succeed(self) -> None:
+        """任务只有在动作结束后才能被显式完成."""
         runtime, _, store = self.make_runtime()
         coordinator = TaskCoordinator(runtime, store)
         async with runtime:
@@ -430,6 +474,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(submitted.action_id, completed.action_ids)
 
     async def test_failed_action_prevents_successful_task_completion(self) -> None:
+        """失败动作使显式结束的任务进入失败状态."""
         runtime, _, store = self.make_runtime(SimulationMode.FAILURE)
         coordinator = TaskCoordinator(runtime, store)
         async with runtime:
@@ -445,6 +490,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_task_cancellation_cancels_all_its_actions_and_stops_device(
         self,
     ) -> None:
+        """任务取消会结束所有关联动作并停止设备."""
         runtime, robot, store = self.make_runtime(SimulationMode.HANG)
         coordinator = TaskCoordinator(runtime, store)
         async with runtime:
@@ -467,6 +513,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await robot.get_state()).is_moving)
 
     async def test_task_cancellation_reports_failed_stop_as_failure(self) -> None:
+        """任务取消过程中停止失败会记录为任务失败."""
         runtime, robot, store = self.make_runtime(robot=UnstoppableAdapter())
         coordinator = TaskCoordinator(runtime, store)
         async with runtime:
@@ -485,6 +532,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelling_task_cancel_caller_does_not_interrupt_cleanup(
         self,
     ) -> None:
+        """取消调用方退出后后台仍完成清理和任务终态更新."""
         runtime, robot, store = self.make_runtime(robot=GatedStopAdapter())
         coordinator = TaskCoordinator(runtime, store)
         async with runtime:
@@ -521,6 +569,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_close_during_start_waits_for_connection_then_disconnects(
         self,
     ) -> None:
+        """启动期间关闭会等待连接处理并释放设备."""
         baseline = asyncio.all_tasks()
         runtime, robot, _ = self.make_runtime(robot=GatedConnectAdapter())
         starting = asyncio.create_task(runtime.start())
@@ -529,7 +578,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             async with asyncio.timeout(2):
                 _ = await robot.connect_entered.wait()
             closing = asyncio.create_task(runtime.close())
-            # The explicit gate keeps connect suspended while close gets its turn.
+            # 通过事件固定连接与关闭的交错顺序，避免测试依赖运行速度。
             await asyncio.sleep(0)
             await asyncio.sleep(0)
             self.assertFalse(
@@ -552,6 +601,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await runtime.close()
 
     async def test_concurrent_start_connects_once_and_uses_one_executor(self) -> None:
+        """并发启动只建立一次连接和一个执行器."""
         baseline = asyncio.all_tasks()
         runtime, robot, _ = self.make_runtime(robot=GatedConnectAdapter())
         first_start = asyncio.create_task(runtime.start())
@@ -588,6 +638,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asyncio.all_tasks() - baseline, set())
 
     async def test_cancelled_start_cleans_up_partially_open_connection(self) -> None:
+        """启动被取消时清理已经部分建立的连接."""
         baseline = asyncio.all_tasks()
         runtime, robot, _ = self.make_runtime(robot=GatedConnectAdapter())
         starting = asyncio.create_task(runtime.start())
@@ -609,6 +660,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             await runtime.close()
 
     async def test_sdk_timeout_is_failure_and_preserves_source_error(self) -> None:
+        """设备自身超时被记录为失败并保留原始原因."""
         runtime, robot, _ = self.make_runtime(robot=DeviceTimeoutAdapter())
         async with runtime:
             submitted = await runtime.submit_action(self.request(timeout=10))
@@ -620,6 +672,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((await robot.get_state()).is_moving)
 
     async def test_completion_requires_observed_arrival(self) -> None:
+        """驱动返回成功但未到位时验证失败."""
         runtime, robot, _ = self.make_runtime(robot=FalseCompletionAdapter())
         async with runtime:
             submitted = await runtime.submit_action(self.request(distance=0.3))
@@ -631,6 +684,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual((await robot.get_state()).position.x, 0.0)
 
     async def test_cleanup_timeout_blocks_subsequent_actions(self) -> None:
+        """清理超时后禁止后续动作启动."""
         runtime, robot, _ = self.make_runtime(robot=GatedStopAdapter())
         async with runtime:
             first = await runtime.submit_action(self.request())

@@ -1,7 +1,10 @@
-"""模拟演示入口：装配依赖、提交任务，并打印 Runtime 推送的状态。"""
+# app/demo.py
+"""模拟演示入口：装配依赖、提交任务，并打印 Runtime 推送的状态."""
 
 import argparse
 import asyncio
+import logging
+import os
 
 from domain.models import ActionStatus
 from robot.simulated import SimulatedAdapter, SimulationMode
@@ -10,16 +13,19 @@ from runtime.task_coordinator import TaskCoordinator
 from skills.move_relative import MoveRelativeSkill
 from skills.registry import SkillRegistry
 
-SCENARIOS = ("success", "failure", "timeout", "cancel", "queued_cancel", "sequence")
+_SCENARIOS = ("success", "failure", "timeout", "cancel", "queued_cancel", "sequence")
 
 
 class DemoArguments(argparse.Namespace):
+    """命令行演示参数."""
+
     scenario: str = "success"
 
 
 async def print_events(
     runtime: ActionManager, action_count: int, started: asyncio.Event
 ) -> None:
+    """消费动作状态事件，展示进度并通知动作已开始."""
     finished = 0
     while finished < action_count:
         event = await runtime.next_event()
@@ -33,12 +39,13 @@ async def print_events(
 
 
 async def run_scenario(scenario: str) -> None:
+    """装配模拟设备和运行时，执行指定演示场景."""
     mode = {
         "failure": SimulationMode.FAILURE,
         "timeout": SimulationMode.HANG,
         "cancel": SimulationMode.HANG,
     }.get(scenario, SimulationMode.SUCCESS)
-    robot = SimulatedAdapter(mode=mode, time_scale=0.1)
+    robot = SimulatedAdapter(_mode=mode, _time_scale=0.1)
     registry = SkillRegistry([MoveRelativeSkill()])
     print(f"\n=== {scenario}（模拟设备，相对移动）===")
 
@@ -91,15 +98,21 @@ async def run_scenario(scenario: str) -> None:
             _ = await asyncio.gather(printer, return_exceptions=True)
 
 
-def main() -> None:
+def run_app() -> None:
+    """解析命令行参数并启动异步演示."""
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     parser = argparse.ArgumentParser(description="教学机器人基础层：纯模拟动作演示")
     _ = parser.add_argument(
-        "--scenario", choices=(*SCENARIOS, "all"), default="success"
+        "--scenario", choices=(*_SCENARIOS, "all"), default="success"
     )
     args = parser.parse_args(namespace=DemoArguments())
 
     async def run() -> None:
-        for scenario in SCENARIOS if args.scenario == "all" else (args.scenario,):
+        """按选定场景顺序运行演示."""
+        for scenario in _SCENARIOS if args.scenario == "all" else (args.scenario,):
             await run_scenario(scenario)
 
     asyncio.run(run())
