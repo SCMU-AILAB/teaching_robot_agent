@@ -1,7 +1,29 @@
 [project]
 name = "teaching-robot-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "教学机器人基础层：模拟设备、Skill 与异步动作 Runtime"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[tool.basedpyright]
+include = ["."]
+exclude = [".venv", "**/__pycache__", ".ruff_cache"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "recommended"
+failOnWarnings = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.1",
+    "ruff>=0.16.9",
+]
