@@ -33,18 +33,18 @@ Ruff 负责代码检查、导入排序和统一格式；basedpyright 使用 `rec
 
 ## 按什么顺序读
 
-| 文件 | 职责 |
-| --- | --- |
-| `domain/models.py` | 动作请求、动作记录、任务状态、机器人位姿和状态事件 |
-| `robot/base.py` | 设备适配器契约：连接、查询、相对移动、停止 |
-| `robot/simulated.py` | 可配置成功、失败、挂起的模拟设备 |
-| `skills/base.py` | Skill 的参数校验、前置检查、执行、验证和清理接口 |
-| `skills/move_relative.py` | 一个完整的相对移动 Skill |
-| `skills/registry.py` | 按名称注册和查找 Skill |
-| `storage/memory.py` | 内存中的动作与任务记录，读写均复制数据 |
-| `runtime/action_manager.py` | 动作排队、状态转换、超时、取消、停止确认和事件 |
-| `runtime/task_coordinator.py` | 创建任务、关联动作、明确结束或取消整个任务 |
-| `app/demo.py` | 依赖装配与六种演示场景 |
+| 文件                          | 职责                                               |
+| ----------------------------- | -------------------------------------------------- |
+| `domain/models.py`            | 动作请求、动作记录、任务状态、机器人位姿和状态事件 |
+| `robot/base.py`               | 设备适配器契约：连接、查询、相对移动、停止         |
+| `robot/simulated.py`          | 可配置成功、失败、挂起的模拟设备                   |
+| `skills/base.py`              | Skill 的参数校验、前置检查、执行、验证和清理接口   |
+| `skills/move_relative.py`     | 一个完整的相对移动 Skill                           |
+| `skills/registry.py`          | 按名称注册和查找 Skill                             |
+| `storage/memory.py`           | 内存中的动作与任务记录，读写均复制数据             |
+| `runtime/action_manager.py`   | 动作排队、状态转换、超时、取消、停止确认和事件     |
+| `runtime/task_coordinator.py` | 创建任务、关联动作、明确结束或取消整个任务         |
+| `app/demo.py`                 | 依赖装配与六种演示场景                             |
 
 调用路径是：`演示入口 → TaskCoordinator → ActionManager → RobotSkill → RobotAdapter`。
 
