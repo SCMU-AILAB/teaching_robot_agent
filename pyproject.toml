@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "教学机器人基础层：模拟设备、Skill 与异步动作 Runtime"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "langchain-core>=1.6.6",
+    "langchain-ollama>=1.1.0",
+    "pillow>=12.3.0",
+    "pydantic>=2.13.5",
+]
 
 [tool.basedpyright]
 include = ["."]

@@ -1,5 +1,33 @@
 # Teaching Robot Agent
 
+## 本地模型与 LangChain
+
+已接入 Ollama 视觉适配器、LangChain 七个工具和有界决策循环。默认复用服务器已有的 `qwen3.5:9b`，宇树 VLM 可作为视觉对照。选型依据、实测结果、环境配置及运行方法见 [本地模型接入](docs/LOCAL_MODELS.md)。
+
+视觉联调入口为 `uv run python -m app.model_demo vision 图片路径 问题`；教学工具联调入口为 `uv run python -m app.model_demo agent 教学问题`。运行前设置 `OLLAMA_BASE_URL`。前者是真实模型读取静态图，后者使用模拟设备与感知，不代表真实机器人已接通。
+
+## 核心工具与本地动作事件
+
+`agent/tools.py` 的 `ToolAdapter(task_id, gateway, education)` 按任务绑定七个入口：`observe_scene`、`lookup_knowledge`、`get_teaching_state`、`evaluate_answer`、`submit_action`、`get_action_status`、`cancel_action`。知识查询返回人工资料及来源；已通过 `agent/langchain_tools.py` 注册为模型工具，也可直接通过 Python 调用。`wait_for_action` 供宿主流程等待真实终态，避免模型轮询。
+
+`runtime/events.py` 的 `ActionEventHub` 独占一个 Runtime 的 `next_event()`，将事件广播给多个订阅者。应用应仅装配一个广播器，显式调用 `start()`，通过 `async with hub.subscribe()` 获取订阅，结束时调用 `close()`。订阅队列溢出会明确报错，调用方重新读取状态；这是本地事件桥，不是带游标重放的 HTTP SSE 服务。
+
+通过 TeamGateway 提交相对移动时使感知缓存失效；观察与移动提交交错或尚有未终结移动动作时，结果标记为 stale。直接绕过该入口操作设备的调用方仍需通知感知版本变化。后续真实感知服务还需处理运动结束后的缓存失效；当前模拟服务每次生成新帧，不复用缓存。
+
+## 核心教学流程
+
+运行 `uv run python -m app.teaching_demo` 查看统一输入驱动的完整离线示例。
+
+- `education/service.py`：保存教学状态，评价、重试和推进知识点。
+- `agent/context.py`：汇总任务、动作、机器人、教学状态、输入和可选观察；保留实际动作状态，过期观察显式标记。
+- `agent/teaching_flow.py`：消费 `TeamGateway.next_input()`，区分追问和答案，产生教学输出。
+
+先创建任务，再调用 `TeachingFlow.start(task_id)`。根据返回的 `state.pending_question.question_id` 调用 `submit_text(..., question_id=...)` 或 `submit_transcript(..., question_id=...)`；单个消费者循环调用 `process_next()`。不传问题编号表示追问，首版仅重述当前知识，不提供自由问答。问题编号应在输入产生时绑定，禁止处理时再猜测所属问题。
+
+输出 `TeachingReply.state` 是处理后进度，`context` 是本轮处理前上下文。重复输入不会重复推进；任务取消后拒绝新的处理，同时保留教学进度。教学完成与机器人任务结束仍独立，尚未自动终结纯教学任务。
+
+这个离线演示采用人工知识和确定性规则，不调用本地 VLM、LangChain 或语音设备；示例不声称来自真实观察。教学状态及输入结果仅存于内存。
+
 ## 队友可直接使用的代码接口
 
 - `domain/services.py`：图片、音频、观察、转写、播放与服务错误的数据结构。
@@ -15,13 +43,13 @@
 uv run python -m app.team_demo
 ```
 
-队友实现接口中的异步方法后，把实例注入核心服务即可，Python Protocol 无需显式继承。视觉适配器实现 `VisionProvider.analyze()`，实际宇树模型协议确定后再连接本地推理服务。
+队友实现接口中的异步方法后，把实例注入核心服务即可，Python Protocol 无需显式继承。视觉适配器实现 `VisionProvider.analyze()`，当前已提供 `providers/ollama_vision.py`，通过 Ollama 调用本地 Qwen 或宇树 VLM。
 
-当前是可调用的 Python 接口；HTTP/SSE、教学输入消费器、真实音频实现与真实 VLM 调用尚未实现。`TeamGateway.create_task()` 只创建记录，不自动启动教学模型。取消任务会取消 Runtime 动作并拒绝迟到观察/输入，但不会声称已取消尚未接入的录音设备或 GPU 推理。事件广播与完整资源取消仍按 HTTP 合同后续实现。
+当前是可调用的 Python 接口；HTTP/SSE 与真实音频尚未实现；教学输入消费器及独立 VLM 调用已实现，模型驱动的完整课堂宿主尚未接通。`TeamGateway.create_task()` 只创建记录，不自动启动教学模型。取消任务会取消 Runtime 动作并拒绝迟到观察/输入，但不会声称已取消尚未接入的录音设备或 GPU 推理。本地事件广播已实现，网络事件接口与完整资源取消仍按 HTTP 合同后续实现。
 
 内部观察使用不可变元组和 `frame`、`analysis` 组合，序列化成 HTTP 字段的转换尚未实现；请导入实际 Python 数据模型，不要照文档重复定义模型。语音播放终态使用 `PlaybackState`，不额外定义同结构的 `PlaybackResult`。
 
-教学机器人的最小可运行基础层。当前实现了数据模型、模拟设备、相对移动 Skill、异步动作 Runtime、任务协调器和内存存储，运行只依赖 Python 3.12+ 标准库。
+教学机器人的最小可运行基础层。当前实现了数据模型、模拟设备、相对移动 Skill、异步动作 Runtime、任务协调器和内存存储，基础动作演示仅使用 Python 3.12+ 标准库；模型接入及完整测试需安装 `uv.lock` 中的依赖。
 
 ## 运行
 
@@ -30,7 +58,7 @@ uv run python -m app.team_demo
 ```bash
 python3 main.py
 python3 main.py --scenario all
-python3 -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
 也可以用 `uv run main.py --scenario all`。演示包含正常完成、设备失败、执行超时、运行中取消、排队取消和两个动作顺序执行；失败与超时场景是主动注入的预期结果。
@@ -103,6 +131,6 @@ Runtime 关闭负责结束动作和设备连接，任务的业务终态由调用
 
 ## 当前边界与下一步
 
-这是单进程、单 asyncio 事件循环、单执行器的基础实现。记录与事件保存在内存，进程退出后不保留；没有数据库恢复或多消费者广播。异步适配器和 Skill 必须响应协程取消，不能在事件循环中执行阻塞 SDK 调用；真实硬件还需要独立验证停止确认与异常处理能力。
+这是单进程、单 asyncio 事件循环、单执行器的基础实现。记录与事件保存在内存，进程退出后不保留；没有数据库恢复；多消费者本地广播由 `ActionEventHub` 提供。异步适配器和 Skill 必须响应协程取消，不能在事件循环中执行阻塞 SDK 调用；真实硬件还需要独立验证停止确认与异常处理能力。
 
-`agent/`、`education/`、`perception/` 和 `providers/` 保留现有目录，尚未接入模型、教学服务、摄像头或语音。接下来先扩充感知快照和一个教学主题，再将已验证的 Runtime 包装为 Agent 工具；API 和控制台可以通过同一套提交、查询、取消与事件接口接入。
+已实现教学服务、统一上下文、LangChain 工具及本地 VLM 适配。接下来对接真实摄像头和语音，并由宿主把教学输入、模型决策和动作事件串成自动循环；HTTP 接口仍按合同审核后实现。

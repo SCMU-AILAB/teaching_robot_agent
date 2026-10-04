@@ -2,7 +2,7 @@
 """队友可直接调用的核心门面，复用现有任务与动作运行时."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import uuid4
 
 from domain.models import ActionRecord, RobotState, TaskState, TaskStatus
@@ -32,6 +32,7 @@ class UserInput:
     text: str
     source: str
     recording_id: str | None = None
+    question_id: str | None = None
 
 
 class TeamGateway:
@@ -44,6 +45,7 @@ class TeamGateway:
         self._perception: PerceptionService = _perception
         self._inputs: asyncio.Queue[UserInput] = asyncio.Queue()
         self._transcripts: dict[tuple[int, str], UserInput] = {}
+        self._scene_generation: int = 0
 
     def create_task(self, user_target: str) -> TaskState:
         """创建任务记录，后续教学决策由独立消费者负责."""
@@ -77,19 +79,52 @@ class TeamGateway:
         timeout_s: float = 10,
     ) -> ActionRecord:
         """供核心决策代码提交动作，不是公开网络控制端点."""
-        return await self._coordinator.submit_action(
+        record = await self._coordinator.submit_action(
             task_id, skill_name, args, timeout_s
         )
+        if skill_name == "move_relative":
+            self._scene_generation += 1
+            _ = self._perception.invalidate("提交相对移动，场景可能变化")
+        return record
 
-    def submit_text(self, task_id: int, text: str) -> UserInput:
+    def get_action_status(self, task_id: int, action_id: int) -> ActionRecord:
+        """检查动作归属后返回记录，禁止跨任务查询动作."""
+        record = self._runtime.get_action(action_id)
+        if record.raw_request.task_id != task_id:
+            raise KeyError("Action does not belong to task")
+        return record
+
+    async def cancel_action(self, task_id: int, action_id: int) -> ActionRecord:
+        """只取消当前任务拥有的动作，不结束教学任务."""
+        _ = self.get_action_status(task_id, action_id)
+        return await self._runtime.cancel_action(action_id)
+
+    async def wait_for_action(self, task_id: int, action_id: int) -> ActionRecord:
+        """事件驱动等待终态，不轮询模型或设备."""
+        _ = self.get_action_status(task_id, action_id)
+        return await self._runtime.wait_for_action(action_id)
+
+    def submit_text(
+        self, task_id: int, text: str, question_id: str | None = None
+    ) -> UserInput:
         """接受文字并放入统一输入队列."""
         self._require_active(task_id)
-        item = UserInput(uuid4().hex, task_id, nonempty_string(text, "text"), "text")
+        item = UserInput(
+            uuid4().hex,
+            task_id,
+            nonempty_string(text, "text"),
+            "text",
+            question_id=question_id,
+        )
         self._inputs.put_nowait(item)
         return item
 
     def submit_transcript(
-        self, task_id: int, recording_id: str, transcript: TranscriptResult
+        self,
+        task_id: int,
+        recording_id: str,
+        transcript: TranscriptResult,
+        question_id: str | None = None,
     ) -> UserInput | None:
         """最终语音按录音编号去重，空文本与中间结果不提交."""
         self._require_active(task_id)
@@ -99,10 +134,12 @@ class TeamGateway:
         key = (task_id, recording_id)
         previous = self._transcripts.get(key)
         if previous is not None:
-            if previous.text != transcript.text:
+            if previous.text != transcript.text or previous.question_id != question_id:
                 raise ValueError("Recording already submitted with different text")
             return previous
-        item = UserInput(uuid4().hex, task_id, transcript.text, "speech", recording_id)
+        item = UserInput(
+            uuid4().hex, task_id, transcript.text, "speech", recording_id, question_id
+        )
         self._transcripts[key] = item
         self._inputs.put_nowait(item)
         return item
@@ -121,6 +158,7 @@ class TeamGateway:
     async def observe(self, request: ObservationRequest) -> ObservationResult:
         """调用感知服务，任务取消后拒绝迟到观察进入教学流程."""
         self._require_active(request.task_id)
+        generation = self._scene_generation
         async with asyncio.timeout(request.timeout_s):
             result = await self._perception.observe(request)
         self._require_active(request.task_id)
@@ -129,4 +167,11 @@ class TeamGateway:
             or result.observation_id != request.observation_id
         ):
             raise ValueError("Perception result does not match request")
-        return result
+        moving = any(
+            record.raw_request.skill_name == "move_relative"
+            and not record.status.is_terminal
+            for record in self._runtime.list_actions()
+        )
+        return replace(
+            result, stale=result.stale or moving or generation != self._scene_generation
+        )
