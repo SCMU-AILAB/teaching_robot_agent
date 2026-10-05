@@ -4,6 +4,10 @@
 
 审核人：项目负责人本人。本文提供队友编码所需的 Python 接口签名、数据含义和装配规则；属于草案，不代表实现已存在。网络接口以 [API_CONTRACT.md](../API_CONTRACT.md) 为准。
 
+## 赛题主流程更新
+
+默认入口现在是 RobotApplication → RobotHost → EmbodiedAgent，不要求教学会话。感知通过 PerceptionService 注入，ASR 最终转写仍进入 TeamGateway.submit_transcript；课程模式独立选择。HTTP/SSE 实现状态未变。详见 [赛题框架](COMPETITION_ARCHITECTURE.md)。
+
 ## 1. 接口归属
 
 | 负责人 | 实现目录 | 核心提供的依赖 | 交付给核心的对象 |

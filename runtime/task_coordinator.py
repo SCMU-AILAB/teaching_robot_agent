@@ -88,7 +88,11 @@ class TaskCoordinator:
         return record
 
     def complete_task(
-        self, task_id: int, *, teaching: TeachingSession | None = None
+        self,
+        task_id: int,
+        *,
+        teaching: TeachingSession | None = None,
+        interaction_completed: bool = False,
     ) -> TaskState:
         """由调用方明确结束任务；动作成功不会提前关闭多步骤任务."""
         task = self.get_task(task_id)
@@ -103,7 +107,7 @@ class TaskCoordinator:
             raise ValueError("Teaching completion must belong to this task")
         if any(not item.status.is_terminal for item in records):
             raise ValueError("All actions must be finished")
-        if not records and teaching is None:
+        if not records and teaching is None and not interaction_completed:
             raise ValueError("Empty tasks require teaching completion evidence")
         task.status = (
             TaskStatus.COMPLETED

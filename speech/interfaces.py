@@ -31,7 +31,7 @@ class AudioRecorder(Protocol):
 
 
 class ASRProvider(Protocol):
-    """最终转写由核心统一提交给教学流程."""
+    """最终转写由核心统一提交给机器人任务入口."""
 
     async def transcribe(
         self, audio: AudioReference, timeout_s: float

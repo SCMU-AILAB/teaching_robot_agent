@@ -25,6 +25,7 @@ class TaskSnapshot:
     blocked_reason: str | None
     capabilities: tuple[RobotCapability, ...] = ()
     available_skills: tuple[str, ...] = ()
+    skill_parameters: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,15 @@ class TeamGateway:
         self._inputs: asyncio.Queue[UserInput] = asyncio.Queue()
         self._transcripts: dict[tuple[int, str], UserInput] = {}
         self._scene_generation: int = 0
+        self._observations: dict[int, ObservationResult] = {}
+
+    def latest_observation(self, task_id: int) -> ObservationResult | None:
+        """提供最近观察证据，不保证新鲜度，调用方必须检查 stale 和时间."""
+        return self._observations.get(task_id)
+
+    def finish_interaction(self, task_id: int) -> TaskState:
+        """由宿主显式结束一次问答任务，仍检查所有实际动作终态."""
+        return self._coordinator.complete_task(task_id, interaction_completed=True)
 
     def create_task(self, user_target: str) -> TaskState:
         """创建任务记录，后续教学决策由独立消费者负责."""
@@ -71,6 +81,10 @@ class TeamGateway:
             self._runtime.blocked_reason,
             tuple(sorted(self._runtime.robot.capabilities)),
             tuple(self._runtime.registry.names()),
+            tuple(
+                (name, self._runtime.registry.get(name).parameter_help)
+                for name in self._runtime.registry.names()
+            ),
         )
 
     async def cancel_task(self, task_id: int) -> TaskState:
@@ -94,6 +108,10 @@ class TeamGateway:
         )
         if skill_name in {"move_relative", "turn_relative", "navigate_to"}:
             self._scene_generation += 1
+            self._observations = {
+                key: replace(value, stale=True)
+                for key, value in self._observations.items()
+            }
             _ = self._perception.invalidate("提交相对移动，场景可能变化")
         return record
 
@@ -112,7 +130,21 @@ class TeamGateway:
     async def wait_for_action(self, task_id: int, action_id: int) -> ActionRecord:
         """事件驱动等待终态，不轮询模型或设备."""
         _ = self.get_action_status(task_id, action_id)
-        return await self._runtime.wait_for_action(action_id)
+        result = await self._runtime.wait_for_action(action_id)
+        if result.raw_request.skill_name in {
+            "move_relative",
+            "turn_relative",
+            "navigate_to",
+        }:
+            self._scene_generation += 1
+            self._observations = {
+                key: replace(value, stale=True)
+                for key, value in self._observations.items()
+            }
+            _ = self._perception.invalidate(
+                "运动已结束，下一次观察必须使用新的场景版本"
+            )
+        return result
 
     def submit_text(
         self, task_id: int, text: str, question_id: str | None = None
@@ -183,6 +215,8 @@ class TeamGateway:
             and not record.status.is_terminal
             for record in self._runtime.list_actions()
         )
-        return replace(
+        result = replace(
             result, stale=result.stale or moving or generation != self._scene_generation
         )
+        self._observations[request.task_id] = result
+        return result

@@ -87,3 +87,7 @@ uv run python -m app.model_demo agent '请先查询圆形的教学资料，再�
 ## 课堂宿主联调补充
 
 `app.classroom_demo` 已连接服务器 Qwen 完成真实知识工具查询和追问讲解；脚本学生随后答完两题，教学状态与任务状态均为 completed，全程未创建动作。设备与感知仍为模拟，学生回答由脚本提供。宿主新增测试覆盖动作成功续接、失败终止、停止、输入去重、连续动作上限及教学完成不掩盖未结束动作；当前 55 项测试通过，Ruff、格式检查及 basedpyright（零错误、零警告）均通过。
+
+## 赛题主框架更新（2026-10-05）
+
+主入口已改为 `uv run main.py` 的机器人控制台，由 RobotApplication 和 RobotHost 装配；普通观察、移动和安全问答不创建教学会话。ClassroomHost 保留为显式课程模式。新架构与验收边界以 [赛题框架](COMPETITION_ARCHITECTURE.md) 为准。

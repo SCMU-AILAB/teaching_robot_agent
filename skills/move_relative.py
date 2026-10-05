@@ -15,6 +15,10 @@ class MoveRelativeSkill(RobotSkill):
     """沿当前朝向移动一段距离，负距离代表后退；不提供目标点导航."""
 
     name: str = "move_relative"
+    parameter_help: str = (
+        'arguments={"distance_m": 数值, "speed_m_s": 可选数值}；'
+        + "距离米，范围 [-2,2]，速度 (0,0.5]，默认 0.1。不是目标点导航。"
+    )
     required_capabilities: frozenset[RobotCapability] = frozenset(
         {
             RobotCapability.MOVE_RELATIVE,

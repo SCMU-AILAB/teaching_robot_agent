@@ -14,6 +14,10 @@ class TurnRelativeSkill(MoveRelativeSkill):
     """复用平面位姿验证与停止清理，转向单位为弧度."""
 
     name: str = "turn_relative"
+    parameter_help: str = (
+        'arguments={"angle_rad": 数值, "speed_rad_s": 可选数值}；'
+        + "角度弧度，逆时针为正，范围 [-π,π]；角速度 (0,1]，默认 0.3。"
+    )
     required_capabilities: frozenset[RobotCapability] = frozenset(
         {
             RobotCapability.TURN_RELATIVE,

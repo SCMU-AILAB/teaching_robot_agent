@@ -7,6 +7,7 @@ from app.team_gateway import TeamGateway
 from domain.education import AnswerEvaluation, KnowledgePoint, TeachingSession
 from domain.models import ActionRecord
 from domain.services import ObservationRequest, ObservationResult
+from education.knowledge_service import KnowledgeService, build_home_knowledge
 from education.service import EducationService
 
 
@@ -14,13 +15,30 @@ class ToolAdapter:
     """固定任务归属，避免工具参数让模型切换其他任务."""
 
     def __init__(
-        self, _task_id: int, _gateway: TeamGateway, _education: EducationService
+        self,
+        _task_id: int,
+        _gateway: TeamGateway,
+        _education: EducationService | None = None,
+        _knowledge: KnowledgeService | None = None,
     ) -> None:
-        """绑定已创建教学会话及其任务."""
-        _ = _education.get_state(_task_id)
+        """绑定机器人任务；只有显式注入教育服务时才要求课程会话."""
+        if _education is not None:
+            _ = _education.get_state(_task_id)
         self._task_id: int = _task_id
         self._gateway: TeamGateway = _gateway
-        self._education: EducationService = _education
+        self._education: EducationService | None = _education
+        self._knowledge: KnowledgeService = _knowledge or build_home_knowledge()
+
+    @property
+    def teaching_enabled(self) -> bool:
+        """报告本任务是否显式装配课程，控制工具暴露范围."""
+        return self._education is not None
+
+    def _require_education(self) -> EducationService:
+        """非课程任务不能意外创建或更新学生成绩."""
+        if self._education is None:
+            raise ValueError("Teaching mode is not enabled")
+        return self._education
 
     @property
     def task_id(self) -> int:
@@ -39,11 +57,13 @@ class ToolAdapter:
 
     def lookup_knowledge(self, query: str) -> tuple[KnowledgePoint, ...]:
         """查询教学资料，不使用模型记忆冒充外部来源."""
-        return self._education.lookup_knowledge(query)
+        if self._education is not None:
+            return self._education.lookup_knowledge(query)
+        return self._knowledge.lookup(query)
 
     def get_teaching_state(self) -> TeachingSession:
         """读取本任务教学进度."""
-        return self._education.get_state(self._task_id)
+        return self._require_education().get_state(self._task_id)
 
     async def evaluate_answer(
         self, question_id: str, answer: str, submission_id: str
@@ -54,7 +74,7 @@ class ToolAdapter:
         snapshot = await self._gateway.get_snapshot(self._task_id)
         if snapshot.task.status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
             raise ValueError("Task is no longer active")
-        return self._education.evaluate_answer(
+        return self._require_education().evaluate_answer(
             self._task_id, question_id, answer, submission_id
         )
 

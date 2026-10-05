@@ -7,8 +7,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import override
 
-from agent.classroom_host import ClassroomHost, DecisionAgent
+from agent.classroom_host import ClassroomHost
 from agent.embodied_agent import AgentTurn
+from agent.interfaces import DecisionAgent
 from app.team_gateway import TeamGateway, UserInput
 from domain.education import TeachingStage
 from domain.models import ActionStatus, TaskStatus

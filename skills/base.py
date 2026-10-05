@@ -12,6 +12,7 @@ class RobotSkill(ABC):
     """动作语义契约，定义校验、执行、验证和清理流程."""
 
     name: str
+    parameter_help: str = "参数由具体 Skill 定义。"
     required_capabilities: frozenset[RobotCapability] = frozenset()
 
     @abstractmethod

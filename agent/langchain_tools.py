@@ -7,13 +7,18 @@ from agent.tools import ToolAdapter
 
 
 def build_langchain_tools(adapter: ToolAdapter) -> tuple[BaseTool, ...]:
-    """注册七个模型工具；等待动作由宿主负责，不暴露轮询工具."""
-    return (
+    """通用任务只注册机器人与知识工具，课程工具按需开放."""
+    common: tuple[BaseTool, ...] = (
         StructuredTool.from_function(coroutine=adapter.observe_scene),
         StructuredTool.from_function(func=adapter.lookup_knowledge),
-        StructuredTool.from_function(func=adapter.get_teaching_state),
-        StructuredTool.from_function(coroutine=adapter.evaluate_answer),
         StructuredTool.from_function(coroutine=adapter.submit_action),
         StructuredTool.from_function(func=adapter.get_action_status),
         StructuredTool.from_function(coroutine=adapter.cancel_action),
     )
+    if adapter.teaching_enabled:
+        return (
+            *common,
+            StructuredTool.from_function(func=adapter.get_teaching_state),
+            StructuredTool.from_function(coroutine=adapter.evaluate_answer),
+        )
+    return common
