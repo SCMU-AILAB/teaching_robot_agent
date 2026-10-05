@@ -1,8 +1,12 @@
 # 模块协作合同 v0.1（待审核）
 
-实现进度：共享 Python 模型已在 `domain/services.py`；感知与语音 Protocol 已在 `perception/interfaces.py`、`speech/interfaces.py`；核心本地门面位于 `app/team_gateway.py`。这些接口可直接导入，示例 `python -m app.team_demo`。以下 HTTP 映射及完整生命周期仍属于设计目标；实际内部 ObservationResult 使用 frame+analysis 组合及不可变元组，播放终态统一为 PlaybackState。当前 EvidenceStore 为有容量上限、无自动过期的内存实现，容量不足明确拒绝写入。TeamGateway 输入通道尚未处理教学问题编号和评价语义。
+实现进度：共享 Python 模型已在 `domain/services.py`；感知与语音 Protocol 已在 `perception/interfaces.py`、`speech/interfaces.py`；核心本地门面位于 `app/team_gateway.py`。这些接口可直接导入，示例 `python -m app.team_demo`。以下 HTTP 映射及完整生命周期仍属于设计目标；实际内部 ObservationResult 使用 frame+analysis 组合及不可变元组，播放终态统一为 PlaybackState。当前 EvidenceStore 为有容量上限、无自动过期的内存实现，容量不足明确拒绝写入。TeamGateway 输入已支持 question_id；离线 TeachingFlow 消费输入并调用教学评价。LangChain 工具和 Ollama 视觉适配已实现，装配及当前边界见 [本地模型接入](LOCAL_MODELS.md)。
 
 审核人：项目负责人本人。本文提供队友编码所需的 Python 接口签名、数据含义和装配规则；属于草案，不代表实现已存在。网络接口以 [API_CONTRACT.md](../API_CONTRACT.md) 为准。
+
+## 赛题主流程更新
+
+默认入口现在是 RobotApplication → RobotHost → EmbodiedAgent，不要求教学会话。感知通过 PerceptionService 注入，ASR 最终转写仍进入 TeamGateway.submit_transcript；课程模式独立选择。HTTP/SSE 实现状态未变。详见 [赛题框架](COMPETITION_ARCHITECTURE.md)。
 
 ## 1. 接口归属
 
@@ -184,9 +188,9 @@ PlaybackResult 与 PlaybackState 字段相同，但只能为终态。真正播�
 - 实现 EvidenceStore 与服务依赖装配，让两位队友有真实依赖可调用。
 - 实现状态快照和事件广播器，保留单个 Runtime 事件消费者。
 - 实现用户输入队列、取消令牌和 generation/版本检查，防止已取消任务被迟到结果复活。
-- 扩展 TaskCoordinator 的纯教学完成条件：现有 complete_task 要求至少一个动作，后续不能为通过该限制而创建假动作。
+- 已扩展 TaskCoordinator 的纯教学完成条件：同任务的已完成 TeachingSession 可作为零动作任务完成依据；实际动作仍须全部结束。ClassroomHost 负责传入教学完成状态，不创建假动作。
 - 实现独立 SpeechSkill；现有 RobotSkill 的统一“机器人停止”清理假设不直接适用于音频。扩展资源声明/Skill 清理契约，保持移动停止保障。
 - 按已审核 HTTP 合同添加路由、统一错误及序列化，再与前端联调。
 - 每次提交通过 Ruff、basedpyright 与相关测试。接口变更先更新合同再由项目负责人确认。
 
-变更记录：2026-10-01，首版草案，待项目负责人审核。模型细节不明不阻塞摄像头、语音与展示模拟实现，但阻塞真实 VLM 协议适配。
+变更记录：2026-10-01，首版草案，待项目负责人审核。当时模型细节尚未确定。2026-10-04 已通过现有 Ollama 服务接入本地 VLM，Python 适配与 HTTP 服务实现状态应分别判断。

@@ -4,6 +4,7 @@
 from abc import ABC, abstractmethod
 
 from domain.models import SkillResult
+from domain.robot import RobotCapability
 from robot.base import RobotAdapter
 
 
@@ -11,6 +12,8 @@ class RobotSkill(ABC):
     """动作语义契约，定义校验、执行、验证和清理流程."""
 
     name: str
+    parameter_help: str = "参数由具体 Skill 定义。"
+    required_capabilities: frozenset[RobotCapability] = frozenset()
 
     @abstractmethod
     def validate(self, args: dict[str, object]) -> None:
@@ -19,6 +22,8 @@ class RobotSkill(ABC):
 
     async def check_preconditions(self, robot: RobotAdapter) -> None:
         """确认设备已连接且未处于运动状态."""
+        for capability in self.required_capabilities:
+            robot.require_capability(capability)
         state = await robot.get_state()
         if not state.is_connected:
             raise RuntimeError("robot is not connected")
