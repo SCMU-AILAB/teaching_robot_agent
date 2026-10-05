@@ -1,5 +1,11 @@
 # Teaching Robot Agent
 
+## 与设备无关的机器人底座
+
+`RobotAdapter` 定义连接、状态与停止，以及按能力提供的移动、转向和导航接口。`RobotAdapterFactory` 注册设备构造器，`build_robot_skills()` 根据能力装配动作；目前只有模拟器，导航仅有接口。接入主办方 SDK 时实现适配器，无需改动教学服务。
+
+运行 `uv run python -m app.robot_demo` 可独立验证前进、转向、再次前进，不需要 Agent 或课堂宿主。接口语义和厂商接入步骤见 [机器人适配框架](docs/ROBOT_ADAPTER.md)。
+
 ## 本地模型与 LangChain
 
 已接入 Ollama 视觉适配器、LangChain 七个工具和有界决策循环。默认复用服务器已有的 `qwen3.5:9b`，宇树 VLM 可作为视觉对照。选型依据、实测结果、环境配置及运行方法见 [本地模型接入](docs/LOCAL_MODELS.md)。
@@ -97,7 +103,7 @@ Ruff 负责代码检查、导入排序和统一格式；basedpyright 使用 `rec
 
 ## 模拟范围
 
-所有设备动作都是**模拟相对移动**，没有连接真实硬件，也不代表目标点导航。成功证据含 `simulated: True`。模拟器的 `time_scale` 只压缩执行时间，距离和速度参数仍使用米和米/秒。
+当前设备动作是**模拟相对移动与原地转向**，没有连接真实硬件，也不代表目标点导航。成功证据含 `simulated: True`。模拟器的 `time_scale` 只压缩执行时间，距离和速度参数仍使用米和米/秒。
 
 ## 按什么顺序读
 

@@ -5,6 +5,7 @@ import math
 from typing import override
 
 from domain.models import SkillResult
+from domain.robot import RobotCapability
 from domain.validation import finite_float, string_key_dict
 from robot.base import RobotAdapter
 from skills.base import RobotSkill
@@ -14,6 +15,12 @@ class MoveRelativeSkill(RobotSkill):
     """沿当前朝向移动一段距离，负距离代表后退；不提供目标点导航."""
 
     name: str = "move_relative"
+    required_capabilities: frozenset[RobotCapability] = frozenset(
+        {
+            RobotCapability.MOVE_RELATIVE,
+            RobotCapability.LOCALIZATION,
+        }
+    )
 
     @override
     def validate(self, args: dict[str, object]) -> None:
@@ -85,11 +92,12 @@ class MoveRelativeSkill(RobotSkill):
             target_yaw = finite_float(expected.get("yaw"), "expected_position.yaw")
         except (TypeError, ValueError):
             return False
-        return all(
+        return abs(
+            math.remainder(state.position.yaw - target_yaw, math.tau)
+        ) <= 0.001 and all(
             math.isclose(actual, target, rel_tol=0.0, abs_tol=0.001)
             for actual, target in (
                 (state.position.x, target_x),
                 (state.position.y, target_y),
-                (state.position.yaw, target_yaw),
             )
         )

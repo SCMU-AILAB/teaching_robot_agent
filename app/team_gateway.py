@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from domain.education import TeachingSession
 from domain.models import ActionRecord, RobotState, TaskState, TaskStatus
+from domain.robot import RobotCapability
 from domain.services import ObservationRequest, ObservationResult, TranscriptResult
 from domain.validation import nonempty_string
 from perception.interfaces import PerceptionService
@@ -22,6 +23,8 @@ class TaskSnapshot:
     actions: tuple[ActionRecord, ...]
     robot: RobotState
     blocked_reason: str | None
+    capabilities: tuple[RobotCapability, ...] = ()
+    available_skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,8 @@ class TeamGateway:
             tuple(self._runtime.list_actions(task_id)),
             robot,
             self._runtime.blocked_reason,
+            tuple(sorted(self._runtime.robot.capabilities)),
+            tuple(self._runtime.registry.names()),
         )
 
     async def cancel_task(self, task_id: int) -> TaskState:
@@ -87,7 +92,7 @@ class TeamGateway:
         record = await self._coordinator.submit_action(
             task_id, skill_name, args, timeout_s
         )
-        if skill_name == "move_relative":
+        if skill_name in {"move_relative", "turn_relative", "navigate_to"}:
             self._scene_generation += 1
             _ = self._perception.invalidate("提交相对移动，场景可能变化")
         return record
@@ -173,7 +178,8 @@ class TeamGateway:
         ):
             raise ValueError("Perception result does not match request")
         moving = any(
-            record.raw_request.skill_name == "move_relative"
+            record.raw_request.skill_name
+            in {"move_relative", "turn_relative", "navigate_to"}
             and not record.status.is_terminal
             for record in self._runtime.list_actions()
         )

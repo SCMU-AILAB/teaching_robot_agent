@@ -170,6 +170,8 @@ class ActionManager:
         request = self._validate_request(request)
         skill = self.registry.get(request.skill_name)
         skill.validate(request.args)
+        for capability in skill.required_capabilities:
+            self.robot.require_capability(capability)
         # ========== Step2: 创建隔离记录并通知消费者 ==========
         record = self.store.create_action(request)
         self._done[record.action_id] = asyncio.Event()
