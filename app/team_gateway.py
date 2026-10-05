@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
+from domain.education import TeachingSession
 from domain.models import ActionRecord, RobotState, TaskState, TaskStatus
 from domain.services import ObservationRequest, ObservationResult, TranscriptResult
 from domain.validation import nonempty_string
@@ -70,6 +71,10 @@ class TeamGateway:
     async def cancel_task(self, task_id: int) -> TaskState:
         """直接取消任务动作，绕过任何模型推理."""
         return await self._coordinator.cancel_task(task_id)
+
+    def complete_teaching_task(self, session: TeachingSession) -> TaskState:
+        """根据已完成教学快照终结任务，仍要求所有实际动作结束."""
+        return self._coordinator.complete_task(session.task_id, teaching=session)
 
     async def submit_action(
         self,

@@ -184,7 +184,7 @@ PlaybackResult 与 PlaybackState 字段相同，但只能为终态。真正播�
 - 实现 EvidenceStore 与服务依赖装配，让两位队友有真实依赖可调用。
 - 实现状态快照和事件广播器，保留单个 Runtime 事件消费者。
 - 实现用户输入队列、取消令牌和 generation/版本检查，防止已取消任务被迟到结果复活。
-- 扩展 TaskCoordinator 的纯教学完成条件：现有 complete_task 要求至少一个动作，后续不能为通过该限制而创建假动作。
+- 已扩展 TaskCoordinator 的纯教学完成条件：同任务的已完成 TeachingSession 可作为零动作任务完成依据；实际动作仍须全部结束。ClassroomHost 负责传入教学完成状态，不创建假动作。
 - 实现独立 SpeechSkill；现有 RobotSkill 的统一“机器人停止”清理假设不直接适用于音频。扩展资源声明/Skill 清理契约，保持移动停止保障。
 - 按已审核 HTTP 合同添加路由、统一错误及序列化，再与前端联调。
 - 每次提交通过 Ruff、basedpyright 与相关测试。接口变更先更新合同再由项目负责人确认。

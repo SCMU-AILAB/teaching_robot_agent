@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 
+from domain.education import TeachingSession, TeachingStage
 from domain.models import (
     ActionRecord,
     ActionRequest,
@@ -86,7 +87,9 @@ class TaskCoordinator:
         )
         return record
 
-    def complete_task(self, task_id: int) -> TaskState:
+    def complete_task(
+        self, task_id: int, *, teaching: TeachingSession | None = None
+    ) -> TaskState:
         """由调用方明确结束任务；动作成功不会提前关闭多步骤任务."""
         task = self.get_task(task_id)
         if task.status in _TASK_TERMINAL:
@@ -94,8 +97,14 @@ class TaskCoordinator:
         if task.status == TaskStatus.CANCELLING:
             raise ValueError("Wait for task cancellation to finish")
         records = [self.runtime.get_action(item) for item in task.action_ids]
-        if not records or any(not item.status.is_terminal for item in records):
-            raise ValueError("Task must have actions, and all actions must be finished")
+        if teaching is not None and (
+            teaching.task_id != task_id or teaching.stage != TeachingStage.COMPLETED
+        ):
+            raise ValueError("Teaching completion must belong to this task")
+        if any(not item.status.is_terminal for item in records):
+            raise ValueError("All actions must be finished")
+        if not records and teaching is None:
+            raise ValueError("Empty tasks require teaching completion evidence")
         task.status = (
             TaskStatus.COMPLETED
             if all(item.status == ActionStatus.SUCCEEDED for item in records)
