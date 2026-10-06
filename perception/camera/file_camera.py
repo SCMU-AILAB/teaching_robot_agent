@@ -2,17 +2,32 @@
 """文件相机：从本地图片产出一帧，供无硬件环境使用."""
 
 import os
-import time
+from typing import override
 
-from domain.services import FrameReference
+from perception.camera.base import BaseCamera, RawFrame
 from storage.evidence import EvidenceStore
 
 
 def read_image_size(_data: bytes) -> tuple[int, int, str]:
-    """读取照片尺寸和格式."""
+    """读取照片尺寸和格式.
+
+    Args:
+        _data: 完整图片字节，首版支持 PNG 与 JPEG.
+
+    Returns:
+        宽、高与媒体类型三元组.
+
+    Raises:
+        ValueError: 数据不完整、格式不支持或宽高非法时抛出.
+    """
     if _data.startswith(b"\x89PNG"):
+        # 宽高固定落在 [16:24]；长度不够就是截断（切片越界不报错，只给空串）
+        if len(_data) < 24:
+            raise ValueError("PNG 数据不完整")
         width = int.from_bytes(_data[16:20], "big")
         height = int.from_bytes(_data[20:24], "big")
+        if width <= 0 or height <= 0:
+            raise ValueError("PNG 宽高不合法")
         return width, height, "image/png"
 
     elif _data.startswith(b"\xff\xd8"):
@@ -34,8 +49,12 @@ def read_image_size(_data: bytes) -> tuple[int, int, str]:
             # ---- 找到 SOF（含尺寸的那一段）----
             if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
                 # 段内结构：[0]FF [1]标记 [2:4]长度 [4]精度 [5:7]高 [7:9]宽
+                if _pos + 9 > len(_data):
+                    raise ValueError("JPEG 数据不完整")
                 height = int.from_bytes(_data[_pos + 5 : _pos + 7], "big")
                 width = int.from_bytes(_data[_pos + 7 : _pos + 9], "big")
+                if width <= 0 or height <= 0:
+                    raise ValueError("JPEG 宽高不合法")
                 return width, height, "image/jpeg"  # ★ 按签名返回（宽, 高）
 
             # ---- 没有长度字段的标记：只跳 2 个字节 ----
@@ -47,6 +66,8 @@ def read_image_size(_data: bytes) -> tuple[int, int, str]:
             length = int.from_bytes(_data[_pos + 2 : _pos + 4], "big")
             if length < 2:  # 防止 _pos 不动 → 死循环
                 raise ValueError("JPEG 段长度非法")
+            if _pos + 2 + length > len(_data):  # 段比文件还长 → 数据被截断
+                raise ValueError("JPEG 数据不完整")
             _pos += 2 + length  # 标记2字节 + 长度字段的值
 
         # ========== Step3: 走到底都没找到 ==========
@@ -56,46 +77,30 @@ def read_image_size(_data: bytes) -> tuple[int, int, str]:
         raise ValueError("传入照片格式错误")
 
 
-class FileCamera:
+class FileCamera(BaseCamera):
     """在无硬件的情况下直接从本地文件读取一帧照片."""
 
     def __init__(
         self, _evidence: EvidenceStore, _camera_id: str, _image_path: str
     ) -> None:
         """记录图片来源、相机标识与证据存储."""
-        self._evidence: EvidenceStore = _evidence
-        self._camera_id: str = _camera_id
+        super().__init__(_evidence, _camera_id)
         self._image_path: str = _image_path
-        self._next_frame_seq: int = 1
-        self._closed: bool = False
 
-    async def connect(self) -> None:
+    @override
+    async def open_device(self) -> None:
         """检查图片文件是否存在."""
         if not os.path.isfile(self._image_path):
             raise ValueError("图片文件不存在/文件路径错误")
 
-    async def capture(self, scene_revision: int) -> FrameReference:
-        """读文件->读宽高->取时刻->存柜子->以FrameReference返回."""
-        if self._closed:
-            raise RuntimeError("camera is closed")
+    @override
+    async def grab_frame(self) -> RawFrame:
+        """读文件并解析宽高与媒体类型."""
         with open(self._image_path, "rb") as f:
-            rb = f.read()
-        width, height, image_type = read_image_size(rb)
-        captured_at = time.time()
-        receipt = await self._evidence.save(rb, image_type, captured_at)
-        frame_id = f"{self._camera_id}:{self._next_frame_seq}"
-        self._next_frame_seq += 1
+            data = f.read()
+        width, height, media_type = read_image_size(data)
+        return RawFrame(data=data, width=width, height=height, media_type=media_type)
 
-        return FrameReference(
-            frame_id=frame_id,
-            camera_id=self._camera_id,
-            captured_at=captured_at,
-            width=width,
-            height=height,
-            evidence_id=receipt.evidence_id,
-            scene_revision=scene_revision,
-        )
-
-    async def close(self) -> None:
-        """关闭摄像头."""
-        self._closed = True
+    @override
+    async def release_device(self) -> None:
+        """文件相机没有真资源要释放."""

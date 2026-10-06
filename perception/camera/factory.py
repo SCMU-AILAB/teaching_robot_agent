@@ -1,31 +1,30 @@
 # perception/camera/factory.py
-"""按配置调用对应摄像头."""
+"""显式注册相机构造器，装配时选择，不在导入阶段打开设备."""
 
-from perception.camera.file_camera import FileCamera
+from collections.abc import Callable
+
+from domain.validation import nonempty_string
 from perception.interfaces import CameraSource
-from storage.evidence import EvidenceStore
 
 
-def create_camera(
-    _camera_type: str,
-    _evidence: EvidenceStore,
-    _camera_id: str,
-    _source: str,
-) -> CameraSource:
-    """按相机类型创建对应的相机实现.
+class CameraFactory:
+    """默认不含任何相机，未知名称明确报错而不回退."""
 
-    Args:
-        _camera_type: 相机类型名，当前支持 "file".
-        _evidence: 证据存储，由核心注入.
-        _camera_id: 相机标识，写入每次采集的帧引用.
-        _source: 图片来源；"file" 类型下为图片路径.
+    def __init__(self) -> None:
+        """保存构造器，相机参数由构造器闭包注入."""
+        self._builders: dict[str, Callable[[], CameraSource]] = {}
 
-    Returns:
-        满足 CameraSource 协议、可 connect / capture / close 的相机实例.
+    def register(self, name: str, builder: Callable[[], CameraSource]) -> None:
+        """注册相机构造器，不允许覆盖已有名称."""
+        name = nonempty_string(name, "camera name")
+        if name in self._builders:
+            raise ValueError("相机已经注册")
+        self._builders[name] = builder
 
-    Raises:
-        ValueError: 相机类型尚未实现或不被支持时抛出.
-    """
-    if _camera_type == "file":
-        return FileCamera(_evidence, _camera_id, _source)
-    raise ValueError(f"不支持的相机类型：{_camera_type}")
+    def create(self, name: str) -> CameraSource:
+        """构造未连接的相机，连接和清理由上层生命周期管理."""
+        try:
+            builder = self._builders[name]
+        except KeyError:
+            raise ValueError("未知相机来源") from None
+        return builder()

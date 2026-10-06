@@ -50,9 +50,6 @@ class SceneStore:
     async def remember(
         self,
         _question: str,
-        _camera_id: str,
-        _model_id: str,
-        _scene_revision: int,
         _frame: FrameReference,
         _analysis: VisionAnalysis,
         _analyzed_at: float,
@@ -61,9 +58,6 @@ class SceneStore:
 
         Args:
             _question: 核心传来的完整问题，首尾空白会被去掉.
-            _camera_id: 采集这一帧的相机标识.
-            _model_id: 产出结论的模型标识.
-            _scene_revision: 这次观察属于第几版场景.
             _frame: 本次采集的帧引用，采集时刻从它身上取.
             _analysis: 视觉适配器返回的观察结论.
             _analyzed_at: 推理完成的时刻.
@@ -72,19 +66,22 @@ class SceneStore:
             ValueError: 问题、相机标识或模型标识为空文本时抛出.
         """
         question = nonempty_string(_question, "question").strip()
-        camera_id = nonempty_string(_camera_id, "camera_id")
-        model_id = nonempty_string(_model_id, "model_id")
+        camera_id = nonempty_string(_frame.camera_id, "camera_id")
+        model_id = nonempty_string(_analysis.model_id, "model_id")
         analyzed_at = finite_float(_analyzed_at, "analyzed_at")
-        key = (question, camera_id, model_id, _scene_revision)
+        key = (question, camera_id, model_id, _frame.scene_revision)
 
         existing = self._rows.get(key)
         if existing is not None and _frame.captured_at <= existing.captured_at:
             return
+        if existing is None and len(self._rows) >= self._max_entries:
+            oldest_key = min(self._rows, key=lambda k: self._rows[k].captured_at)
+            del self._rows[oldest_key]
         self._rows[key] = SceneRecord(
             question=question,
             camera_id=camera_id,
             model_id=model_id,
-            scene_revision=_scene_revision,
+            scene_revision=_frame.scene_revision,
             captured_at=_frame.captured_at,
             frame=_frame,
             analysis=_analysis,

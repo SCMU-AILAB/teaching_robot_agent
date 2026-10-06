@@ -73,6 +73,22 @@ class ReadImageSizeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ = read_image_size(b"not an image at all")
 
+    def test_truncated_png_raises(self) -> None:
+        """只有签名的 PNG 说明数据被截断，不能返回 0 乘 0 当成功."""
+        with self.assertRaises(ValueError):
+            _ = read_image_size(b"\x89PNG")
+
+    def test_truncated_jpeg_raises(self) -> None:
+        """SOF 段没写全的 JPEG 同样拒绝解析."""
+        with self.assertRaises(ValueError):
+            _ = read_image_size(b"\xff\xd8\xff\xc0\x08\x00\x01")
+
+    def test_zero_size_raises(self) -> None:
+        """宽高为 0 的 PNG 头部属于非法尺寸."""
+        header = _PNG[:16] + b"\x00" * 8 + _PNG[24:]
+        with self.assertRaises(ValueError):
+            _ = read_image_size(header)
+
 
 class FileCameraTests(unittest.IsolatedAsyncioTestCase):
     """验证文件相机的连接、采集、证据登记与关闭边界."""
@@ -146,3 +162,12 @@ class FileCameraTests(unittest.IsolatedAsyncioTestCase):
         _, _, camera = self.make_camera()
         await camera.close()
         await camera.close()
+
+    async def test_reconnect_allows_capture_again(self) -> None:
+        """关闭后重新连接应该恢复可用，而不是继续报 camera is closed."""
+        _, _, camera = self.make_camera()
+        await camera.connect()
+        await camera.close()
+        await camera.connect()
+        frame = await camera.capture(scene_revision=0)
+        self.assertTrue(frame.frame_id)

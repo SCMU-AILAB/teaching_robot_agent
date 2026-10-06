@@ -54,9 +54,6 @@ class SceneStoreTests(unittest.IsolatedAsyncioTestCase):
         """
         await _store.remember(
             _question=_question,
-            _camera_id="cam0",
-            _model_id="qwen2.5-vl",
-            _scene_revision=_revision,
             _frame=self.make_frame(_captured_at, _seq, _revision),
             _analysis=VisionAnalysis(_summary, "qwen2.5-vl", False),
             _analyzed_at=_captured_at + 0.5,
