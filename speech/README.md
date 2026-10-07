@@ -1,5 +1,7 @@
 # 内部模拟语音链路
 
+更新：已新增真实麦克风、离线 Whisper、系统 TTS 和 PortAudio 播放的独立入口 `uv run --extra speech python -m speech.real_demo`，配置、现场验收与限制见 [真实语音说明](../docs/REAL_SPEECH.md)。以下章节仍描述 P1/P2 模拟链路，不代表真实适配器的状态。
+
 当前完成 P1/P1.1 输入和 P2 输出的内部模拟实现，不连接麦克风、扬声器或网络模型。TTS 生成确定性 PCM WAV 测试音调，不生成真实人声；播放器读取并校验音频，以其时长模拟播放进度。
 
 ## 输入
@@ -54,7 +56,7 @@ await output_service.close()
 
 音频证据仍使用现有内存 EvidenceStore，关闭释放任务和模拟设备占用，不删除已登记证据。证据容量、存储策略和共享模型均未修改。
 
-主应用已可选装配 AudioAdapters，RobotHost 自动将回答交给 Runtime 的 SpeakSkill；任务资源屏障统一等待录音/识别停止，输出取消由动作生命周期负责。独立服务示例仍须自行管理资源，只有注册到同一个 TeamGateway 的资源才参与任务取消。尚未实现真实设备、真实 ASR/TTS、人声播报和 HTTP/SSE。P3 前端模拟版本位于 `frontend/`，使用独立内存数据源，尚未连接本 Python 语音链路。接口合同仍待负责人审核。
+主应用已可选装配 AudioAdapters，RobotHost 自动将回答交给 Runtime 的 SpeakSkill；任务资源屏障统一等待录音/识别停止，输出取消由动作生命周期负责。真实设备、离线 ASR 和系统人声合成已有独立适配器及演示，尚未装配到主应用。独立服务须自行管理资源，只有注册到同一个 TeamGateway 的资源才参与任务取消。HTTP/SSE 尚未实现；P3 前端模拟版本位于 `frontend/`，尚未连接本 Python 语音链路。接口合同仍待负责人审核。
 
 ## 验证
 
