@@ -58,8 +58,11 @@ await output_service.close()
 
 ## 验证
 
+可运行的跨输入输出装配示例：`uv run python -m speech.demo`。它通过真实的内部 TeamGateway 输入队列交接模拟转写，再播放调用方提供的固定测试回答；不会生成教学回答或发出声音。核心交接条件与未完成项见 [内部联调及交接清单](../docs/SPEECH_DISPLAY_INTEGRATION.md)。
+
 ```bash
 uv run python -m unittest tests.test_speech_input tests.test_speech_output -v
+uv run python -m unittest tests.test_speech_integration -v
 uv run ruff check .
 uv run ruff format --check .
 uv run basedpyright
@@ -67,3 +70,5 @@ uv run python -m unittest discover -s tests -v
 ```
 
 并发测试使用事件固定清理/取消顺序，检查状态、调用次数、输入数量及测试兜底关闭前的任务和占用释放。
+
+跨服务测试还覆盖连续两轮输入输出、设备占用失败后的恢复，以及关闭一侧服务时不释放另一侧服务正在使用的租约。
