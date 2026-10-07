@@ -1,43 +1,80 @@
-# Teaching Robot Agent
+# 家庭学习陪伴与安全教育机器人
 
-## 队友可直接使用的代码接口
+围绕赛题提供通用机器人任务框架：语音/文字输入、物体观察、移动讲解和安全知识问答。默认流程不创建课程，不要求出题评分；固定课堂是独立可选模式。
 
-- `domain/services.py`：图片、音频、观察、转写、播放与服务错误的数据结构。
-- `perception/interfaces.py`：感知负责人实现 `CameraSource`、`VisionProvider`、`PerceptionService`。
-- `speech/interfaces.py`：语音负责人实现 `AudioRecorder`、`ASRProvider`、`TTSProvider`、`AudioPlayer`。
-- `storage/evidence.py`：可直接使用的内存 `EvidenceStore`，按编号保存与读取媒体，默认总容量 64 MiB。
-- `app/team_gateway.py`：核心提供的任务创建、快照、动作提交、任务取消、文字输入、最终语音去重和观察入口。
-- `perception/simulated.py`：无需相机和模型的模拟感知，使用真实登记的占位图片，结果明确标记模拟。
+## 当前主链路
 
-运行完整调用示例：
-
-```bash
-uv run python -m app.team_demo
+```text
+文字 / 最终语音转写 → TeamGateway → RobotHost → EmbodiedAgent
+    → LangChain + 本地 Qwen → 查询知识 / 观察现场 / 提交动作
+    → Skill Runtime → RobotAdapter → 模拟器或未来官方 SDK
+    → 执行验证 → 唤醒宿主继续决策 → 返回文本与任务状态
 ```
 
-队友实现接口中的异步方法后，把实例注入核心服务即可，Python Protocol 无需显式继承。视觉适配器实现 `VisionProvider.analyze()`，实际宇树模型协议确定后再连接本地推理服务。
+主应用通过 `RobotApplication(robot, perception, model, knowledge)` 注入依赖。`RobotContextBuilder` 提供任务、设备能力、动作记录和最近观察；`KnowledgeService` 独立于教学会话。模型不直接操作设备，停止不等待模型返回。
 
-当前是可调用的 Python 接口；HTTP/SSE、教学输入消费器、真实音频实现与真实 VLM 调用尚未实现。`TeamGateway.create_task()` 只创建记录，不自动启动教学模型。取消任务会取消 Runtime 动作并拒绝迟到观察/输入，但不会声称已取消尚未接入的录音设备或 GPU 推理。事件广播与完整资源取消仍按 HTTP 合同后续实现。
+架构、模块边界及验收项见 [赛题框架](docs/COMPETITION_ARCHITECTURE.md)。
 
-内部观察使用不可变元组和 `frame`、`analysis` 组合，序列化成 HTTP 字段的转换尚未实现；请导入实际 Python 数据模型，不要照文档重复定义模型。语音播放终态使用 `PlaybackState`，不额外定义同结构的 `PlaybackResult`。
-
-教学机器人的最小可运行基础层。当前实现了数据模型、模拟设备、相对移动 Skill、异步动作 Runtime、任务协调器和内存存储，运行只依赖 Python 3.12+ 标准库。
-
-## 运行
-
-在项目根目录执行：
+## 启动
 
 ```bash
-python3 main.py
-python3 main.py --scenario all
-python3 -m unittest discover -s tests -v
+uv sync --locked
+# 在环境中设置 OLLAMA_BASE_URL，必要时先建立 SSH 隧道。
+uv run main.py
 ```
 
-也可以用 `uv run main.py --scenario all`。演示包含正常完成、设备失败、执行超时、运行中取消、排队取消和两个动作顺序执行；失败与超时场景是主动注入的预期结果。
+控制台直接输入“查询热水安全知识”“看看桌上有什么”“模拟左转 0.1 弧度后再观察”等任务。`/stop` 停止当前任务，`/quit` 退出。每条请求创建独立任务，忙碌期间普通请求被拒绝，停止命令仍可处理。当前控制台支持 macOS/Linux 终端。
 
-## 开发检查
+**默认模型是真实本地 Qwen，机器人和感知均为模拟。** 文字输出没有自动语音播报，主入口没有连接真实摄像头。跨任务长期对话记忆尚未实现。所有真实部署地址与凭据由环境提供，程序不自动读取 `.env`。
 
-使用 `uv sync --locked` 安装锁定的开发依赖，随后运行：
+主入口已从旧动作演示改为机器人控制台。原演示使用独立模块：
+
+```bash
+uv run python -m app.demo --scenario all
+uv run python -m app.robot_demo
+uv run python -m app.model_demo vision /path/to/photo.png '图中有什么？'
+uv run python -m app.classroom_demo
+```
+
+第一项为离线动作生命周期测试；第二项验证模拟前进、转向、再前进；第三项是真实 VLM 读取静态图；第四项为可选固定课堂。模型相关入口均需配置本地服务地址。
+
+## 关键代码
+
+| 模块 | 责任 |
+| --- | --- |
+| `app/robot_application.py` | 通用应用装配和生命周期 |
+| `agent/robot_host.py` | 输入去重、模型决策、等待动作、停止和任务结束 |
+| `agent/embodied_agent.py` | 有界工具循环，模型参数验证 |
+| `agent/context.py` | 机器人上下文；课程上下文独立保留 |
+| `agent/tools.py` | 按任务绑定工具，课程工具可选 |
+| `education/knowledge_service.py` | 家庭学习及安全知识资料，与课程状态解耦 |
+| `perception/interfaces.py` | 相机、视觉提供者和感知服务契约 |
+| `providers/ollama_vision.py` | 真实本地 VLM 图片校验和响应解析 |
+| `runtime/` | 动作生命周期、任务状态、事件广播 |
+| `robot/base.py`、`robot/factory.py` | 与厂商无关的设备能力、接口与构造器注册 |
+| `skills/robot_registry.py` | 按设备能力开放相对移动与转向 |
+| `speech/interfaces.py` | 录音、识别、合成、播放契约 |
+| `agent/classroom_host.py` | 可选课程模式，不是默认机器人入口 |
+
+## 执行规则
+
+- 正常动作进入 Runtime，接受不表示完成。执行后核对位姿、静止状态与证据。
+- 动作失败、超时或取消不会触发模型自动重试；无法确认停止时 Runtime 阻止后续运动。
+- 通用宿主最多续接三个动作，达到上限会停止，不把上限当作目标完成。
+- 每次运动使旧观察失效；已有场景的任务在动作成功后由宿主强制重新观察，再续接模型。观察时间、模拟标记及证据进入上下文。
+- 任务 completed 表示本次交互处理结束且实际动作均已成功结束，不代表模型文本已经过外部事实验证。
+- 成功输入按编号去重；处理失败先取消任务，禁止无条件重放。
+- 应用关闭时取消任务，再释放感知与设备。Runtime 的事件队列由一个消费者读取，需要多消费者时装配一个 ActionEventHub。
+
+当前设备动作只有模拟相对移动和转向，没有真实导航、避障或硬件急停。导航只定义接口，模拟位移不能被称为导航到物体。真实设备需按反馈精度、状态新鲜度及停止行为独立验收。
+
+## 团队接入与规范
+
+- [设备适配接口](docs/ROBOT_ADAPTER.md)：拿到主办方 SDK 后实现 RobotAdapter。
+- [本地模型配置及调研](docs/LOCAL_MODELS.md)：Qwen 默认、宇树 VLM 对照、服务器联调结果。
+- [模块协作合同](docs/MODULE_CONTRACT.md)：共享媒体、感知、语音接口及证据存储。
+- [HTTP 合同草案](API_CONTRACT.md)：尚未实现 HTTP/SSE；本次 Python 重构不新增网络端点。
+- [编码规范](docs/CODING_SPEC.md)：代码由负责人审核；当前按用户指示直接在 main 修改。
 
 ```bash
 uv run ruff check .
@@ -46,63 +83,4 @@ uv run basedpyright
 uv run python -m unittest discover -s tests -v
 ```
 
-Ruff 负责代码检查、导入排序和统一格式；basedpyright 使用 `recommended` 模式，警告也会使检查失败，业务代码与测试均纳入检查。具体开发约定见 `AGENTS.md`。
-
-编码规范的适用范围和目录对应关系见 [编码规范说明](docs/CODING_SPEC.md)。显式构造函数的关键字参数按规范使用前导下划线，例如 `SimulatedAdapter(_mode=..., _time_scale=...)`、`ActionManager(..., _store=..., _cleanup_timeout_s=...)`。日志级别由环境变量 `LOG_LEVEL` 控制；`.env.example` 提供配置示例，程序不自动加载环境文件。
-
-代码与接口合同由项目负责人本人审核。HTTP 接口将在 [接口合同](API_CONTRACT.md) 中先定义、确认后实现，当前没有已批准的网络端点。
-
-团队联调先阅读 [接口合同草案](API_CONTRACT.md) 和 [模块协作合同](docs/MODULE_CONTRACT.md)：前者定义核心提供给展示端的任务、输入、观察、录音、取消和事件接口；后者定义感知、语音模块的异步方法、共享数据、证据服务以及本地 VLM 适配边界。二者当前均待审核，不代表这些接口已运行。
-
-## 模拟范围
-
-所有设备动作都是**模拟相对移动**，没有连接真实硬件，也不代表目标点导航。成功证据含 `simulated: True`。模拟器的 `time_scale` 只压缩执行时间，距离和速度参数仍使用米和米/秒。
-
-## 按什么顺序读
-
-| 文件                          | 职责                                               |
-| ----------------------------- | -------------------------------------------------- |
-| `domain/models.py`            | 动作请求、动作记录、任务状态、机器人位姿和状态事件 |
-| `robot/base.py`               | 设备适配器契约：连接、查询、相对移动、停止         |
-| `robot/simulated.py`          | 可配置成功、失败、挂起的模拟设备                   |
-| `skills/base.py`              | Skill 的参数校验、前置检查、执行、验证和清理接口   |
-| `skills/move_relative.py`     | 一个完整的相对移动 Skill                           |
-| `skills/registry.py`          | 按名称注册和查找 Skill                             |
-| `storage/memory.py`           | 内存中的动作与任务记录，读写均复制数据             |
-| `runtime/action_manager.py`   | 动作排队、状态转换、超时、取消、停止确认和事件     |
-| `runtime/task_coordinator.py` | 创建任务、关联动作、明确结束或取消整个任务         |
-| `app/demo.py`                 | 依赖装配与六种演示场景                             |
-
-调用路径是：`演示入口 → TaskCoordinator → ActionManager → RobotSkill → RobotAdapter`。
-
-## 状态与执行约定
-
-- `ActionStatus` 表达某个动作是否排队、执行、验证、取消或结束。
-- `RobotState` 表达设备的连接、运动状态及位姿，不代替动作状态。
-- `TaskStatus` 表达用户任务是否进行或结束。一个动作成功后任务仍保持运行，调用方通过 `complete_task()` 明确结束多步骤任务。
-
-提交动作会立即返回带有整数编号的 `ActionRecord`。Runtime 的单执行器随后依次执行所有动作，完成验证和清理后再保存终态；`wait_for_action()` 等待终态，`next_event()` 接收状态事件。事件队列当前是单消费者模型，取消等待者不会取消设备动作。
-
-正常状态转换为 `queued → running → verifying → succeeded`。取消排队动作直接得到 `cancelled`；取消执行中的动作先进入 `cancelling`，停止确认后才进入 `cancelled`。执行或验证报错得到 `failed`，超过执行期限得到 `timed_out`。
-
-超时从动作开始执行时计时，覆盖前置检查、执行与验证，不含排队等待；清理另有 `cleanup_timeout_s`。如果无法确认停止，动作记为 `failed`，Runtime 阻止新动作并使已排队动作失败。此时应排查设备状态并建立新的 Runtime。关闭 Runtime 会取消未完成动作、等待清理，再断开设备；断开失败会报告异常。
-
-`complete_task()` 要求任务至少有一个动作且所有动作已结束；全部成功时任务为 `completed`，否则为 `failed`。`cancel_task()` 先取消全部关联动作，再等待终态；停止失败或已有失败、超时动作时任务记为 `failed`，其余情况为 `cancelled`。这些是首版明确的任务策略，后续教学逻辑可以扩展重试和恢复规则。
-
-Runtime 关闭负责结束动作和设备连接，任务的业务终态由调用方通过协调器结束或取消；应用关闭时应先取消尚未结束的任务。取消 `cancel_task()` 的等待者不会中断后台的任务取消流程。事件流没有结束哨兵，应用退出时应取消自己的事件监听协程（演示入口已处理）。
-
-## 扩展一个动作
-
-1. 继承 `RobotSkill`，给出唯一名称和参数校验。
-2. 实现前置检查与执行，设备操作通过 `RobotAdapter` 调用。
-3. 用设备反馈验证完成，返回 `SkillResult` 和证据。
-4. 实现异常、超时与取消后的清理，并确认设备停止。
-5. 在装配入口注册到 `SkillRegistry`，通过协调器提交。
-
-相对移动参数为 `distance_m` 和可选的 `speed_m_s`（默认 0.1）。距离绝对值不超过 2 米，速度大于 0 且不超过 0.5 米/秒；拒绝未知字段、布尔值、非数值及 NaN/Infinity。位置使用平面坐标 `x/y`（米）和 `yaw`（弧度）；记录时间是 Unix 秒，超时由 asyncio 的单调时钟处理。
-
-## 当前边界与下一步
-
-这是单进程、单 asyncio 事件循环、单执行器的基础实现。记录与事件保存在内存，进程退出后不保留；没有数据库恢复或多消费者广播。异步适配器和 Skill 必须响应协程取消，不能在事件循环中执行阻塞 SDK 调用；真实硬件还需要独立验证停止确认与异常处理能力。
-
-`agent/`、`education/`、`perception/` 和 `providers/` 保留现有目录，尚未接入模型、教学服务、摄像头或语音。接下来先扩充感知快照和一个教学主题，再将已验证的 Runtime 包装为 Agent 工具；API 和控制台可以通过同一套提交、查询、取消与事件接口接入。
+basedpyright 要求零错误、零警告。记录、输入去重和教学状态目前均在内存，退出后不保留。

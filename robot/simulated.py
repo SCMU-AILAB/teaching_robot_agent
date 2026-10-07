@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import override
 
 from domain.models import Pose2D, RobotState
+from domain.robot import RobotCapability
 from domain.validation import finite_float
 from robot.base import RobotAdapter
 
@@ -24,6 +25,18 @@ class SimulatedAdapter(RobotAdapter):
     """在内存中模拟相对移动及设备异常."""
 
     is_simulated: bool = True
+
+    @property
+    @override
+    def capabilities(self) -> frozenset[RobotCapability]:
+        """模拟器提供里程计、相对移动与转向，不宣称支持导航."""
+        return frozenset(
+            {
+                RobotCapability.LOCALIZATION,
+                RobotCapability.MOVE_RELATIVE,
+                RobotCapability.TURN_RELATIVE,
+            }
+        )
 
     def __init__(
         self,
@@ -72,6 +85,29 @@ class SimulatedAdapter(RobotAdapter):
         speed_m_s = finite_float(speed_m_s, "speed_m_s")
         if speed_m_s <= 0:
             raise ValueError("speed_m_s must be positive")
+        origin = self._position
+        target = Pose2D(
+            origin.x + distance_m * math.cos(origin.yaw),
+            origin.y + distance_m * math.sin(origin.yaw),
+            origin.yaw,
+        )
+        await self._move_to(target, abs(distance_m) / speed_m_s * self.time_scale)
+
+    @override
+    async def turn_relative(self, angle_rad: float, speed_rad_s: float) -> None:
+        """模拟原地转向，统一复用失败、挂起及停止行为."""
+        angle = finite_float(angle_rad, "angle_rad")
+        speed = finite_float(speed_rad_s, "speed_rad_s")
+        if speed <= 0:
+            raise ValueError("speed_rad_s must be positive")
+        origin = self._position
+        await self._move_to(
+            Pose2D(origin.x, origin.y, origin.yaw + angle),
+            abs(angle) / speed * self.time_scale,
+        )
+
+    async def _move_to(self, target: Pose2D, duration: float) -> None:
+        """在模拟坐标系内插值，不提供目标点导航或避障."""
         if not self._connected:
             raise RuntimeError("robot is not connected")
         if self._moving:
@@ -88,7 +124,6 @@ class SimulatedAdapter(RobotAdapter):
             _ = await stop_event.wait()
             return
 
-        duration = abs(distance_m) / speed_m_s * self.time_scale
         started_at = time.monotonic()
         while not stop_event.is_set():
             elapsed = time.monotonic() - started_at
@@ -96,9 +131,9 @@ class SimulatedAdapter(RobotAdapter):
             if self.mode == SimulationMode.FAILURE:
                 fraction = min(fraction, 0.5)
             self._position = Pose2D(
-                x=origin.x + distance_m * fraction * math.cos(origin.yaw),
-                y=origin.y + distance_m * fraction * math.sin(origin.yaw),
-                yaw=origin.yaw,
+                x=origin.x + (target.x - origin.x) * fraction,
+                y=origin.y + (target.y - origin.y) * fraction,
+                yaw=origin.yaw + (target.yaw - origin.yaw) * fraction,
             )
             self._updated_at = time.time()
             if self.mode == SimulationMode.FAILURE and fraction >= 0.5:

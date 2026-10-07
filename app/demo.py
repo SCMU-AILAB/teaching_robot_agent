@@ -116,3 +116,7 @@ def run_app() -> None:
             await run_scenario(scenario)
 
     asyncio.run(run())
+
+
+if __name__ == "__main__":
+    run_app()
