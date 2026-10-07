@@ -1,43 +1,35 @@
 # tests/test_file_camera.py
 """验证文件相机的采集、证据登记与错误边界."""
 
+import io
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 from perception.camera import FileCamera
 from perception.camera.file_camera import read_image_size
 from storage.evidence import EvidenceStore
 
-# 1x1 的合法 PNG，与 perception/simulated.py 使用的占位图同源
-_PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d4948445200000001000000010804000000"
-    + "b50c0c020000000b4944415478da63fcc300000301010018dd8db0"
-    + "0000000049454e44ae426082"
-)
+
+def _make_image(
+    width: int, height: int, format_name: str, *, progressive: bool = False
+) -> bytes:
+    """用真实编码器生成可解码图片，避免伪造头部掩盖损坏."""
+    stream = io.BytesIO()
+    with Image.new("RGB", (width, height), "white") as image:
+        image.save(stream, format=format_name, progressive=progressive)
+    return stream.getvalue()
+
+
+_PNG = _make_image(1, 1, "PNG")
 
 
 def _make_jpeg(_width: int, _height: int, _marker: int = 0xC0) -> bytes:
-    """构造最小 JPEG 头部，使尺寸解析测试不依赖图片文件.
-
-    Args:
-        _width: 要写入 SOF 段的宽度像素数.
-        _height: 要写入 SOF 段的高度像素数.
-        _marker: SOF 标记，默认基线 0xC0.
-
-    Returns:
-        足以让解析器读到尺寸的 JPEG 字节串.
-    """
-    return (
-        b"\xff\xd8"
-        + bytes([0xFF, _marker])
-        + struct.pack(">H", 17)
-        + b"\x08"
-        + struct.pack(">H", _height)
-        + struct.pack(">H", _width)
-        + b"\xff\xd9"
-    )
+    """生成基线或渐进 JPEG 的完整字节."""
+    return _make_image(_width, _height, "JPEG", progressive=_marker == 0xC2)
 
 
 class ReadImageSizeTests(unittest.TestCase):
@@ -55,7 +47,7 @@ class ReadImageSizeTests(unittest.TestCase):
 
     def test_jpeg_accepts_sof_variants(self) -> None:
         """不同 SOF 标记都应被识别，且宽高偏移一致."""
-        for marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xCF):
+        for marker in (0xC0, 0xC2):
             with self.subTest(marker=marker):
                 self.assertEqual(
                     read_image_size(_make_jpeg(640, 480, marker)),
@@ -82,6 +74,19 @@ class ReadImageSizeTests(unittest.TestCase):
         """SOF 段没写全的 JPEG 同样拒绝解析."""
         with self.assertRaises(ValueError):
             _ = read_image_size(b"\xff\xd8\xff\xc0\x08\x00\x01")
+
+    def test_valid_header_with_corrupt_payload_is_rejected(self) -> None:
+        """拒绝头部伪造、CRC 损坏及缺失像素内容的图片."""
+        corrupt = bytearray(_PNG)
+        corrupt[-20] ^= 1
+        for content in (
+            b"\x89PNG" + b"\x00" * 12 + (1).to_bytes(4, "big") * 2,
+            bytes(corrupt),
+            _PNG[:24],
+            _make_jpeg(8, 8)[:-30],
+        ):
+            with self.subTest(size=len(content)), self.assertRaises(ValueError):
+                _ = read_image_size(content)
 
     def test_zero_size_raises(self) -> None:
         """宽高为 0 的 PNG 头部属于非法尺寸."""
