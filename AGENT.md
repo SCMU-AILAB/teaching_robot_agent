@@ -31,3 +31,10 @@
 相机已通过 [PR #1](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/1) 合入 main，合并提交 `85a63c3b171d60af5f27911f00d0fcc69720d97c`。语音分支包含模拟输入/输出、音频互斥及生命周期实现；此次合并不代表真实 ASR/TTS、麦克风或扬声器已接入主应用。
 
 组合代码验证：104 个 Python 文件格式检查通过；Ruff 通过；basedpyright 0 errors / 0 warnings；146 项 unittest 全部通过。此前 main 工作区已有的未提交修复与个人修改独立保留，不包含在上述两个分支的 PR 中。
+
+## 合并与本地兼容验证
+
+- 语音通过 [PR #2](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/2) 合入 main，合并提交 `ca95a51d4b89a5a00cd33c8651f5f94ff71462b8`。
+- 恢复 main 原有未提交修复后，类型检查发现测试替身的 `release` 事件与新增 `EvidenceStore.release()` 方法重名；已将测试事件重命名为 `allow_save`，保留证据释放接口，未降低检查级别。
+- 本地组合工作区最终验证：107 个 Python 文件格式检查通过，Ruff 通过，basedpyright 0 errors / 0 warnings，154 项 unittest 全部通过。
+- main 原有未提交修改保持原状；已比较原跟踪文件补丁和 3 个未跟踪文件，恢复内容逐字节一致。其业务修改仍未包含在分支 PR 中。

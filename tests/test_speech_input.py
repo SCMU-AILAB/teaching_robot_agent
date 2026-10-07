@@ -26,7 +26,7 @@ class GatedEvidenceStore(EvidenceStore):
         """创建保存门和调用计数."""
         super().__init__()
         self.entered: asyncio.Event = asyncio.Event()
-        self.release: asyncio.Event = asyncio.Event()
+        self.allow_save: asyncio.Event = asyncio.Event()
         self.save_count: int = 0
 
     @override
@@ -36,7 +36,7 @@ class GatedEvidenceStore(EvidenceStore):
         """在实际保存前等待测试释放."""
         self.save_count += 1
         self.entered.set()
-        _ = await self.release.wait()
+        _ = await self.allow_save.wait()
         return await super().save(content, media_type, captured_at)
 
 
@@ -375,7 +375,7 @@ class SpeechInputTests(unittest.IsolatedAsyncioTestCase):
         _ = await store.entered.wait()
         finishing = asyncio.create_task(self.service.finish("one"))
         await asyncio.sleep(0)
-        store.release.set()
+        store.allow_save.set()
         item = await finishing
         self.assertEqual(await self.gateway.next_input(), item)
         self.assertEqual(store.save_count, 1)
@@ -393,7 +393,7 @@ class SpeechInputTests(unittest.IsolatedAsyncioTestCase):
         await self.service.start(self.task_id, "one", 0.001)
         _ = await store.entered.wait()
         await self.service.close()
-        store.release.set()
+        store.allow_save.set()
         self.assertEqual(self.recorder.finalize_count, 0)
         self.assertEqual(self.asr.call_count, 0)
         self.assertEqual(self.service.get_state("one"), "cancelled")
