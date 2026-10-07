@@ -8,7 +8,7 @@ import wave
 from typing import override
 
 from app.team_gateway import TeamGateway, UserInput
-from domain.services import EvidenceReference, TranscriptResult
+from domain.services import AudioReference, EvidenceReference, TranscriptResult
 from perception.simulated import SimulatedPerception
 from providers.asr.mock import MockASRProvider
 from providers.audio.mock import MockAudioRecorder
@@ -64,6 +64,22 @@ class GatedCleanupRecorder(MockAudioRecorder):
         self.closed = True
 
 
+class LateASR(MockASRProvider):
+    """模拟捕获取消后仍交回文本的外部识别适配器."""
+
+    @override
+    async def transcribe(
+        self, audio: AudioReference, timeout_s: float
+    ) -> TranscriptResult:
+        """等待取消后返回最终文本，测试宿主的结果提交屏障."""
+        self.entered.set()
+        try:
+            _ = await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            return TranscriptResult("迟到的移动指令")
+        raise AssertionError("Unreachable")
+
+
 class SpeechInputTests(unittest.IsolatedAsyncioTestCase):
     """所有测试仅用标准库和内存服务，不访问设备或网络."""
 
@@ -82,6 +98,47 @@ class SpeechInputTests(unittest.IsolatedAsyncioTestCase):
         self.service: SpeechInputService = SpeechInputService(
             self.recorder, self.asr, self.gateway
         )
+
+    async def test_cancel_rejects_late_asr_result(self) -> None:
+        """识别吞掉取消后返回文本，取消会话也不能重新入队."""
+        asr = LateASR()
+        self.service = SpeechInputService(self.recorder, asr, self.gateway)
+        await self.service.start(self.task_id, "late", 0.001)
+        async with asyncio.timeout(1):
+            _ = await asr.entered.wait()
+            await self.service.cancel("late")
+        self.assertEqual(self.service.get_state("late"), "cancelled")
+        with self.assertRaises(asyncio.CancelledError):
+            _ = await self.service.wait_finished("late")
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                _ = await self.gateway.next_input()
+
+    async def test_timeout_rejects_late_asr_result(self) -> None:
+        """识别吞掉期限取消也必须报超时且不提交文本."""
+        asr = LateASR()
+        self.service = SpeechInputService(self.recorder, asr, self.gateway)
+        await self.service.start(self.task_id, "late", 0.001, timeout_s=0.01)
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(1):
+                _ = await self.service.wait_finished("late")
+        self.assertEqual(self.service.get_state("late"), "failed")
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                _ = await self.gateway.next_input()
+
+    async def test_close_rejects_late_asr_result(self) -> None:
+        """服务关闭后返回的识别结果也不得产生新输入."""
+        asr = LateASR()
+        self.service = SpeechInputService(self.recorder, asr, self.gateway)
+        await self.service.start(self.task_id, "late", 0.001)
+        async with asyncio.timeout(1):
+            _ = await asr.entered.wait()
+            await self.service.close()
+        self.assertEqual(self.service.get_state("late"), "cancelled")
+        with self.assertRaises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                _ = await self.gateway.next_input()
 
     @override
     async def asyncSetUp(self) -> None:

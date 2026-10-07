@@ -20,6 +20,7 @@ class _Session:
 
     task: asyncio.Task[UserInput | None]
     state: str = "recording"
+    cancelled: bool = False
     cleanup: asyncio.Task[None] | None = None
 
 
@@ -107,13 +108,19 @@ class SpeechInputService:
         try:
             # ========== Step1: 等待录音完成，获取已登记证据 ==========
             audio = await self._recorder.wait_finished(recording_id)
+            if session.cancelled or self._closed:
+                raise asyncio.CancelledError
             session.state = "finished"
             # ========== Step2: 识别并实际校验外部返回值 ==========
             session.state = "transcribing"
-            async with asyncio.timeout(timeout_s):
+            async with asyncio.timeout(timeout_s) as deadline:
                 transcript = self._validate_transcript(
                     await self._asr.transcribe(audio, timeout_s)
                 )
+            if session.cancelled or self._closed:
+                raise asyncio.CancelledError
+            if deadline.expired():
+                raise TimeoutError("Recognition exceeded input deadline")
             # ========== Step3: 核心负责最终任务校验、去重和编号 ==========
             item = None
             if transcript.is_final and transcript.text.strip():
@@ -162,6 +169,7 @@ class SpeechInputService:
         """每个会话只发送一次取消，避免重复打断其清理."""
         session = self._sessions[recording_id]
         if session.cleanup is None:
+            session.cancelled = True
             if not session.task.done():
                 session.state = "cancelled"
                 _ = session.task.cancel()
