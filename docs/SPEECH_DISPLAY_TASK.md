@@ -185,11 +185,11 @@
 - P2 模拟 TTS、可停止播放器和共享 AudioDeviceLease 互斥；归属由语音层维护、应用装配方注入同一实例，合同补充仍待审核。
 - P3 Flutter 页面模拟版本：任务、对话、示例图片、观察、阶段、动作、录音、停止、失败提示与模拟事件恢复。
 - P3 页面模拟版本已由负责人验收通过；后续内部联调已补充 `speech/demo.py` 和 6 个跨服务集成用例，验证模拟输入经核心队列交接后，调用方固定回答可完成模拟输出。交接清单见 [SPEECH_DISPLAY_INTEGRATION.md](SPEECH_DISPLAY_INTEGRATION.md)。
-- 已新增真实 PortAudio 录音/播放、离线 Whisper ASR、系统 TTS 与独立终端入口，当前 Mac 已完成设备及真实引擎验证，服务器声卡访问尚未就绪；详见 [REAL_SPEECH.md](REAL_SPEECH.md)。
+- 已实现本地 PortAudio 录音/播放、服务器 Whisper ASR/Piper TTS 与 SSH 内部传输，默认终端入口使用双端装配。服务器无需声卡，本地无需模型；详见 [REAL_SPEECH.md](REAL_SPEECH.md)。
 
 当前尚未完成：
 
-- 服务器侧真实声卡部署、学生现场说话与听辨的最终验收。
+- 学生现场说话准确率、听辨及最终机器人音频设备验收；服务器不需要声卡部署。
 - 核心教学回答自动播报与任务级统一语音资源取消。
 - 页面对接 Python 语音服务和已审核的真实网络接口。
 - HTTP/SSE 路由和事件广播器。
