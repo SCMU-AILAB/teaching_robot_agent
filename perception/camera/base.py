@@ -1,6 +1,7 @@
 # perception/camera/base.py
 """相机基类：统一状态与单据流程，子类只负责取一帧原始数据."""
 
+import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -27,12 +28,16 @@ class BaseCamera(ABC):
         self._evidence: EvidenceStore = _evidence
         self._camera_id: str = _camera_id
         self._next_frame_seq: int = 1
-        self._closed: bool = False
+        self._closed: bool = True
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def connect(self) -> None:
-        """打开相机，重复连接会把状态恢复成可用."""
-        await self.open_device()
-        self._closed = False
+        """打开相机；已经打开时直接返回，不重复占用设备."""
+        if not self._closed:
+            return
+        async with self._lock:
+            await self.open_device()
+            self._closed = False
 
     async def capture(self, scene_revision: int) -> FrameReference:
         """取一帧、登记证据并返回帧引用.
@@ -46,29 +51,33 @@ class BaseCamera(ABC):
         Raises:
             RuntimeError: 相机已经关闭时抛出.
         """
-        if self._closed:
-            raise RuntimeError("camera is closed")
-        raw = await self.grab_frame()
-        captured_at = time.time()
-        receipt = await self._evidence.save(raw.data, raw.media_type, captured_at)
-        frame_id = f"{self._camera_id}:{self._next_frame_seq}"
-        self._next_frame_seq += 1
-        return FrameReference(
-            frame_id=frame_id,
-            camera_id=self._camera_id,
-            captured_at=captured_at,
-            width=raw.width,
-            height=raw.height,
-            evidence_id=receipt.evidence_id,
-            scene_revision=scene_revision,
-        )
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("camera is closed")
+            raw = await self.grab_frame()
+            captured_at = time.time()
+            receipt = await self._evidence.save(raw.data, raw.media_type, captured_at)
+            frame_id = f"{self._camera_id}:{self._next_frame_seq}"
+            self._next_frame_seq += 1
+            return FrameReference(
+                frame_id=frame_id,
+                camera_id=self._camera_id,
+                captured_at=captured_at,
+                width=raw.width,
+                height=raw.height,
+                evidence_id=receipt.evidence_id,
+                scene_revision=scene_revision,
+            )
 
     async def close(self) -> None:
         """释放相机资源，重复调用安全."""
         if self._closed:
             return
-        await self.release_device()
-        self._closed = True
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            await self.release_device()
 
     @abstractmethod
     async def open_device(self) -> None:
