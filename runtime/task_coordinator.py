@@ -15,6 +15,7 @@ from domain.models import (
 )
 from domain.validation import nonempty_string
 from runtime.action_manager import ActionManager
+from runtime.task_resources import TaskResource
 from storage.memory import InMemoryStore
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,12 @@ class TaskCoordinator:
         if self.store is not _runtime.store:
             raise ValueError("Coordinator and runtime must share the same store")
         self._cancellations: dict[int, asyncio.Task[None]] = {}
+        self._resources: list[TaskResource] = []
+
+    def register_resource(self, resource: TaskResource) -> None:
+        """装配阶段注册任务资源，停止流程等待它们实际退出."""
+        if resource not in self._resources:
+            self._resources.append(resource)
 
     def create_task(self, user_target: str) -> TaskState:
         """创建任务并保存用户目标."""
@@ -100,6 +107,8 @@ class TaskCoordinator:
             return task
         if task.status == TaskStatus.CANCELLING:
             raise ValueError("Wait for task cancellation to finish")
+        if any(resource.is_busy(task_id) for resource in self._resources):
+            raise ValueError("Task resources are still active")
         records = [self.runtime.get_action(item) for item in task.action_ids]
         if teaching is not None and (
             teaching.task_id != task_id or teaching.stage != TeachingStage.COMPLETED
@@ -150,12 +159,26 @@ class TaskCoordinator:
         task = self.get_task(task_id)
         for action_id in task.action_ids:
             _ = await self.runtime.cancel_action(action_id)
+        # 录音停止与动作终态等待并行，所有资源确认后才能发布任务终态。
+        resource_results = await asyncio.gather(
+            *(resource.cancel_task(task_id) for resource in self._resources),
+            return_exceptions=True,
+        )
+        resource_failed = any(
+            isinstance(result, BaseException) for result in resource_results
+        )
+        if resource_failed:
+            logger.error(
+                "[TaskCoordinator._cancel_task] 附属资源停止确认失败 task_id=%s",
+                task_id,
+            )
         records = await asyncio.gather(
             *(self.runtime.wait_for_action(action_id) for action_id in task.action_ids)
         )
         task.status = (
             TaskStatus.FAILED
-            if any(
+            if resource_failed
+            or any(
                 item.status in {ActionStatus.FAILED, ActionStatus.TIMED_OUT}
                 for item in records
             )

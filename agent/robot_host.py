@@ -32,6 +32,8 @@ class RobotHost:
         _gateway: TeamGateway,
         _agent_factory: Callable[[int], DecisionAgent],
         _max_actions: int = 3,
+        *,
+        _speak_replies: bool = False,
     ) -> None:
         """注入共享服务，采用串行输入与有限动作续接策略."""
         self._gateway: TeamGateway = _gateway
@@ -44,6 +46,7 @@ class RobotHost:
         self._workers: dict[int, asyncio.Task[RobotReply]] = {}
         self._stopped: set[int] = set()
         self._closed: bool = False
+        self._speak_replies: bool = _speak_replies
 
     async def start(self, task_id: int) -> RobotReply:
         """登记机器人任务，不创建课程或后台输入消费者."""
@@ -55,7 +58,13 @@ class RobotHost:
 
     async def process_next(self) -> RobotReply:
         """由应用唯一消费者循环调用，等待动作期间后续输入保留在队列."""
-        return await self.handle(await self._gateway.next_input())
+        item = await self._gateway.next_input(include_terminal=True)
+        snapshot = await self._gateway.get_snapshot(item.task_id)
+        if snapshot.task.status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+            return await self._reply(
+                item.task_id, "任务已结束，本条输入未执行。", rejected=True
+            )
+        return await self.handle(item)
 
     async def handle(self, item: UserInput) -> RobotReply:
         """处理一条输入并等待其动作链结束，成功重试返回原结果.
@@ -85,6 +94,8 @@ class RobotHost:
                 raise ValueError("Start the robot before handling input")
             if item.question_id is not None:
                 raise ValueError("Use explicit teaching mode for question answers")
+            if len(self._seen) >= 4096:
+                raise RuntimeError("Input retention capacity reached")
             self._seen[item.input_id] = item
             worker = asyncio.create_task(self._handle(item), name="robot-input")
             self._workers[item.task_id] = worker
@@ -99,6 +110,9 @@ class RobotHost:
                 raise
             finally:
                 _ = self._workers.pop(item.task_id, None)
+                status = (await self._gateway.get_snapshot(item.task_id)).task.status
+                if status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                    _ = self._agents.pop(item.task_id, None)
 
     async def cancel(self, task_id: int) -> TaskState:
         """停止不等待消费锁或模型返回，执行层负责确认设备停止."""
@@ -106,7 +120,19 @@ class RobotHost:
         worker = self._workers.get(task_id)
         if worker is not None:
             _ = worker.cancel()
-        return await self._gateway.cancel_task(task_id)
+        result = await self._gateway.cancel_task(task_id)
+        _ = self._agents.pop(task_id, None)
+        return result
+
+    async def finish(self, task_id: int) -> TaskState:
+        """显式验收任务，拒绝处理中的任务，释放已结束任务的策略对象."""
+        if self._lock.locked():
+            raise RuntimeError("Wait for request processing before finishing")
+        async with self._lock:
+            await self._require_active(task_id)
+            result = self._gateway.finish_interaction(task_id)
+            _ = self._agents.pop(task_id, None)
+            return result
 
     async def close(self) -> None:
         """结束所有已启动任务并等待本宿主的工作协程释放."""
@@ -158,7 +184,24 @@ class RobotHost:
             await self._require_active(item.task_id)
             action_id = turn.pending_action_id
             if action_id is None:
-                _ = self._gateway.finish_interaction(item.task_id)
+                if self._speak_replies and turn.text.strip():
+                    record = await self._gateway.submit_action(
+                        item.task_id, "speak", {"text": turn.text}, timeout_s=30
+                    )
+                    actions.append(record.action_id)
+                    spoken = await self._gateway.wait_for_action(
+                        item.task_id, record.action_id
+                    )
+                    await self._require_active(item.task_id)
+                    if spoken.status != ActionStatus.SUCCEEDED:
+                        self._stopped.add(item.task_id)
+                        _ = await self._gateway.cancel_task(item.task_id)
+                        return await self._reply(
+                            item.task_id,
+                            turn.text + "\n播报未完成，文字回答已保留。",
+                            tuple(actions),
+                        )
+                # 模型文字不是目标达成证据；任务保留，允许澄清和宿主显式验收。
                 return await self._reply(item.task_id, turn.text, tuple(actions))
             if action_id in actions or len(actions) >= self._max_actions:
                 raise RuntimeError("Repeated action or robot action limit exceeded")

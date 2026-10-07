@@ -168,6 +168,8 @@ class ActionManager:
         if self._blocked_reason is not None:
             raise RuntimeError(f"Runtime blocked: {self._blocked_reason}")
         request = self._validate_request(request)
+        if self._worker is None or self._worker.done():
+            raise RuntimeError("Action executor is not running")
         skill = self.registry.get(request.skill_name)
         skill.validate(request.args)
         for capability in skill.required_capabilities:
@@ -303,6 +305,7 @@ class ActionManager:
         """执行动作清理并再次确认设备已停止."""
         await skill.cleanup(self.robot)
         state = await self.robot.get_state()
+        self.robot.validate_state(state)
         if not state.is_connected or state.is_moving:
             raise RuntimeError("Robot stop could not be confirmed")
 
@@ -351,7 +354,7 @@ class ActionManager:
         try:
             # 取消执行不等于物理停止，确认停止后才允许下一动作占用设备。
             await asyncio.wait_for(self._cleanup(skill), timeout=self.cleanup_timeout_s)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             detail = f"Stop/cleanup failed: {type(exc).__name__}: {exc}"
             self._blocked_reason = detail
             logger.error(

@@ -2,6 +2,7 @@
 """相对移动动作的参数校验、执行与到位验证."""
 
 import math
+import time
 from typing import override
 
 from domain.models import SkillResult
@@ -55,18 +56,21 @@ class MoveRelativeSkill(RobotSkill):
         distance, speed = self._parse_arguments(args)
         await self.check_preconditions(robot)
         before = await robot.get_state()
+        robot.validate_state(before)
         start = before.position
         expected = {
             "x": start.x + distance * math.cos(start.yaw),
             "y": start.y + distance * math.sin(start.yaw),
             "yaw": start.yaw,
         }
+        commanded_at = time.time()
         await robot.move_relative(distance, speed)
         after = await robot.get_state()
         return SkillResult(
             summary=f"相对移动：请求距离 {distance:g} 米",
             evidence={
                 "simulated": robot.is_simulated,
+                "commanded_at": commanded_at,
                 "distance_m": distance,
                 "speed_m_s": speed,
                 "start_position": {"x": start.x, "y": start.y, "yaw": start.yaw},
@@ -85,6 +89,13 @@ class MoveRelativeSkill(RobotSkill):
     async def verify(self, robot: RobotAdapter, result: SkillResult) -> bool:
         """结合设备反馈和结果证据判断动作是否完成."""
         state = await robot.get_state()
+        try:
+            robot.validate_state(
+                state,
+                after=finite_float(result.evidence.get("commanded_at"), "commanded_at"),
+            )
+        except (ValueError, RuntimeError):
+            return False
         if not state.is_connected or state.is_moving:
             return False
         try:

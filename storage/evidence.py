@@ -42,3 +42,9 @@ class EvidenceStore:
     async def read(self, evidence_id: str) -> bytes:
         """按登记编号读取媒体，不接受文件系统路径."""
         return self._entries[evidence_id][1]
+
+    def release(self, evidence_id: str) -> None:
+        """由证据所有者确认不再引用后释放；重复释放安全."""
+        entry = self._entries.pop(evidence_id, None)
+        if entry is not None:
+            self._used_bytes -= len(entry[1])

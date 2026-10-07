@@ -1,8 +1,7 @@
 # agent/context.py
 """统一教学、环境与执行上下文，不触发外部模型调用."""
 
-import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Protocol
 
 from app.team_gateway import TaskSnapshot, TeamGateway, UserInput
@@ -59,15 +58,7 @@ class RobotContextBuilder:
         """读取最近观察，移动后的历史画面不得当作当前现场."""
         if user_input is not None and user_input.task_id != task_id:
             raise ValueError("Input belongs to another task")
-        observation = observation or self._gateway.latest_observation(task_id)
-        if observation is not None:
-            if observation.task_id != task_id:
-                raise ValueError("Observation belongs to another task")
-            observation = replace(
-                observation,
-                stale=observation.stale
-                or time.time() - observation.frame.captured_at > 2,
-            )
+        observation = self._gateway.resolve_observation(task_id, observation)
         return RobotContext(
             await self._gateway.get_snapshot(task_id), user_input, observation
         )
@@ -92,13 +83,8 @@ class ContextBuilder:
             raise ValueError("Input belongs to another task")
         if observation is not None and observation.task_id != task_id:
             raise ValueError("Observation belongs to another task")
+        observation = self._gateway.resolve_observation(task_id, observation)
         snapshot = await self._gateway.get_snapshot(task_id)
-        if observation is not None:
-            observation = replace(
-                observation,
-                stale=observation.stale
-                or time.time() - observation.frame.captured_at > 2.0,
-            )
         return TeachingContext(
             snapshot, self._education.get_state(task_id), user_input, observation
         )

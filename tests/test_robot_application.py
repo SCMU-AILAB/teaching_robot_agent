@@ -60,7 +60,9 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 FakeMessagesListChatModel, "bind_tools", return_value=model
             ):
                 reply = await app.process_next()
-            self.assertEqual(reply.task_status, TaskStatus.COMPLETED)
+            self.assertIn(reply.task_status, {TaskStatus.PENDING, TaskStatus.RUNNING})
+            finished = await app.finish_task(task.task_id)
+            self.assertEqual(finished.status, TaskStatus.COMPLETED)
             self.assertEqual(await app.host.handle(item), reply)
             self.assertEqual(app.runtime.list_actions(), [])
         finally:
@@ -115,7 +117,9 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 FakeMessagesListChatModel, "bind_tools", return_value=model
             ):
                 reply = await app.process_next()
-            self.assertEqual(reply.task_status, TaskStatus.COMPLETED)
+            self.assertIn(reply.task_status, {TaskStatus.PENDING, TaskStatus.RUNNING})
+            finished = await app.finish_task(task.task_id)
+            self.assertEqual(finished.status, TaskStatus.COMPLETED)
             self.assertEqual(len(reply.action_ids), 1)
             self.assertEqual(
                 app.runtime.list_actions()[0].status, ActionStatus.SUCCEEDED

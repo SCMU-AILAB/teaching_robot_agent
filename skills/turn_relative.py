@@ -1,6 +1,7 @@
 # skills/turn_relative.py
 """原地相对转向 Skill，执行与位置验证通过统一适配器完成."""
 
+import time
 from typing import override
 
 from domain.models import SkillResult
@@ -44,12 +45,16 @@ class TurnRelativeSkill(MoveRelativeSkill):
         """检查能力，执行转向并保存目标位姿作为完成验证依据."""
         angle, speed = self._parse_arguments(args)
         await self.check_preconditions(robot)
-        origin = (await robot.get_state()).position
+        before = await robot.get_state()
+        robot.validate_state(before)
+        origin = before.position
+        commanded_at = time.time()
         await robot.turn_relative(angle, speed)
         return SkillResult(
             f"相对转向：请求角度 {angle:g} 弧度",
             {
                 "simulated": robot.is_simulated,
+                "commanded_at": commanded_at,
                 "expected_position": {
                     "x": origin.x,
                     "y": origin.y,

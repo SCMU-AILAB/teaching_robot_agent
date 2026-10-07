@@ -54,7 +54,7 @@ await output_service.close()
 
 音频证据仍使用现有内存 EvidenceStore，关闭释放任务和模拟设备占用，不删除已登记证据。证据容量、存储策略和共享模型均未修改。
 
-尚未实现真实设备、真实 ASR/TTS、人声播报、教学回答自动连接输出、核心任务对全部语音资源的统一取消、SpeechSkill 和 HTTP/SSE。P3 前端模拟版本位于 `frontend/`，使用独立内存数据源，尚未连接本 Python 语音链路。接口合同仍待负责人审核。
+主应用已可选装配 AudioAdapters，RobotHost 自动将回答交给 Runtime 的 SpeakSkill；任务资源屏障统一等待录音/识别停止，输出取消由动作生命周期负责。独立服务示例仍须自行管理资源，只有注册到同一个 TeamGateway 的资源才参与任务取消。尚未实现真实设备、真实 ASR/TTS、人声播报和 HTTP/SSE。P3 前端模拟版本位于 `frontend/`，使用独立内存数据源，尚未连接本 Python 语音链路。接口合同仍待负责人审核。
 
 ## 验证
 
@@ -72,3 +72,5 @@ uv run python -m unittest discover -s tests -v
 并发测试使用事件固定清理/取消顺序，检查状态、调用次数、输入数量及测试兜底关闭前的任务和占用释放。
 
 跨服务测试还覆盖连续两轮输入输出、设备占用失败后的恢复，以及关闭一侧服务时不释放另一侧服务正在使用的租约。
+
+核心闭环演示：`uv run python -m app.robot_audio_demo`；不是上述固定回复的组件级 `speech.demo`。语音启动拒绝终结任务；启动与取消交错时先释放部分启动的录音，再确认任务终态。

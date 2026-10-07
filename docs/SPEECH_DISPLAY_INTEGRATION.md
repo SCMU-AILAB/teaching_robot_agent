@@ -106,3 +106,7 @@ uv run python -m speech.demo
 ## 8. 同步当前 main 后复核（2026-10-07）
 
 Python：Ruff 与格式检查通过，basedpyright 0 errors / 0 warnings，152 项 unittest 通过，speech.demo 运行并确认模拟资源释放。Flutter：使用本机 Flutter 3.38.2 / Dart 3.10.0 验证，版本约束及锁文件已同步；分析无问题，18 项测试通过。首次观察输入竞争、迟到快照回退、快照恢复失败仍显示在线三个边界已修复。上文旧独立分支的检查数量仅保留为历史记录。
+
+## 9. 核心工作区语音集成更新
+
+RobotApplication 已通过 AudioAdapters 可选装配语音，SpeakSkill 把最终回答播报纳入 Runtime，TaskResource 屏障等待本任务录音/识别退出后发布终态。入口 `app.robot_audio_demo` 已打通受控 Agent 的模拟闭环；本文前述“未连接回答播报、未实现任务统一取消”仅描述原组件交付阶段。HTTP/SSE、Flutter 网络适配和真实声音仍未接入。本次代码留在工作区供负责人审核。

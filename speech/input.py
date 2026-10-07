@@ -19,8 +19,10 @@ class _Session:
     """每次录音仅有一个识别作业，状态只供内部诊断."""
 
     task: asyncio.Task[UserInput | None]
+    task_id: int
     state: str = "recording"
     cancelled: bool = False
+    cleanup_failed: bool = False
     cleanup: asyncio.Task[None] | None = None
 
 
@@ -38,6 +40,8 @@ class SpeechInputService:
         self._closed: bool = False
         self._lock: asyncio.Lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
+        self._starting: set[int] = set()
+        self._startup_failures: set[int] = set()
 
     async def start(
         self,
@@ -69,14 +73,35 @@ class SpeechInputService:
                 raise RuntimeError("Speech input closed")
             if recording_id in self._sessions:
                 raise ValueError("Session already exists")
+            self._gateway.require_active(task_id)
+            if len(self._sessions) >= 4096:
+                raise RuntimeError("Recording retention capacity reached")
+            self._starting.add(task_id)
             try:
                 await self._recorder.start(recording_id, duration)
+                try:
+                    self._gateway.require_active(task_id)
+                except ValueError:
+                    try:
+                        await finish_cleanup(
+                            asyncio.create_task(self._recorder.cancel(recording_id))
+                        )
+                    except BaseException:
+                        self._startup_failures.add(task_id)
+                        raise
+                    raise
             except asyncio.CancelledError:
                 self._closed = True
-                await finish_cleanup(asyncio.create_task(self._recorder.close()))
+                try:
+                    await finish_cleanup(asyncio.create_task(self._recorder.close()))
+                except BaseException:
+                    self._startup_failures.add(task_id)
+                    raise
                 raise
+            finally:
+                self._starting.discard(task_id)
             task = asyncio.create_task(self._run(task_id, recording_id, timeout))
-            self._sessions[recording_id] = _Session(task)
+            self._sessions[recording_id] = _Session(task, task_id)
             task.add_done_callback(self._observe_failure)
             logger.info("[SpeechInputService.start] 语音输入会话已启动")
 
@@ -136,9 +161,44 @@ class SpeechInputService:
             session.state = "failed"
             raise
         finally:
-            await finish_cleanup(
-                asyncio.create_task(self._recorder.cancel(recording_id))
+            try:
+                await finish_cleanup(
+                    asyncio.create_task(self._recorder.cancel(recording_id))
+                )
+            except BaseException:
+                session.cleanup_failed = True
+                raise
+
+    def is_busy(self, task_id: int) -> bool:
+        """录音启动、采集、识别或清理未完成时阻止任务验收."""
+        return (
+            task_id in self._startup_failures
+            or task_id in self._starting
+            or any(
+                session.task_id == task_id
+                and (
+                    session.cleanup_failed
+                    or not session.task.done()
+                    or (session.cleanup is not None and not session.cleanup.done())
+                )
+                for session in self._sessions.values()
             )
+        )
+
+    async def cancel_task(self, task_id: int) -> None:
+        """核心先阻止新输入，再等待此任务在途启动及已有会话退出."""
+        async with self._lock:
+            tasks = [
+                self._begin_cancel(key)
+                for key, session in self._sessions.items()
+                if session.task_id == task_id
+            ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        if task_id in self._startup_failures:
+            raise RuntimeError("Recording startup cleanup could not be confirmed")
 
     def get_state(self, recording_id: str) -> str:
         """读取内部会话状态，不作为公共 API 状态合同."""

@@ -54,6 +54,9 @@ class EmbodiedAgent:
         self._task_id: int = positive_int(_task_id, "task_id")
         self._max_rounds: int = positive_int(_max_rounds, "max_rounds")
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._history: list[BaseMessage] = []
+        self._input: UserInput | None = None
+        self._pending: tuple[int, str] | None = None
 
     async def decide(
         self,
@@ -89,7 +92,22 @@ class EmbodiedAgent:
         tools = build_langchain_tools(self._adapter)
         registry = {tool.name: tool for tool in tools}
         model = self._model.bind_tools(list(tools))
-        history: list[BaseMessage] = []
+        history = self._history
+        if user_input is not None:
+            if self._pending is not None:
+                raise RuntimeError("Resume pending action before accepting new input")
+            self._input = user_input
+            self._history.clear()
+        user_input = self._input
+        if self._pending is not None:
+            action_id, call_id = self._pending
+            record = self._adapter.get_action_status(action_id)
+            if not record.status.is_terminal:
+                raise RuntimeError("Action has not finished")
+            history.append(ToolMessage(str(record), tool_call_id=call_id))
+            self._pending = None
+        if len(history) > 64:
+            raise RuntimeError("Decision history limit exceeded")
         seen_calls: set[str] = set()
         for _ in range(self._max_rounds):
             # ========== Step1: 每轮刷新真实状态，不沿用模型猜测 ==========
@@ -111,6 +129,7 @@ stale 或 simulated 的观察不能当作当前真实现场。
 动作 arguments 的字段名、单位和范围必须遵守上下文 skill_parameters，不自行猜测参数。
 左转对应正 angle_rad，右转对应负 angle_rad；不要颠倒方向。
 需要使用工具时必须返回真正的工具调用，不能用“我将调用工具”这样的预告代替执行。
+启用 speak 技能的主应用会自动播报最终回答；普通回答直接返回文字，不要为同一回答额外调用 speak。
 接受或运行中不表示完成，不得声称尚未验证的动作成功。
 学生答案只能来自本轮 user_input。没有答案不要调用 evaluate_answer。
 查询知识后用适合学生的语言解释，不要编造来源。"""
@@ -176,6 +195,9 @@ stale 或 simulated 的观察不能当作当前真实现场。
                 if call["name"] == "submit_action":
                     if not isinstance(result, ActionRecord):
                         raise RuntimeError("Action tool returned an invalid record")
+                    identifier = call["id"]
+                    assert identifier is not None
+                    self._pending = (result.action_id, identifier)
                     return AgentTurn("", result.action_id)
                 history.append(ToolMessage(str(result), tool_call_id=call["id"]))
         raise RuntimeError("Agent tool round limit reached")

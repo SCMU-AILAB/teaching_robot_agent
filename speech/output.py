@@ -21,6 +21,7 @@ class _Output:
     stage: str = "synthesizing"
     cancelled: bool = False
     attempted_play: bool = False
+    play_started: bool = False
     cleanup: asyncio.Task[PlaybackState | None] | None = None
 
 
@@ -67,6 +68,8 @@ class SpeechOutputService:
             raise ValueError("Output already exists")
         if any(not item.task.done() for item in self._outputs.values()):
             raise RuntimeError("Speech output busy")
+        if len(self._outputs) >= 4096:
+            raise RuntimeError("Output retention capacity reached")
         task = asyncio.create_task(self._run(playback_id, text, voice_id, timeout))
         self._outputs[playback_id] = _Output(task)
         task.add_done_callback(self._observe_failure)
@@ -84,10 +87,42 @@ class SpeechOutputService:
         if not item.attempted_play:
             return None
         try:
-            return await self._player.stop(playback_id)
+            state = await self._player.stop(playback_id)
+            self._validate_terminal(state, playback_id)
+            return state
         except KeyError:
+            if item.play_started:
+                raise RuntimeError(
+                    "Started playback lost its stop confirmation"
+                ) from None
             # 开始播放可能在登记编号之前失败，没有可停止的播放资源。
             return None
+
+    @staticmethod
+    def _validate_terminal(state: PlaybackState, playback_id: str) -> None:
+        """拒绝错配编号、非终态或缺失结束时间的播放器反馈."""
+        if (
+            state.playback_id != playback_id
+            or state.status
+            not in {
+                PlaybackStatus.COMPLETED,
+                PlaybackStatus.STOPPED,
+                PlaybackStatus.FAILED,
+            }
+            or state.ended_at is None
+        ):
+            raise RuntimeError("Playback termination is not confirmed")
+        started = finite_float(state.started_at, "started_at")
+        ended = finite_float(state.ended_at, "ended_at")
+        if started < 0 or ended < started:
+            raise ValueError("Invalid playback timestamps")
+
+    async def get_playback_state(self, playback_id: str) -> PlaybackState:
+        """查询已登记输出的真实播放器状态，未开始播放时明确失败."""
+        _ = self._outputs[playback_id]
+        state = await self._player.get_state(playback_id)
+        self._validate_terminal(state, playback_id)
+        return state
 
     async def _run(
         self, playback_id: str, text: str, voice_id: str | None, timeout_s: float
@@ -106,6 +141,7 @@ class SpeechOutputService:
                 item.stage = "playing"
                 item.attempted_play = True
                 await self._player.play(playback_id, audio)
+                item.play_started = True
                 if item.cancelled or self._closed:
                     raise asyncio.CancelledError
                 state = await self._player.wait_finished(playback_id)
@@ -118,6 +154,7 @@ class SpeechOutputService:
                     raise ValueError(
                         "Player did not return the requested terminal state"
                     )
+                self._validate_terminal(state, playback_id)
                 item.stage = state.status.value
                 return state
         except asyncio.CancelledError:

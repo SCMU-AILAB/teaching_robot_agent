@@ -231,11 +231,11 @@ class SpeechInputTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(result=result):
                 self.configure_asr(MockASRProvider(_result=result))
-                # 取消任务使任何错误的提交都会抛异常，验证确实未调用门面。
+                # 录音成功启动后取消任务，验证空结果不会调用提交门面。
                 task_id = self.gateway.create_task("无有效输入").task_id
-                _ = await self.gateway.cancel_task(task_id)
                 recording_id = str(index)
                 await self.service.start(task_id, recording_id, 10)
+                _ = await self.gateway.cancel_task(task_id)
                 self.assertIsNone(await self.service.finish(recording_id))
                 self.assertEqual(self.service.get_state(recording_id), "completed")
                 self.assertEqual(self.asr.call_count, 1)

@@ -1,16 +1,34 @@
 # robot/base.py
 """设备边界：只描述设备能力，不管理任务和动作队列."""
 
+import time
 from abc import ABC, abstractmethod
 
 from domain.models import RobotState
 from domain.robot import NavigationGoal, RobotCapability, UnsupportedCapabilityError
+from domain.validation import finite_float
 
 
 class RobotAdapter(ABC):
     """设备能力契约，具体适配器负责连接与停止确认."""
 
     is_simulated: bool = False
+    telemetry_max_age_s: float = 2.0
+
+    def validate_state(self, state: RobotState, *, after: float | None = None) -> None:
+        """验证遥测新鲜度及命令后反馈，不把旧静止快照视为停止确认."""
+        timestamp = finite_float(state.updated_at, "updated_at")
+        age = time.time() - timestamp
+        limit = finite_float(self.telemetry_max_age_s, "telemetry_max_age_s")
+        if (
+            limit <= 0
+            or age < -0.1
+            or age > limit
+            or (after is not None and timestamp < after)
+        ):
+            raise RuntimeError("Robot telemetry is stale or predates the command")
+        for value in (state.position.x, state.position.y, state.position.yaw):
+            _ = finite_float(value, "pose")
 
     @property
     def capabilities(self) -> frozenset[RobotCapability]:

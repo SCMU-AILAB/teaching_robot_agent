@@ -1,6 +1,7 @@
 # skills/base.py
 """Skill 负责动作的语义、校验与完成证据，Runtime 负责生命周期."""
 
+import time
 from abc import ABC, abstractmethod
 
 from domain.models import SkillResult
@@ -25,6 +26,7 @@ class RobotSkill(ABC):
         for capability in self.required_capabilities:
             robot.require_capability(capability)
         state = await robot.get_state()
+        robot.validate_state(state)
         if not state.is_connected:
             raise RuntimeError("robot is not connected")
         if state.is_moving:
@@ -44,7 +46,9 @@ class RobotSkill(ABC):
 
     async def cleanup(self, robot: RobotAdapter) -> None:
         """请求停止并确认连接与静止状态，失败时抛出异常."""
+        requested_at = time.time()
         await robot.stop()
         state = await robot.get_state()
+        robot.validate_state(state, after=requested_at)
         if not state.is_connected or state.is_moving:
             raise RuntimeError("could not confirm that the connected robot stopped")

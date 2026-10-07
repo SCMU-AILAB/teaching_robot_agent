@@ -2,6 +2,7 @@
 """队友可直接调用的核心门面，复用现有任务与动作运行时."""
 
 import asyncio
+import time
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from domain.validation import nonempty_string
 from perception.interfaces import PerceptionService
 from runtime.action_manager import ActionManager
 from runtime.task_coordinator import TaskCoordinator
+from runtime.task_resources import TaskResource
 
 
 @dataclass(frozen=True)
@@ -48,14 +50,34 @@ class TeamGateway:
         self._runtime: ActionManager = _runtime
         self._coordinator: TaskCoordinator = TaskCoordinator(_runtime)
         self._perception: PerceptionService = _perception
-        self._inputs: asyncio.Queue[UserInput] = asyncio.Queue()
+        self._inputs: asyncio.Queue[UserInput] = asyncio.Queue(1024)
         self._transcripts: dict[tuple[int, str], UserInput] = {}
         self._scene_generation: int = 0
         self._observations: dict[int, ObservationResult] = {}
 
+    def register_task_resource(self, resource: TaskResource) -> None:
+        """应用装配附属资源，使统一任务停止等待资源确认."""
+        self._coordinator.register_resource(resource)
+
+    def require_active(self, task_id: int) -> None:
+        """同步校验任务，资源启动和副作用前使用以关闭竞态窗口."""
+        self._require_active(task_id)
+
     def latest_observation(self, task_id: int) -> ObservationResult | None:
         """提供最近观察证据，不保证新鲜度，调用方必须检查 stale 和时间."""
         return self._observations.get(task_id)
+
+    def resolve_observation(
+        self, task_id: int, supplied: ObservationResult | None
+    ) -> ObservationResult | None:
+        """只信任门面登记的最新观察，显式旧对象不能覆盖版本失效."""
+        if supplied is not None and supplied.task_id != task_id:
+            raise ValueError("Observation belongs to another task")
+        latest = self.latest_observation(task_id)
+        if latest is None:
+            return replace(supplied, stale=True) if supplied is not None else None
+        age = time.time() - latest.frame.captured_at
+        return replace(latest, stale=latest.stale or age < 0 or age > 2)
 
     def finish_interaction(self, task_id: int) -> TaskState:
         """由宿主显式结束一次问答任务，仍检查所有实际动作终态."""
@@ -179,18 +201,22 @@ class TeamGateway:
             if previous.text != transcript.text or previous.question_id != question_id:
                 raise ValueError("Recording already submitted with different text")
             return previous
+        if len(self._transcripts) >= 4096:
+            raise RuntimeError("Transcript retention capacity reached")
         item = UserInput(
             uuid4().hex, task_id, transcript.text, "speech", recording_id, question_id
         )
-        self._transcripts[key] = item
         self._inputs.put_nowait(item)
+        self._transcripts[key] = item
         return item
 
-    async def next_input(self) -> UserInput:
+    async def next_input(self, *, include_terminal: bool = False) -> UserInput:
         """单个教学消费者读取输入，跳过已经取消任务的排队内容."""
         while True:
             item = await self._inputs.get()
             self._inputs.task_done()
+            if include_terminal:
+                return item
             try:
                 self._require_active(item.task_id)
             except ValueError:

@@ -6,11 +6,11 @@
 
 | 赛题能力 | 框架入口 | 当前实现 |
 | --- | --- | --- |
-| 陪伴交互 | RobotApplication → RobotHost → EmbodiedAgent | 真实本地模型与文字控制台；每条输入独立任务 |
+| 陪伴交互 | RobotApplication → RobotHost → EmbodiedAgent | 真实本地模型与文字控制台；同任务可继续输入，显式验收或取消后开启新任务 |
 | 物体识别 | observe_scene → PerceptionService → VisionProvider | 主入口模拟感知；本地 VLM 已独立联调，真实相机待接入 |
 | 移动讲解 | submit_action → Runtime → Skill → RobotAdapter | 模拟相对移动、转向及终态反馈；真实设备和导航待接入 |
 | 安全教育 | lookup_knowledge → KnowledgeService | 热水、插座开发示例，明确来源与待审核状态；不是风险检测或安全认证 |
-| 语音交互 | ASRProvider → submit_transcript；输出可接 TTSProvider/AudioPlayer | 保留协议与最终转写去重；真实录音、识别、播放尚未装配 |
+| 语音交互 | ASRProvider → submit_transcript；输出可接 TTSProvider/AudioPlayer | 主应用可选装配模拟语音、Runtime 播报和任务统一取消；真实设备尚未装配 |
 | 可选系统教学 | ClassroomHost → TeachingFlow → EducationService | 规则出题、评价与学习进度；独立演示入口 |
 
 ## 主链路
@@ -45,7 +45,7 @@ flowchart TD
 4. 每轮模型读取任务目标、设备能力、可用动作、执行记录及最近观察。没有课程时不暴露 get_teaching_state 或 evaluate_answer。
 5. 模型可查询知识、观察或提交一个动作。观察保留证据及采集时间；运动提交使旧观察失效。后续需要现场信息时重新调用 observe_scene。
 6. 动作提交返回编号，宿主通过 wait_for_action 等待真实终态；失败结束任务，成功后若已有场景观察，运动终态先使场景版本失效，宿主再以两秒新鲜度要求重新观察，再交给模型续接；不依赖模型口头承诺调用观察工具。每条请求最多三个动作，达到上限会停止任务，不声称总体目标完成。
-7. 返回最终文本且实际动作均结束后，由宿主显式结束本次交互。completed 表示本次请求处理结束，不代表模型文字已经被外部事实验证。
+7. 返回文本不自动结束任务；操作者通过 /finish 或确定性验收流程调用 finish_task 确认目标完成，所有动作须已成功。允许任务内继续澄清。
 8. 停止直接取消模型等待和 Runtime 动作，不经过模型工具选择；设备停止仍需验证。远端 GPU 是否即时停止不作保证。
 
 相同成功输入编号重试返回原结果；编号冲突拒绝。失败输入禁止自动重放，避免重复移动。主控制台忙碌期间拒绝新普通任务，并允许 /stop；不实现多任务并行运动。
@@ -57,13 +57,13 @@ flowchart TD
 - 感知：注入 `PerceptionService`；由感知实现管理相机、调用 VisionProvider 和证据存储。主控制台当前明确使用 SimulatedPerception，不能以此冒充真实视觉闭环。
 - 知识：注入 KnowledgeService；维护带来源条目，不通过创建课程来实现普通查询。
 - 课程：显式选择 `app.classroom_demo`。与主控制台不能共享竞争同一个 next_input 的两个消费者；选择一种模式或在更外层明确分发。
-- 语音：真实语音服务完成后，将最终转写交给同一 gateway.submit_transcript；播放器的取消与关闭需要与宿主生命周期联调。目前只提供这些接口，不宣称已实现播报。
+- 语音：通过 AudioAdapters 注入录音、ASR、TTS 和播放器；转写统一入队，最终回答自动进入 SpeakSkill，Runtime 验证实际播放终态。任务资源注册到协调器，停止等待录音/识别和动作确认。当前仅模拟适配器验证，不输出真实声音。
 
-当前控制台使用 macOS/Linux 的事件循环终端读取；退出释放输入监听、任务、感知与设备。对话以独立请求为单位，尚无跨任务长期陪伴记忆；同一任务内部的动作与观察状态用于续接，不把“它”“刚才那个”自动绑定到上一个已结束任务。
+当前控制台使用 macOS/Linux 的事件循环终端读取；退出释放输入监听、任务、感知与设备。每条输入独立决策，动作续接保留该输入与工具历史，尚无跨任务长期陪伴记忆；同一任务内部的动作与观察状态用于续接，不把“它”“刚才那个”自动绑定到上一个已结束任务。
 
 ## 验收
 
-- 无 EducationService 的应用可完成安全知识问答并结束零动作任务。
+- 无 EducationService 的应用可完成安全知识问答并显式验收零动作任务。
 - 观察 → 相对转向 → 等待成功 → 再观察 → 回答，可由受控模型完整驱动；结果明确模拟。
 - 移动后的旧观察 stale 为 True；不支持的设备能力在提交前拒绝。
 - 停止不等模型完成；设备失败不重试，重复输入不再次运动。
