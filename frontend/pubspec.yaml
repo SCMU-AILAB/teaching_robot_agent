@@ -3,7 +3,7 @@ description: 教学机器人交互展示的独立模拟版本
 publish_to: none
 version: 0.1.0+1
 environment:
-  sdk: '>=3.13.0 <4.0.0'
+  sdk: '>=3.10.0 <4.0.0'
 dependencies:
   flutter:
     sdk: flutter

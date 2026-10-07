@@ -32,7 +32,7 @@ class ClassroomController extends ChangeNotifier {
   }
 
   void _onConnection(bool value) {
-    connected = value;
+    if (!value) connected = false;
     if (!value) error = '连接已断开，当前显示最后一次状态。停止请求尚未送达。';
     _notify();
   }
@@ -72,8 +72,17 @@ class ClassroomController extends ChangeNotifier {
     }
   }
 
+  /// 同实例快照不得覆盖已经收到的更新事件。
+  void _acceptSnapshot(SessionModel snapshot) {
+    if (_disposed) return;
+    if (snapshot.instanceId != state.instanceId ||
+        snapshot.sequence >= state.sequence) {
+      state = snapshot;
+    }
+  }
+
   Future<bool> initialize() => _run(() async {
-    state = await _service.snapshot();
+    _acceptSnapshot(await _service.snapshot());
   });
   Future<bool> createTask(String target) =>
       _run(() => _service.createTask(target));
@@ -100,8 +109,8 @@ class ClassroomController extends ChangeNotifier {
 
   Future<bool> reconnect() => _run(() async {
     await _service.reconnect();
-    state = await _service.snapshot();
-    connected = true;
+    _acceptSnapshot(await _service.snapshot());
+    if (!_disposed) connected = true;
   });
 
   void selectScenario(DemoScenario value) {

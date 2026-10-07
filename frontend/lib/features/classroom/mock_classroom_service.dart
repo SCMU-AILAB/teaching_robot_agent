@@ -24,6 +24,7 @@ class MockClassroomService implements ClassroomService {
   Timer? _recordTimer;
   bool _online = true;
   bool _disposed = false;
+  bool _initializing = false;
   int _generation = 0;
   int _messageId = 0;
   int _taskId = 0;
@@ -89,6 +90,7 @@ class MockClassroomService implements ClassroomService {
     if (_state.active) throw const ClassroomFailure('请先停止当前课堂。');
     commands.add('create_task');
     _cancelTimers();
+    _initializing = true;
     final int sequence = _state.sequence;
     _emit(
       SessionModel(
@@ -102,6 +104,7 @@ class MockClassroomService implements ClassroomService {
       ),
     );
     _schedule(() {
+      _initializing = false;
       _emit(
         _state.copyWith(
           observed: true,
@@ -163,6 +166,7 @@ class MockClassroomService implements ClassroomService {
   }
 
   bool get _audioBusy =>
+      _initializing ||
       _state.recording == 'recording' ||
       _state.recording == 'transcribing' ||
       _state.playback == 'synthesizing' ||

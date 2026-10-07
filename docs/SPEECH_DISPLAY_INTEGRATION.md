@@ -56,7 +56,7 @@ uv run python -m speech.demo
 
 全部用例在测试兜底清理之前检查资源释放。既有输入、输出测试继续覆盖空识别、非 final、失败、超时、迟到转写拒绝、合成取消、播放取消、停止失败和外部等待取消。
 
-本轮检查结果：`uv run ruff check .` 通过；`uv run ruff format --check .` 通过（59 个文件）；`uv run basedpyright` 为 0 错误、0 警告；`uv run python -m unittest discover -s tests -v` 全部 74 项通过。模拟演示运行成功。前端未修改，本轮未重复执行 Flutter 检查。
+原独立分支检查结果（不是同步当前 main 后的结果）：`uv run ruff check .` 通过；`uv run ruff format --check .` 通过（59 个文件）；`uv run basedpyright` 为 0 错误、0 警告；`uv run python -m unittest discover -s tests -v` 全部 74 项通过。模拟演示运行成功。前端未修改，本轮未重复执行 Flutter 检查。
 
 ## 4. 核心负责人交接清单
 
@@ -66,13 +66,13 @@ uv run python -m speech.demo
 | --- | --- | --- |
 | 已审核的网络合同和联调地址 | API_CONTRACT 全部 HTTP 条目仍标为待审核，仓库无 HTTP 服务 | 提供审核版本、服务地址和成功/错误响应样例；路径继续只由合同定义 |
 | 服务装配与录音资源查询 | 语音内部服务已有 start/finish/cancel/close；没有外层 RecordingResponse 存储 | 核心分配和保存录音归属、资源状态及返回字段；验证自动结束也能刷新状态 |
-| 输入的提问/答案语义 | UserInput 没有 kind、question_id；当前门面只有基础文本与语音提交 | 明确首版是否需要答案绑定及过期问题校验；由核心解决，不扩写语音门面公共签名 |
-| 教学回答与 SpeechSkill | 输入可排队，但没有教学消费者及自动回答播报连接 | 核心提供回答及动作归属；合成与播放共用预算，验证实际播放完成 |
+| 输入的提问/答案语义 | UserInput 已有 question_id，可选课堂宿主支持答案关联；语音输入服务目前未绑定问题编号 | 明确首版是否需要答案绑定及过期问题校验；由核心解决，不扩写语音门面公共签名 |
+| 教学回答与 SpeechSkill | 已有 RobotHost 和可选 ClassroomHost 消费者；回答尚未自动连接 SpeechSkill 播报 | 核心提供回答及动作归属；合成与播放共用预算，验证实际播放完成 |
 | 任务级统一取消 | cancel_task 取消动作并拒绝迟到输入，不自动遍历语音作业 | 核心跟踪任务所属录音、识别、合成、播放；阻止新作业，等待停止确认后发布任务终态 |
-| 原子任务快照与事件广播 | TeamGateway.get_snapshot 仅返回任务、动作、机器人、阻塞原因 | 核心提供教学、消息、录音等资源快照及一致游标，单点消费 Runtime 事件并广播 |
+| 原子任务快照与事件广播 | TeamGateway.get_snapshot 返回任务、动作、机器人、能力等；已有 ActionEventHub，但缺少统一消息/录音快照和网络游标 | 核心提供教学、消息、录音等资源快照及一致游标，单点消费 Runtime 事件并广播 |
 | 证据媒体读取 | EvidenceStore 已能读写 audio/wav 和图像，无媒体 HTTP 路由 | 核心按证据编号返回内容和类型，前端不接收服务器路径 |
 
-当前 Runtime 事件消费入口在 `app/demo.py`；测试另有隔离消费者。本轮没有新增 `ActionManager.next_event()` 消费者。页面后续只订阅核心提供的事件广播接口，不直接读取 Runtime 队列。
+当前有 `runtime/events.py` 中的 ActionEventHub 单点消费并广播，具体生命周期由应用装配；独立演示和测试另有隔离消费者。本轮没有新增 `ActionManager.next_event()` 消费者。页面后续只订阅核心提供的事件广播接口，不直接读取 Runtime 队列。
 
 核心合同审查还需处理既有差异：MODULE_CONTRACT 的播放器表仍写 `PlaybackResult` 和结构化 `ResourceError`，现有 Protocol 返回 `PlaybackState`，其 `error` 为 `str | None`。应明确内部模型到网络资源的转换，不创建平行播放状态体系。
 
@@ -102,3 +102,7 @@ uv run python -m speech.demo
 本轮只新增模拟联调入口、跨服务集成测试和交接文档，未修改 Runtime、机器人层、Teaching Agent、共享模型、TeamGateway 公共签名、HTTP 合同或模块合同。未实现 HTTP、SSE 或真实 provider，Flutter 页面仍使用其原有模拟数据源。
 
 后续进入真实页面联调的条件是：核心提交已审核接口和可运行服务，并明确任务取消及事件广播职责。真实语音接入另需第 6 节配置。当前最终验收“学生说话、系统真实播报、页面展示过程并停止”尚未完成。
+
+## 8. 同步当前 main 后复核（2026-10-07）
+
+Python：Ruff 与格式检查通过，basedpyright 0 errors / 0 warnings，152 项 unittest 通过，speech.demo 运行并确认模拟资源释放。Flutter：使用本机 Flutter 3.38.2 / Dart 3.10.0 验证，版本约束及锁文件已同步；分析无问题，18 项测试通过。首次观察输入竞争、迟到快照回退、快照恢复失败仍显示在线三个边界已修复。上文旧独立分支的检查数量仅保留为历史记录。

@@ -12,7 +12,7 @@ flutter test
 flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5174
 ```
 
-需要 Flutter 3.47 / Dart 3.13 或兼容版本。依赖由 pubspec.yaml 与 pubspec.lock 管理。
+已验证 Flutter 3.38.2 / Dart 3.10.0；最低 Dart 版本为 3.10。依赖由 pubspec.yaml 与 pubspec.lock 管理。升级 Flutter 时需重新解析依赖并执行分析、测试与构建。
 
 ## 已实现
 
@@ -45,3 +45,5 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5174
 ## 尚未完成
 
 真实摄像头/语音设备与模型服务、页面到 Python 服务的网络集成、核心教学决策、任务级统一资源取消、HTTP/SSE、真实断网集成验收及学生完整交互验收均未完成。此版本可用于审查页面流程和内部状态处理。
+
+2026-10-07 合并前复核：首次观察期间禁止启动新输入；同实例的迟到快照不能覆盖新事件；重连须成功恢复快照后才显示连接正常。新增对应回归测试，Flutter 分析无诊断，18 项测试通过。页面仍是可选课堂模拟，不替代 Python 家庭机器人主链路。

@@ -214,6 +214,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
     final SessionModel state = _controller.state;
     final bool recording = state.recording == 'recording';
     final bool audioBusy =
+        !state.observed ||
         ['playing', 'synthesizing'].contains(state.playback) ||
         state.recording == 'transcribing';
     final bool available =

@@ -1,4 +1,6 @@
 // frontend/test/classroom_test.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:teaching_robot_frontend/features/classroom/classroom_controller.dart';
@@ -13,7 +15,72 @@ Future<void> advance(WidgetTester tester, [int ticks = 8]) async {
   }
 }
 
+/// 控制快照返回时机，复现事件先到而旧快照迟到的顺序。
+class DelayedSnapshotService extends MockClassroomService {
+  Completer<SessionModel>? pending;
+
+  @override
+  Future<SessionModel> snapshot() => pending?.future ?? super.snapshot();
+}
+
 void main() {
+  testWidgets('首次观察期间拒绝新输入，避免重叠播报覆盖动作', (tester) async {
+    final service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+    );
+    final controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await controller.createTask('观察桌面');
+    // 刷新观察也不能跳过初始化中的输入屏障。
+    await controller.refresh();
+    expect(await controller.submitText('提前提问'), isFalse);
+    expect(await controller.record(), isFalse);
+    await advance(tester);
+    expect(controller.state.messages.length, 1);
+    expect(
+      controller.state.actions.every((action) => action.status == 'succeeded'),
+      isTrue,
+    );
+    expect(await controller.submitText('现在提问'), isTrue);
+    await advance(tester);
+    expect(controller.state.messages.length, 3);
+  });
+
+  testWidgets('迟到快照不得覆盖更新事件', (tester) async {
+    final service = DelayedSnapshotService();
+    final controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    service.pending = Completer<SessionModel>();
+    final request = controller.initialize();
+    controller.applyEvent(
+      const SessionModel(sequence: 5, taskStatus: 'cancelled'),
+    );
+    service.pending!.complete(
+      const SessionModel(sequence: 2, taskStatus: 'running'),
+    );
+    expect(await request, isTrue);
+    expect(controller.state.sequence, 5);
+    expect(controller.state.taskStatus, 'cancelled');
+  });
+
+  testWidgets('重连快照失败时继续保持断线状态', (tester) async {
+    final service = DelayedSnapshotService();
+    final controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    controller.disconnect();
+    await tester.pump();
+    service.pending = Completer<SessionModel>();
+    final request = controller.reconnect();
+    await tester.pump();
+    expect(controller.connected, isFalse);
+    service.pending!.completeError(const ClassroomFailure('快照失败'));
+    expect(await request, isFalse);
+    expect(controller.connected, isFalse);
+    service.pending = null;
+    expect(await controller.reconnect(), isTrue);
+    expect(controller.connected, isTrue);
+  });
+
   testWidgets('页面录音按钮完成输入，文字请求失败保留草稿', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1366, 1000);
     tester.view.devicePixelRatio = 1;
