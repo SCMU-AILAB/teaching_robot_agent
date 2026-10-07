@@ -18,3 +18,16 @@
 验证：`uv run ruff check .`、`uv run ruff format --check .` 通过；`uv run basedpyright` 为 0 errors / 0 warnings；102 项 unittest 通过。
 
 限制：不能强制终止不合作的原生驱动线程。为避免并发释放正在访问的设备，取消/关闭会等待驱动调用结束；真机接入需要驱动级超时或隔离进程，并验证设备恢复策略。本次未连接真实摄像头。
+
+## 2026-10-07：语音生命周期分支
+
+分支：`feature/speech-output-lifecycle`。审查基线：`61b70c9a17bf57f596249a0ba3043110392881b0`。
+
+- **P1 问题**：语音输入会话取消只取消识别任务。ASR 若捕获取消并交回最终文本，输入服务仍将文本提交到核心队列，并把 cancelled 覆写为 completed。录音取消不结束核心任务，不能依赖核心任务状态拦截这条迟到输入。
+- **修改**：会话增加不可逆取消标记；录音返回后和 ASR 返回后检查取消与服务关闭；提交前检查识别期限是否已过，超时结果拒绝入队。保持取消会话与取消核心任务的职责边界。
+- **回归**：模拟 ASR 吞掉取消后返回移动指令，分别验证 cancel、close 和识别超时路径；迟到文本均不入队，状态保留 cancelled 或 failed。
+- **验证**：原分支 71 项 unittest 通过，Ruff、格式检查通过，basedpyright 0 errors / 0 warnings。随后同步已合入相机修复的 main，再对组合代码运行完整检查。
+
+相机已通过 [PR #1](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/1) 合入 main，合并提交 `85a63c3b171d60af5f27911f00d0fcc69720d97c`。语音分支包含模拟输入/输出、音频互斥及生命周期实现；此次合并不代表真实 ASR/TTS、麦克风或扬声器已接入主应用。
+
+组合代码验证：104 个 Python 文件格式检查通过；Ruff 通过；basedpyright 0 errors / 0 warnings；146 项 unittest 全部通过。此前 main 工作区已有的未提交修复与个人修改独立保留，不包含在上述两个分支的 PR 中。
