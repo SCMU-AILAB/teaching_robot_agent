@@ -6,10 +6,11 @@ import logging
 from dataclasses import dataclass
 
 from app.team_gateway import TeamGateway, UserInput
-from domain.services import TranscriptResult
+from domain.services import AudioReference, TranscriptResult
 from domain.validation import finite_float, nonempty_string, positive_int
 from speech._lifecycle import finish_cleanup
 from speech.interfaces import ASRProvider, AudioRecorder
+from storage.evidence import EvidenceStore
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,19 @@ class SpeechInputService:
     """拥有注入的录音器及识别作业，转写去重交给核心门面."""
 
     def __init__(
-        self, _recorder: AudioRecorder, _asr: ASRProvider, _gateway: TeamGateway
+        self,
+        _recorder: AudioRecorder,
+        _asr: ASRProvider,
+        _gateway: TeamGateway,
+        *,
+        _evidence: EvidenceStore | None = None,
     ) -> None:
         """注入已有接口，不在构造期间启动任务."""
         self._recorder: AudioRecorder = _recorder
         self._asr: ASRProvider = _asr
         self._gateway: TeamGateway = _gateway
+        # 提供时，识别结束且录音器清理完成后释放该次录音音频。
+        self._evidence: EvidenceStore | None = _evidence
         self._sessions: dict[str, _Session] = {}
         self._closed: bool = False
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -130,6 +138,7 @@ class SpeechInputService:
     ) -> UserInput | None:
         """单次录音完成后识别；失败和取消先清理再传播."""
         session = self._sessions[recording_id]
+        audio: AudioReference | None = None
         try:
             # ========== Step1: 等待录音完成，获取已登记证据 ==========
             audio = await self._recorder.wait_finished(recording_id)
@@ -168,6 +177,9 @@ class SpeechInputService:
             except BaseException:
                 session.cleanup_failed = True
                 raise
+            # 转写已经入队或失败，录音音频不再被读取。
+            if audio is not None and self._evidence is not None:
+                self._evidence.release(audio.evidence_id)
 
     def is_busy(self, task_id: int) -> bool:
         """录音启动、采集、识别或清理未完成时阻止任务验收."""

@@ -19,6 +19,7 @@ from skills.robot_registry import build_robot_skills
 from skills.speak import SpeakSkill
 from speech.input import SpeechInputService
 from speech.output import SpeechOutputService
+from storage.evidence import EvidenceStore
 
 
 class RobotApplication:
@@ -32,10 +33,22 @@ class RobotApplication:
         _knowledge: KnowledgeService | None = None,
         *,
         _audio: AudioAdapters | None = None,
+        _evidence: EvidenceStore | None = None,
     ) -> None:
-        """显式注入设备、感知与模型，构造期间不连接外部服务."""
+        """显式注入设备、感知与模型，构造期间不连接外部服务.
+
+        Args:
+            _robot: 机器人适配器.
+            _perception: 感知服务.
+            _model: 决策模型.
+            _knowledge: 知识服务，缺省使用家庭知识库.
+            _audio: 可选语音适配器.
+            _evidence: 感知与语音共用的证据存储；提供时按任务和语音作业释放证据.
+        """
         self.runtime: ActionManager = ActionManager(_robot, build_robot_skills(_robot))
-        self.gateway: TeamGateway = TeamGateway(self.runtime, _perception)
+        self.gateway: TeamGateway = TeamGateway(
+            self.runtime, _perception, _evidence=_evidence
+        )
         self._perception: PerceptionService = _perception
         self._model: BaseChatModel = _model
         self._knowledge: KnowledgeService = _knowledge or build_home_knowledge()
@@ -43,10 +56,12 @@ class RobotApplication:
         self._speech_output: SpeechOutputService | None = None
         if _audio is not None:
             self.speech_input = SpeechInputService(
-                _audio.recorder, _audio.asr, self.gateway
+                _audio.recorder, _audio.asr, self.gateway, _evidence=_evidence
             )
             self.gateway.register_task_resource(self.speech_input)
-            self._speech_output = SpeechOutputService(_audio.tts, _audio.player)
+            self._speech_output = SpeechOutputService(
+                _audio.tts, _audio.player, _evidence=_evidence
+            )
             self.runtime.registry.register(
                 SpeakSkill(self._speech_output, _simulated=_audio.simulated)
             )

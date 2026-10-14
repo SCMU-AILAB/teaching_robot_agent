@@ -78,7 +78,7 @@ class ContextBuilder:
         user_input: UserInput | None = None,
         observation: ObservationResult | None = None,
     ) -> TeachingContext:
-        """校验来源，读取最新状态并标记超过两秒的观察."""
+        """校验来源，读取最新状态并标记场景变化或超出有效窗口的观察."""
         if user_input is not None and user_input.task_id != task_id:
             raise ValueError("Input belongs to another task")
         if observation is not None and observation.task_id != task_id:

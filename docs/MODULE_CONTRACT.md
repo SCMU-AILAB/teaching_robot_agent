@@ -32,7 +32,7 @@ HTTP 字段与语义见 API_CONTRACT 的共享响应结构；内部模型尚待�
 | `async read(evidence_id: str) -> bytes` | 读取登记过的媒体；不存在或过期抛出明确错误 |
 | `get(evidence_id: str) -> EvidenceReference` | 查询元数据副本 |
 
-EvidenceReference：`evidence_id:str,media_type:str,created_at:float,captured_at:float,size_bytes:int`。首版支持 image/jpeg、image/png、audio/wav；不接受调用方指定磁盘保存路径。存储服务负责大小、保留期和引用策略，读取中的媒体不被清理。时间戳保留采集时刻；created_at 为入库时刻。
+EvidenceReference：`evidence_id:str,media_type:str,created_at:float,captured_at:float,size_bytes:int`。首版支持 image/jpeg、image/png、audio/wav；不接受调用方指定磁盘保存路径。存储服务负责大小限制；释放由引用所有者执行：观察帧在任务终态后由核心释放，录音和播报音频在语音作业结束后由语音服务释放，感知只释放采集后未交出的帧。时间戳保留采集时刻；created_at 为入库时刻。
 
 FrameReference：`frame_id:str,camera_id:str,captured_at:float,width:int,height:int,evidence_id:str,scene_revision:int`。
 
@@ -85,7 +85,7 @@ ObservationRequest：`observation_id:str,task_id:int,question:str,max_age_s:floa
 
 ObservationResult：`snapshot:SceneSnapshotResponse,from_cache:bool,stale:bool`。内部可以采用无 Response 后缀的领域模型，但字段一致；核心负责序列化成 HTTP 模型。
 
-缓存键：规范化前后空白后的完整问题、camera_id、model_id、scene_revision。只有键一致、采集年龄未超过 max_age_s 才复用。max_age_s=0 强制采集；stale 仍按实际年龄计算，因此调用方需要按延迟设置合理阈值。timeout_s 从核心接受请求开始计算，向下游传递剩余预算，不在每层重新开始计时。
+缓存键：规范化前后空白后的完整问题、camera_id、model_id、scene_revision。只有键一致、采集年龄未超过 max_age_s 且帧证据仍存在才复用。max_age_s=0 强制采集。max_age_s 只控制缓存复用；感知返回的 stale 只表示采集期间场景版本已变化。核心读取时再按场景版本、进行中的运动和采集时间判断过期，默认有效窗口 30 秒（TeamGateway `_observation_ttl_s`），避免真实 VLM 推理耗时让新观察直接失效。timeout_s 从核心接受请求开始计算，向下游传递剩余预算，不在每层重新开始计时。
 
 移动开始、相机视角变化、人工刷新由核心调用 invalidate。分析返回时若版本已改变，不覆盖当前场景；可作为 stale 历史结果返回。并发分析以采集时间和版本排序，晚完成的旧帧不能覆盖新观察。
 

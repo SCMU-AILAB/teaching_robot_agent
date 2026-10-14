@@ -51,6 +51,7 @@ async def run_demo(*, local_model: bool = False) -> None:
         SimulatedPerception(evidence),
         model,
         _audio=build_simulated_audio(evidence, "热水壶能碰吗？"),
+        _evidence=evidence,
     )
     try:
         await app.start()

@@ -44,6 +44,7 @@ class SimulatedPerception:
         timeout = finite_float(request.timeout_s, "timeout_s")
         if not 0 <= age <= 30 or not 0 < timeout <= 120:
             raise ValueError("Invalid observation limits")
+        revision = self._revision
         captured_at = time.time()
         evidence = await self._evidence.save(_IMAGE, "image/png", captured_at)
         frame = FrameReference(
@@ -53,7 +54,7 @@ class SimulatedPerception:
             1,
             1,
             evidence.evidence_id,
-            self._revision,
+            revision,
         )
         return ObservationResult(
             request.observation_id,
@@ -63,7 +64,8 @@ class SimulatedPerception:
             VisionAnalysis("模拟观察，仅供接口联调。", "simulated-vlm", True),
             time.time(),
             False,
-            time.time() - captured_at > age,
+            # 与真实感知一致：只有采集期间场景版本变化才算过期，时间窗口由核心判断。
+            revision != self._revision,
         )
 
     async def close(self) -> None:

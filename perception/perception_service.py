@@ -79,7 +79,11 @@ class LivePerception:
             _model_id=self._model_id,
             _scene_revision=revision,
         )
-        if record is not None and time.time() - record.captured_at <= age:
+        if (
+            record is not None
+            and time.time() - record.captured_at <= age
+            and self._evidence_available(record.frame.evidence_id)
+        ):
             return ObservationResult(
                 observation_id=observation_id,
                 task_id=task_id,
@@ -123,6 +127,14 @@ class LivePerception:
             from_cache=False,
             stale=stale,
         )
+
+    def _evidence_available(self, evidence_id: str) -> bool:
+        """缓存帧的证据可能已随任务结束释放，释放后不能再作为观察返回."""
+        try:
+            _ = self._evidence.get(evidence_id)
+        except KeyError:
+            return False
+        return True
 
     async def _capture_and_analyze(
         self, observation_id: str, question: str, revision: int, timeout: float

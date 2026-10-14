@@ -5,10 +5,11 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from domain.services import PlaybackState, PlaybackStatus
+from domain.services import AudioReference, PlaybackState, PlaybackStatus
 from domain.validation import finite_float, nonempty_string
 from speech._lifecycle import finish_cleanup
 from speech.interfaces import AudioPlayer, TTSProvider
+from storage.evidence import EvidenceStore
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,23 @@ class _Output:
 class SpeechOutputService:
     """拥有合成任务和播放器，不执行教学决策或创建机器人动作."""
 
-    def __init__(self, _tts: TTSProvider, _player: AudioPlayer) -> None:
-        """注入现有语音 Protocol，不启动后台任务."""
+    def __init__(
+        self,
+        _tts: TTSProvider,
+        _player: AudioPlayer,
+        *,
+        _evidence: EvidenceStore | None = None,
+    ) -> None:
+        """注入现有语音 Protocol，不启动后台任务.
+
+        Args:
+            _tts: 语音合成适配器.
+            _player: 播放器.
+            _evidence: 合成音频所在的证据存储；提供时播放器确认停止后释放该音频.
+        """
         self._tts: TTSProvider = _tts
         self._player: AudioPlayer = _player
+        self._evidence: EvidenceStore | None = _evidence
         self._outputs: dict[str, _Output] = {}
         self._closed: bool = False
         self._close_task: asyncio.Task[None] | None = None
@@ -129,6 +143,7 @@ class SpeechOutputService:
     ) -> PlaybackState:
         """合成完成后播放，取消和失败都等待播放器停止."""
         item = self._outputs[playback_id]
+        audio: AudioReference | None = None
         try:
             # ========== Step1: 合成只产生音频，不标记播放完成 ==========
             async with asyncio.timeout(timeout_s) as deadline:
@@ -171,6 +186,9 @@ class SpeechOutputService:
             except Exception:
                 item.stage = "failed"
                 raise
+            # 播放器确认停止后音频不再被读取；停止未确认时保留证据供排查.
+            if audio is not None and self._evidence is not None:
+                self._evidence.release(audio.evidence_id)
 
     def get_stage(self, playback_id: str) -> str:
         """读取内部编排阶段，不能用它代替 PlaybackState."""

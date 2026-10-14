@@ -17,6 +17,11 @@ class EvidenceStore:
         self._used_bytes: int = 0
         self._entries: dict[str, tuple[EvidenceReference, bytes]] = {}
 
+    @property
+    def used_bytes(self) -> int:
+        """当前已登记媒体的总字节数，用于容量监控和释放验证."""
+        return self._used_bytes
+
     async def save(
         self, content: bytes, media_type: str, captured_at: float
     ) -> EvidenceReference:

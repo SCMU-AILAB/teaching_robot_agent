@@ -2,7 +2,9 @@
 """队友可直接调用的核心门面，复用现有任务与动作运行时."""
 
 import asyncio
+import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
@@ -10,11 +12,14 @@ from domain.education import TeachingSession
 from domain.models import ActionRecord, RobotState, TaskState, TaskStatus
 from domain.robot import RobotCapability
 from domain.services import ObservationRequest, ObservationResult, TranscriptResult
-from domain.validation import nonempty_string
+from domain.validation import finite_float, nonempty_string
 from perception.interfaces import PerceptionService
 from runtime.action_manager import ActionManager
 from runtime.task_coordinator import TaskCoordinator
 from runtime.task_resources import TaskResource
+from storage.evidence import EvidenceStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,15 +50,41 @@ class UserInput:
 class TeamGateway:
     """提供真实任务查询、取消、观察及输入队列；不伪装已实现教学 Agent."""
 
-    def __init__(self, _runtime: ActionManager, _perception: PerceptionService) -> None:
-        """注入核心运行时与队友提供的感知实现."""
+    def __init__(
+        self,
+        _runtime: ActionManager,
+        _perception: PerceptionService,
+        *,
+        _evidence: EvidenceStore | None = None,
+        _observation_ttl_s: float = 30.0,
+    ) -> None:
+        """注入核心运行时与队友提供的感知实现.
+
+        Args:
+            _runtime: 动作运行时.
+            _perception: 感知服务.
+            _evidence: 感知写入的证据存储；提供时任务终态后释放该任务的观察帧.
+            _observation_ttl_s: 观察按采集时间计算的有效窗口，秒；运动另行立即失效.
+
+        Raises:
+            ValueError: 有效窗口不是正有限数.
+        """
         self._runtime: ActionManager = _runtime
         self._coordinator: TaskCoordinator = TaskCoordinator(_runtime)
         self._perception: PerceptionService = _perception
+        self._evidence: EvidenceStore | None = _evidence
+        self._observation_ttl_s: float = finite_float(
+            _observation_ttl_s, "observation_ttl_s"
+        )
+        if self._observation_ttl_s <= 0:
+            raise ValueError("observation_ttl_s must be positive")
         self._inputs: asyncio.Queue[UserInput] = asyncio.Queue(1024)
         self._transcripts: dict[tuple[int, str], UserInput] = {}
         self._scene_generation: int = 0
         self._observations: dict[int, ObservationResult] = {}
+        # 每个任务引用过的观察帧证据，任务终态后释放未被其他任务引用的部分。
+        self._task_evidence: dict[int, set[str]] = {}
+        self._coordinator.add_terminal_listener(self._release_task_evidence)
 
     def register_task_resource(self, resource: TaskResource) -> None:
         """应用装配附属资源，使统一任务停止等待资源确认."""
@@ -77,7 +108,27 @@ class TeamGateway:
         if latest is None:
             return replace(supplied, stale=True) if supplied is not None else None
         age = time.time() - latest.frame.captured_at
-        return replace(latest, stale=latest.stale or age < 0 or age > 2)
+        return replace(
+            latest,
+            stale=latest.stale or age < 0 or age > self._observation_ttl_s,
+        )
+
+    def _release_task_evidence(self, task_id: int) -> None:
+        """任务终态回调：释放该任务独占的帧证据；观察记录保留供事后查询."""
+        self._release_unreferenced(self._task_evidence.pop(task_id, set()))
+
+    def _release_unreferenced(self, evidence_ids: Iterable[str]) -> None:
+        """只释放没有被其他未结束任务引用的证据；缓存命中可能让多个任务共享一帧."""
+        if self._evidence is None:
+            return
+        referenced = set[str]().union(*self._task_evidence.values())
+        for evidence_id in evidence_ids:
+            if evidence_id not in referenced:
+                self._evidence.release(evidence_id)
+                logger.debug(
+                    "[TeamGateway._release_unreferenced] 已释放观察证据 evidence_id=%s",
+                    evidence_id,
+                )
 
     def finish_interaction(self, task_id: int) -> TaskState:
         """由宿主显式结束一次问答任务，仍检查所有实际动作终态."""
@@ -229,12 +280,20 @@ class TeamGateway:
         generation = self._scene_generation
         async with asyncio.timeout(request.timeout_s):
             result = await self._perception.observe(request)
-        self._require_active(request.task_id)
-        if (
-            result.task_id != request.task_id
-            or result.observation_id != request.observation_id
-        ):
-            raise ValueError("Perception result does not match request")
+        try:
+            self._require_active(request.task_id)
+            if (
+                result.task_id != request.task_id
+                or result.observation_id != request.observation_id
+            ):
+                raise ValueError("Perception result does not match request")
+        except ValueError:
+            # 迟到或不匹配的观察不会进入任务，帧证据没有其他持有者时立即释放。
+            self._release_unreferenced((result.frame.evidence_id,))
+            raise
+        self._task_evidence.setdefault(request.task_id, set()).add(
+            result.frame.evidence_id
+        )
         moving = any(
             record.raw_request.skill_name
             in {"move_relative", "turn_relative", "navigate_to"}

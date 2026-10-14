@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 
 from domain.education import TeachingSession, TeachingStage
 from domain.models import (
@@ -36,6 +37,23 @@ class TaskCoordinator:
             raise ValueError("Coordinator and runtime must share the same store")
         self._cancellations: dict[int, asyncio.Task[None]] = {}
         self._resources: list[TaskResource] = []
+        self._terminal_listeners: list[Callable[[int], None]] = []
+
+    def add_terminal_listener(self, listener: Callable[[int], None]) -> None:
+        """装配阶段注册任务终态回调，用于释放任务级资源；回调必须同步且不阻塞."""
+        if listener not in self._terminal_listeners:
+            self._terminal_listeners.append(listener)
+
+    def _notify_terminal(self, task_id: int) -> None:
+        """终态已保存后通知监听者；单个回调失败不影响任务终态或其他回调."""
+        for listener in self._terminal_listeners:
+            try:
+                listener(task_id)
+            except Exception:
+                logger.exception(
+                    "[TaskCoordinator._notify_terminal] 终态回调失败 task_id=%s",
+                    task_id,
+                )
 
     def register_resource(self, resource: TaskResource) -> None:
         """装配阶段注册任务资源，停止流程等待它们实际退出."""
@@ -125,6 +143,7 @@ class TaskCoordinator:
         )
         task.ended_at = time.time()
         self.store.save_task(task)
+        self._notify_terminal(task_id)
         return task
 
     async def cancel_task(self, task_id: int) -> TaskState:
@@ -186,6 +205,7 @@ class TaskCoordinator:
         )
         task.ended_at = time.time()
         self.store.save_task(task)
+        self._notify_terminal(task_id)
         logger.info(
             "[TaskCoordinator._cancel_task] 任务取消流程结束 task_id=%s status=%s",
             task_id,

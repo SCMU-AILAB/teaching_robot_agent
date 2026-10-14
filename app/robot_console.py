@@ -24,7 +24,11 @@ async def run_console() -> None:
         raise ValueError("ROBOT_AUDIO must be off or simulated")
     audio = build_simulated_audio(evidence) if audio_mode == "simulated" else None
     app = RobotApplication(
-        robot, SimulatedPerception(evidence), build_local_model("AGENT"), _audio=audio
+        robot,
+        SimulatedPerception(evidence),
+        build_local_model("AGENT"),
+        _audio=audio,
+        _evidence=evidence,
     )
     loop = asyncio.get_running_loop()
     lines: asyncio.Queue[str] = asyncio.Queue()

@@ -107,3 +107,13 @@
 - 新增三项子进程竞态回归：READY 前停止成功、READY 前错误停止确认、COMPLETED 已送达但进程未退出时取消，并检查后续播放、进程退出、任务回收和租约释放。两个缺陷用例在原实现上均失败，在修复实现上通过。
 - 解决 `.env.example`、`speech/README.md` 合并冲突，保留核心模拟音频配置和真实语音独立入口配置，明确真实适配器尚未装配到主应用。
 - 验证：Ruff、128 个 Python 文件格式检查通过；basedpyright 为 0 errors / 0 warnings；186 项 unittest 全部通过；git diff --check 通过。本次使用设备进程替身，未开启真实麦克风、扬声器或离线模型推理。
+
+## 2026-10-14：感知服务与远端语音分支审查、main 证据与观察窗口修复
+
+- [PR #7](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/7)（远端语音）修复后合入：SSH 无响应退出时报告退出码，取消确认失败保留原始原因；响应头、请求头先校验类型；服务器回写期限按体积放宽。合并提交 `d8d7e23`。
+- [PR #8](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/8)（LivePerception）修复后合入：`close()` 只取消服务自建作业，不再取消并等待调用方任务；采集后失败释放帧证据；拒绝相机/模型标识不一致的结果。合并提交 `4a86eac`。
+- **观察过期规则（main）**：真实 VLM 推理常超过 2 秒，原 `resolve_observation` 的 2 秒规则会让所有真实观察被 Agent 当作过期。现为场景版本变化或运动中立即过期，采集超过 30 秒（`TeamGateway._observation_ttl_s`）才按时间过期；`max_age_s` 只控制缓存复用。模拟与真实感知返回的 stale 统一只表示采集期间场景版本变化。
+- **证据回收（main）**：`TaskCoordinator` 新增终态回调；Gateway 按任务登记观察帧，验收或取消后释放未被其他进行中任务引用的帧，迟到观察立即释放。语音服务在识别结束、播放器确认停止后释放音频。LivePerception 缓存命中前确认证据仍在。需要向 `RobotApplication` 传入 `_evidence` 启用；`EvidenceStore` 新增 `used_bytes`。
+- 新增 `tests/test_evidence_lifecycle.py` 9 项：推理延迟不致过期、超窗过期、窗口参数校验、验收/取消释放、共享帧保留、迟到观察释放、终态回调失败隔离、缓存帧释放后重采、语音音频释放。
+- 验证：Ruff、139 个文件格式检查通过，basedpyright 0 errors / 0 warnings，219 项 unittest 通过，`app.robot_audio_demo` 实际运行成功。未连接真实摄像头、VLM、服务器或音频设备。
+- 未处理：远端语音每次请求重建 SSH 和加载模型的延迟、客户端与服务器协议版本校验，留给语音负责人。HTTP 合同未改；`RecordingResponse.evidence_id` 指向的录音在识别后释放，实现 HTTP 时需按此说明。
