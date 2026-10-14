@@ -1,6 +1,7 @@
 # agent/scene_brief.py
 """观察结果与关联安全资料的紧凑摘要，供模型阅读."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import override
 
@@ -19,6 +20,26 @@ NO_KNOWLEDGE_NOTE = "资料库没有相关条目"
 def truncate_text(text: str, limit: int) -> str:
     """超长时取前 limit 字并追加省略号."""
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def knowledge_line(item: KnowledgePoint) -> str:
+    """按“- 标题：讲解（来源：…）”渲染一条资料，不再截断."""
+    return f"- {item.title}：{item.explanation}（来源：{item.source}）"
+
+
+def render_knowledge(entries: Sequence[KnowledgePoint]) -> str:
+    """紧凑渲染资料查询结果：最多 3 条且讲解截断，没有结果时给出明确提示."""
+    if not entries:
+        return NO_KNOWLEDGE_NOTE
+    return "\n".join(
+        knowledge_line(
+            replace(
+                item,
+                explanation=truncate_text(item.explanation, MAX_EXPLANATION_CHARS),
+            )
+        )
+        for item in entries[:MAX_RELATED]
+    )
 
 
 def observation_objects(
@@ -71,10 +92,8 @@ class SceneBrief:
         ]
         if self.related_safety:
             lines.append("相关安全资料：")
-            lines.extend(
-                f"- {item.title}：{item.explanation}（来源：{item.source}）"
-                for item in self.related_safety
-            )
+            # 摘要构造时已截断讲解，这里不再重复截断
+            lines.extend(knowledge_line(item) for item in self.related_safety)
         else:
             lines.append(f"相关安全资料：{self.note}")
         return "\n".join(lines)

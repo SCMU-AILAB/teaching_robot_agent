@@ -16,6 +16,7 @@ from pydantic import Field
 
 from agent.context import RobotContextBuilder
 from agent.embodied_agent import EmbodiedAgent
+from agent.scene_brief import NO_KNOWLEDGE_NOTE
 from agent.tools import ToolAdapter
 from app.robot_application import RobotApplication
 from app.team_gateway import TeamGateway
@@ -168,7 +169,22 @@ class ObjectSafetyApplicationTests(unittest.IsolatedAsyncioTestCase):
             ],
             [QUESTION, "为什么会烫", "那插座呢"],
         )
-        self.assertIn("插座与用电安全", last_tool_message(model.seen[-1]))
+        tool_text = last_tool_message(model.seen[-1])
+        self.assertTrue(tool_text.startswith("- 插座与用电安全："))
+        self.assertIn("（来源：项目人工编写的安全教育示例", tool_text)
+        self.assertNotIn("KnowledgePoint", tool_text)
+        self.assertNotIn("related_objects", tool_text)
+
+    async def test_lookup_without_match_reports_missing_knowledge(self) -> None:
+        """资料库查不到时工具结果为明确提示."""
+        model, _, _ = await self._run(
+            [
+                tool_call("lookup_knowledge", {"query": "恐龙"}, "k1"),
+                AIMessage("资料库里没有恐龙的安全资料。"),
+            ],
+            ["恐龙危险吗"],
+        )
+        self.assertEqual(last_tool_message(model.seen[-1]), NO_KNOWLEDGE_NOTE)
 
     async def test_unknown_object_reports_missing_knowledge(self) -> None:
         """资料库没有关联条目时明确告知模型，避免编造."""

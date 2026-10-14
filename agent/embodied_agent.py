@@ -18,9 +18,10 @@ from pydantic import BaseModel
 from agent.context import ContextProvider
 from agent.dialogue import DialogueMemory, SceneFocus
 from agent.langchain_tools import build_langchain_tools
-from agent.scene_brief import SceneBrief
+from agent.scene_brief import SceneBrief, render_knowledge
 from agent.tools import ToolAdapter
 from app.team_gateway import UserInput
+from domain.education import KnowledgePoint
 from domain.models import ActionRecord, TaskStatus
 from domain.robot import MOTION_SKILLS, RobotCapability
 from domain.services import ObservationResult
@@ -44,6 +45,27 @@ SYSTEM_PROMPT = """你是家庭学习陪伴与安全教育机器人，面向儿�
 - 先使用对话记忆和当前焦点回答；焦点标为移动前、或需要说明位置时，先重新调用 observe_scene。
 - 其他安全问题调用 lookup_knowledge，按资料回答并说明来源。
 课程：学生答案只能来自本轮 user_input，没有答案不要调用 evaluate_answer。"""
+
+
+def knowledge_entries(result: object) -> tuple[KnowledgePoint, ...]:
+    """校验资料工具返回值确为知识条目元组.
+
+    Args:
+        result: lookup_knowledge 工具的原始返回值。
+
+    Returns:
+        收窄类型后的知识条目。
+
+    Raises:
+        RuntimeError: 返回值不是知识条目元组。
+    """
+    if not isinstance(result, tuple):
+        raise RuntimeError("Knowledge tool returned invalid entries")
+    items = cast(tuple[object, ...], result)
+    entries = tuple(item for item in items if isinstance(item, KnowledgePoint))
+    if len(entries) != len(items):
+        raise RuntimeError("Knowledge tool returned invalid entries")
+    return entries
 
 
 @dataclass(frozen=True)
@@ -233,6 +255,9 @@ class EmbodiedAgent:
                 if isinstance(result, SceneBrief):
                     self._memory.set_focus(SceneFocus.from_brief(result))
                     content = result.to_prompt()
+                elif call["name"] == "lookup_knowledge":
+                    # 紧凑渲染查询结果，避免内部字段占用上下文
+                    content = render_knowledge(knowledge_entries(result))
                 else:
                     content = str(result)
                 history.append(ToolMessage(content, tool_call_id=call["id"]))

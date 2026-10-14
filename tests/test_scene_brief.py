@@ -4,7 +4,7 @@
 import unittest
 from dataclasses import replace
 
-from agent.scene_brief import build_scene_brief
+from agent.scene_brief import NO_KNOWLEDGE_NOTE, build_scene_brief, render_knowledge
 from domain.education import KnowledgePoint
 from domain.models import Pose2D
 from domain.services import (
@@ -122,3 +122,33 @@ class SceneBriefTests(unittest.TestCase):
         brief = build_scene_brief(obs, None, build_home_knowledge())
         self.assertIn("过期=True", brief.to_prompt())
         self.assertIn("采集时间=100.0", brief.to_prompt())
+
+
+class RenderKnowledgeTests(unittest.TestCase):
+    """资料查询结果的紧凑渲染."""
+
+    def test_compact_lines_limited_and_truncated(self) -> None:
+        """最多 3 条，每条为标题、截断讲解与来源，不含内部字段."""
+        entries = knowledge_with_long_explanations().for_objects(
+            ["热水壶", "插座", "刀", "药瓶", "燃气灶"]
+        )
+        text = render_knowledge(entries)
+        lines = text.split("\n")
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0], "- 主题0：" + "字" * 200 + "…（来源：测试来源）")
+        self.assertNotIn("related_objects", text)
+
+    def test_short_entry_matches_scene_brief_line(self) -> None:
+        """未超长条目与场景摘要中的安全资料行格式一致."""
+        knowledge = build_home_knowledge()
+        entries = knowledge.lookup("插座")
+        brief = build_scene_brief(
+            observation_with(("插座", "右侧")), None, build_home_knowledge()
+        )
+        line = render_knowledge(entries).split("\n")[0]
+        self.assertTrue(line.startswith("- 插座与用电安全："))
+        self.assertIn(line, brief.to_prompt())
+
+    def test_empty_result_reports_missing(self) -> None:
+        """没有结果时返回明确提示."""
+        self.assertEqual(render_knowledge(()), NO_KNOWLEDGE_NOTE)
