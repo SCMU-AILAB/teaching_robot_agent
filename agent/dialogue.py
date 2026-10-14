@@ -17,6 +17,11 @@ NO_OBJECTS_TEXT = "未识别出明确物体"
 NO_LABELS_TEXT = "无"
 
 
+def normalize_dialogue_text(text: str) -> str:
+    """把所有空白压成单个空格并替换直角引号，防止原话伪造记忆行或引号边界."""
+    return " ".join(text.split()).replace("「", "“").replace("」", "”")
+
+
 @dataclass(frozen=True)
 class DialogueTurn:
     """一轮问答及其发生时的焦点物体标签."""
@@ -88,7 +93,7 @@ class DialogueMemory:
         return self._focus
 
     def record(self, user_text: str, answer: str) -> None:
-        """记录一轮问答并截断，超过上限时丢弃最早的轮次."""
+        """规范化并截断一轮问答，超过上限时丢弃最早的轮次."""
         labels = (
             tuple(label for label, _ in self._focus.objects)
             if self._focus is not None
@@ -96,8 +101,8 @@ class DialogueMemory:
         )
         self._turns.append(
             DialogueTurn(
-                truncate_text(user_text, MAX_USER_TEXT_CHARS),
-                truncate_text(answer, MAX_ANSWER_CHARS),
+                truncate_text(normalize_dialogue_text(user_text), MAX_USER_TEXT_CHARS),
+                truncate_text(normalize_dialogue_text(answer), MAX_ANSWER_CHARS),
                 labels,
             )
         )
