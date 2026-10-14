@@ -18,6 +18,9 @@ speech-client = ["sounddevice>=0.5.6"]
 speech = [
     "av<19",
     "faster-whisper>=1.2.1",
+    # sherpa-onnx 1.13.8 的 wheel 元数据缺少对 core 的依赖声明，需显式锁定同一版本。
+    "sherpa-onnx==1.13.8",
+    "sherpa-onnx-core==1.13.8",
     "sounddevice>=0.5.6",
 ]
 speech-server = [

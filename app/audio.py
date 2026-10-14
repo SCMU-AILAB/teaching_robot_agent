@@ -9,7 +9,9 @@ from typing import Protocol
 from domain.services import TranscriptResult
 from domain.validation import finite_float
 from providers.asr.mock import MockASRProvider
-from providers.asr.resident import ResidentWhisperASRProvider
+from providers.asr.resident import ASREngine, ResidentASRProvider
+from providers.asr.sensevoice_engine import SenseVoiceEngine
+from providers.asr.whisper_engine import WhisperEngine
 from providers.audio.mock import MockAudioRecorder
 from providers.audio.player import MockAudioPlayer
 from providers.audio.real_player import PortAudioPlayer
@@ -62,6 +64,32 @@ def build_simulated_audio(
     )
 
 
+def build_asr_engine() -> ASREngine:
+    """按环境选择常驻识别引擎：默认中文 SenseVoice，可切换 Whisper.
+
+    Returns:
+        尚未加载模型的识别引擎.
+
+    Raises:
+        ValueError: 引擎名称未知或模型目录未配置.
+    """
+    model_path = os.environ.get("SPEECH_ASR_MODEL_PATH", "")
+    if not model_path.strip():
+        raise ValueError("Set SPEECH_ASR_MODEL_PATH to a downloaded ASR model")
+    language = os.environ.get("SPEECH_ASR_LANGUAGE", "zh")
+    engine = os.environ.get("SPEECH_ASR_ENGINE", "sensevoice")
+    if engine == "sensevoice":
+        return SenseVoiceEngine(model_path, language)
+    if engine == "whisper":
+        return WhisperEngine(
+            model_path,
+            language,
+            os.environ.get("SPEECH_ASR_DEVICE", "cpu"),
+            os.environ.get("SPEECH_ASR_COMPUTE_TYPE", "int8"),
+        )
+    raise ValueError("SPEECH_ASR_ENGINE must be sensevoice or whisper")
+
+
 def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
     """按环境装配本机麦克风、常驻识别、系统合成与扬声器，缺配置直接报错.
 
@@ -88,17 +116,8 @@ def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
     voice = os.environ.get(
         "SPEECH_SYSTEM_TTS_VOICE", "Tingting" if engine == "say" else "cmn"
     )
-    model_path = os.environ.get("SPEECH_ASR_MODEL_PATH", "")
-    if not model_path.strip():
-        raise ValueError("Set SPEECH_ASR_MODEL_PATH to a downloaded Whisper model")
     device = AudioDeviceLease()
-    asr = ResidentWhisperASRProvider(
-        evidence,
-        model_path,
-        os.environ.get("SPEECH_ASR_LANGUAGE", "zh"),
-        os.environ.get("SPEECH_ASR_DEVICE", "cpu"),
-        os.environ.get("SPEECH_ASR_COMPUTE_TYPE", "int8"),
-    )
+    asr = ResidentASRProvider(evidence, build_asr_engine())
     return AudioAdapters(
         PortAudioRecorder(
             evidence, device, os.environ.get("SPEECH_INPUT_DEVICE", ""), rate

@@ -17,12 +17,13 @@ from unittest.mock import patch
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from app.audio import AudioAdapters, build_real_audio
+from app.audio import AudioAdapters, build_asr_engine, build_real_audio
 from app.robot_application import RobotApplication
 from domain.services import AudioReference
 from perception.simulated import SimulatedPerception
-from providers.asr.resident import ResidentWhisperASRProvider
-from providers.asr.whisper_engine import WhisperModel
+from providers.asr.resident import ResidentASRProvider
+from providers.asr.sensevoice_engine import SenseVoiceEngine
+from providers.asr.whisper_engine import WhisperEngine, WhisperModel
 from providers.audio.mock import MockAudioRecorder
 from providers.audio.player import MockAudioPlayer
 from providers.audio.wav import PcmAudio, encode_wav, save_wav
@@ -132,10 +133,10 @@ class ResidentASRTests(unittest.IsolatedAsyncioTestCase):
         self.model_dir = Path(directory.name)
         _ = (self.model_dir / "model.bin").write_bytes(b"fake")
 
-    def provider(self) -> ResidentWhisperASRProvider:
-        """构造使用假模型的常驻识别器."""
-        return ResidentWhisperASRProvider(
-            self.store, str(self.model_dir), _model_factory=self.factory
+    def provider(self) -> ResidentASRProvider:
+        """构造使用假 Whisper 模型的常驻识别器."""
+        return ResidentASRProvider(
+            self.store, WhisperEngine(str(self.model_dir), _model_factory=self.factory)
         )
 
     async def audio(self) -> AudioReference:
@@ -183,9 +184,7 @@ class ResidentASRTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_configuration_rejected(self) -> None:
         """设备和期限参数先校验."""
         with self.assertRaises(ValueError):
-            _ = ResidentWhisperASRProvider(
-                self.store, str(self.model_dir), _device="tpu"
-            )
+            _ = WhisperEngine(str(self.model_dir), _device="tpu")
         asr = self.provider()
         await asr.start()
         for timeout in (0.0, -1.0, float("nan")):
@@ -257,10 +256,6 @@ class ResidentASRTests(unittest.IsolatedAsyncioTestCase):
             _ = await asr.transcribe(await self.audio(), 5)
 
 
-if __name__ == "__main__":
-    _ = unittest.main()
-
-
 class ResidentASRApplicationTests(unittest.IsolatedAsyncioTestCase):
     """常驻识别随 RobotApplication 启停，录音转写进入主链路."""
 
@@ -279,12 +274,12 @@ class ResidentASRApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     def build(
         self, factory: FakeFactory
-    ) -> tuple[RobotApplication, ResidentWhisperASRProvider]:
+    ) -> tuple[RobotApplication, ResidentASRProvider]:
         """装配带常驻识别的应用，设备与合成为模拟实现."""
         evidence = EvidenceStore()
         device = AudioDeviceLease()
-        asr = ResidentWhisperASRProvider(
-            evidence, str(self.model_dir), _model_factory=factory
+        asr = ResidentASRProvider(
+            evidence, WhisperEngine(str(self.model_dir), _model_factory=factory)
         )
         audio = AudioAdapters(
             MockAudioRecorder(evidence, device),
@@ -359,10 +354,39 @@ class ResidentASRApplicationTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "SPEECH_ASR_MODEL_PATH"):
                 _ = build_real_audio(EvidenceStore())
 
-    def test_real_audio_wires_resident_asr_lifecycle(self) -> None:
-        """真实语音装配把常驻识别登记为应用生命周期资源，且标记为非模拟."""
-        with patch.dict(os.environ, {"SPEECH_ASR_MODEL_PATH": str(self.model_dir)}):
+    def test_real_audio_defaults_to_sensevoice(self) -> None:
+        """真实语音默认装配常驻 SenseVoice，登记为生命周期资源且标记非模拟."""
+        with patch.dict(
+            os.environ,
+            {"SPEECH_ASR_MODEL_PATH": str(self.model_dir), "SPEECH_ASR_ENGINE": ""},
+        ):
+            _ = os.environ.pop("SPEECH_ASR_ENGINE")
             audio = build_real_audio(EvidenceStore())
         self.assertFalse(audio.simulated)
-        self.assertIsInstance(audio.asr, ResidentWhisperASRProvider)
+        assert isinstance(audio.asr, ResidentASRProvider)
+        self.assertIsInstance(audio.asr.engine, SenseVoiceEngine)
         self.assertEqual(audio.lifecycle, (audio.asr,))
+
+    def test_engine_selection(self) -> None:
+        """SPEECH_ASR_ENGINE 可切换 Whisper，未知引擎直接报错."""
+        with patch.dict(
+            os.environ,
+            {
+                "SPEECH_ASR_MODEL_PATH": str(self.model_dir),
+                "SPEECH_ASR_ENGINE": "whisper",
+            },
+        ):
+            self.assertIsInstance(build_asr_engine(), WhisperEngine)
+        with patch.dict(
+            os.environ,
+            {
+                "SPEECH_ASR_MODEL_PATH": str(self.model_dir),
+                "SPEECH_ASR_ENGINE": "cloud",
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "SPEECH_ASR_ENGINE"):
+                _ = build_asr_engine()
+
+
+if __name__ == "__main__":
+    _ = unittest.main()
