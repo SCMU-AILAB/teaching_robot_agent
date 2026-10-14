@@ -13,11 +13,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+speech-client = ["sounddevice>=0.5.6"]
 # faster-whisper 1.2.1 仍使用 PyAV 在 19 中移除的 metadata_errors 参数。
 speech = [
     "av<19",
     "faster-whisper>=1.2.1",
     "sounddevice>=0.5.6",
+]
+speech-server = [
+    "av<19",
+    "faster-whisper>=1.2.1",
+    "piper-tts>=1.8.0",
 ]
 
 [tool.basedpyright]
