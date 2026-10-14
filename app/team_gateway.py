@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from domain.education import TeachingSession
 from domain.models import ActionRecord, RobotState, TaskState, TaskStatus
-from domain.robot import RobotCapability
+from domain.robot import MOTION_SKILLS, RobotCapability
 from domain.services import ObservationRequest, ObservationResult, TranscriptResult
 from domain.validation import finite_float, nonempty_string
 from perception.interfaces import PerceptionService
@@ -179,7 +179,7 @@ class TeamGateway:
         record = await self._coordinator.submit_action(
             task_id, skill_name, args, timeout_s
         )
-        if skill_name in {"move_relative", "turn_relative", "navigate_to"}:
+        if skill_name in MOTION_SKILLS:
             self._scene_generation += 1
             self._observations = {
                 key: replace(value, stale=True)
@@ -204,11 +204,7 @@ class TeamGateway:
         """事件驱动等待终态，不轮询模型或设备."""
         _ = self.get_action_status(task_id, action_id)
         result = await self._runtime.wait_for_action(action_id)
-        if result.raw_request.skill_name in {
-            "move_relative",
-            "turn_relative",
-            "navigate_to",
-        }:
+        if result.raw_request.skill_name in MOTION_SKILLS:
             self._scene_generation += 1
             self._observations = {
                 key: replace(value, stale=True)
@@ -295,8 +291,7 @@ class TeamGateway:
             result.frame.evidence_id
         )
         moving = any(
-            record.raw_request.skill_name
-            in {"move_relative", "turn_relative", "navigate_to"}
+            record.raw_request.skill_name in MOTION_SKILLS
             and not record.status.is_terminal
             for record in self._runtime.list_actions()
         )

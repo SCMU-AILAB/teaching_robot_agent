@@ -17,6 +17,12 @@ class RobotCapability(StrEnum):
     NAVIGATION = "navigation"
 
 
+# 会改变机器人位置、使旧观察失效的技能名称，作为单一来源供各层引用
+MOTION_SKILLS: frozenset[str] = frozenset(
+    {"move_relative", "turn_relative", "navigate_to"}
+)
+
+
 @dataclass(frozen=True)
 class NavigationGoal:
     """指定地图坐标系中的目标位姿，米与弧度为统一单位."""

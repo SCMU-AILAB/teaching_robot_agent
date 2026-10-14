@@ -16,9 +16,19 @@ UNKNOWN_POSITION = "不确定"
 NO_KNOWLEDGE_NOTE = "资料库没有相关条目"
 
 
-def _truncate(text: str, limit: int) -> str:
+def truncate_text(text: str, limit: int) -> str:
     """超长时取前 limit 字并追加省略号."""
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def observation_objects(
+    observation: ObservationResult,
+) -> tuple[tuple[str, str], ...]:
+    """返回最多 8 个 (标签, 方位)，缺少方位时为不确定."""
+    return tuple(
+        (item.label, dict(item.attributes).get("position", UNKNOWN_POSITION))
+        for item in observation.analysis.objects[:MAX_OBJECTS]
+    )
 
 
 @dataclass(frozen=True)
@@ -32,10 +42,7 @@ class SceneBrief:
     @property
     def objects(self) -> tuple[tuple[str, str], ...]:
         """返回最多 8 个 (标签, 方位)，缺少方位时为不确定."""
-        return tuple(
-            (item.label, dict(item.attributes).get("position", UNKNOWN_POSITION))
-            for item in self.observation.analysis.objects[:MAX_OBJECTS]
-        )
+        return observation_objects(self.observation)
 
     @property
     def note(self) -> str:
@@ -88,7 +95,7 @@ def build_scene_brief(
     related = tuple(
         replace(
             entry,
-            explanation=_truncate(entry.explanation, MAX_EXPLANATION_CHARS),
+            explanation=truncate_text(entry.explanation, MAX_EXPLANATION_CHARS),
         )
         for entry in knowledge.for_objects(labels)[:MAX_RELATED]
     )
