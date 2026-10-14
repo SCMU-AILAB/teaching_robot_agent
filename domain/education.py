@@ -30,6 +30,8 @@ class KnowledgePoint:
     title: str
     explanation: str
     source: str
+    keywords: tuple[str, ...] = ()
+    related_objects: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
