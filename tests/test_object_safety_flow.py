@@ -385,6 +385,16 @@ class PromptOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(first), 2)
         self.assertFalse(any(m.text.startswith(INPUT_PREFIX) for m in first))
 
+    async def test_system_prompt_keeps_safety_rules(self) -> None:
+        """实际发送的系统提示保留动作验证、导航与能力限制规则."""
+        system = (await self._seen([AIMessage("你好。")], ["你好"]))[0][0].text
+        for phrase in (
+            "不得声称尚未验证的动作成功",
+            "视觉描述不等于导航目标；不能把短时移动说成到达指定物体",
+            "遵守 capabilities 能力限制",
+        ):
+            self.assertIn(phrase, system)
+
 
 if __name__ == "__main__":
     _ = unittest.main()
