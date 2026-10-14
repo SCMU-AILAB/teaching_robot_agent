@@ -27,7 +27,7 @@ uv run main.py
 
 控制台直接输入“查询热水安全知识”“看看桌上有什么”“模拟左转 0.1 弧度后再观察”等任务。`/finish` 验收当前任务，`/stop` 停止当前任务，`/quit` 退出。未结束时继续输入会沿用当前任务，忙碌期间普通请求被拒绝，停止命令仍可处理。当前控制台支持 macOS/Linux 终端。
 
-**默认模型是真实本地 Qwen，机器人和感知均为模拟。** 默认仅文字输出；设置 `ROBOT_AUDIO=simulated` 后，回答通过 Runtime 执行模拟播报（不输出真实声音）。主入口没有连接真实摄像头。跨任务长期对话记忆尚未实现。所有真实部署地址与凭据由环境提供，程序不自动读取 `.env`。
+**默认模型是真实本地 Qwen，机器人和感知均为模拟。** 默认仅文字输出；设置 `ROBOT_AUDIO=simulated` 后，回答通过 Runtime 执行模拟播报（不输出真实声音）；设置 `ROBOT_AUDIO=real` 后使用本机麦克风、进程内常驻 Whisper 识别、系统合成和扬声器，控制台用 `/record` 开始录音、`/done` 结束并识别。主入口没有连接真实摄像头。跨任务长期对话记忆尚未实现。所有真实部署地址与凭据由环境提供，程序不自动读取 `.env`。
 
 主入口已从旧动作演示改为机器人控制台。原演示使用独立模块：
 
@@ -103,3 +103,17 @@ basedpyright 要求零错误、零警告。记录、输入去重和教学状态�
 主应用自动播报最终回答，最多 4000 字，自动播报动作预算 30 秒；失败时保留回答文字及失败动作，不自动重播。模型主动动作仍受原有三个连续动作上限约束，最终回答播报另计一次。语音输出的内部合成与播放默认也共用 30 秒期限。音频设备忙时明确失败，不偷偷抢占其他任务。
 
 语音会话及输出服务各保留最多 4096 条记录；达到上限拒绝新作业，证据仍遵循共享存储容量。真实设备、ASR/TTS、人声播报和 Flutter 网络联调尚未完成。
+
+## 本机真实语音（常驻识别）
+
+`ROBOT_AUDIO=real` 时，`ResidentWhisperASRProvider` 在 `RobotApplication.start()` 加载一次 Whisper 模型，`close()` 释放；每次识别只做推理，不再为每段语音新起进程或 SSH 连接。同一模型串行推理；取消或超时会等原生推理结束后再传播，迟到结果丢弃。模型缺失时启动直接失败，不退回模拟识别，也不在运行时自动下载。
+
+```bash
+uv sync --locked --extra speech
+# 一次性下载模型到 git 忽略的 models/（国内网络可设 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1）
+uv run --extra speech python -c 'from huggingface_hub import snapshot_download; snapshot_download("Systran/faster-whisper-base", local_dir="models/whisper-base", allow_patterns=["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"])'
+export ROBOT_AUDIO=real SPEECH_ASR_MODEL_PATH=models/whisper-base
+uv run --extra speech main.py
+```
+
+2026-10-14 在 Apple M2 CPU（int8、base 模型）实测：模型加载约 0.6 秒；3.2 秒与 1.1 秒合成中文语音识别分别约 0.5–0.7 秒、0.4 秒。原远端方案（SSH 到服务器、每次新起进程）热状态约 2.6 秒。base 模型把“热水壶”识别为“热水湖”，需要更高准确率时可换 small 模型。远端 SSH 识别链路仍保留在 `speech.real_demo`。

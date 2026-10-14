@@ -54,6 +54,7 @@ class RobotApplication:
         self._knowledge: KnowledgeService = _knowledge or build_home_knowledge()
         self.speech_input: SpeechInputService | None = None
         self._speech_output: SpeechOutputService | None = None
+        self.audio: AudioAdapters | None = _audio
         if _audio is not None:
             self.speech_input = SpeechInputService(
                 _audio.recorder, _audio.asr, self.gateway, _evidence=_evidence
@@ -80,9 +81,13 @@ class RobotApplication:
         )
 
     async def start(self) -> None:
-        """连接设备并启动 Runtime，感知资源由其服务自身管理."""
+        """连接设备并启动 Runtime，再加载常驻语音资源；感知资源由其服务自身管理."""
         await self.runtime.start()
         await self.events.start()
+        if self.audio is not None:
+            # 识别模型等常驻资源在启动时加载一次，加载失败直接报错，不退回模拟。
+            for resource in self.audio.lifecycle:
+                await resource.start()
 
     async def create_task(self, target: str) -> TaskState:
         """创建独立机器人任务，交由宿主登记而非自动开课."""
@@ -131,13 +136,29 @@ class RobotApplication:
                 await self._close_devices()
 
     async def _close_audio(self) -> None:
-        """语音输入输出分别清理，任一异常不跳过另一资源."""
+        """语音输入输出分别清理，任一异常不跳过另一资源；最后释放常驻资源."""
         try:
             if self.speech_input is not None:
                 await self.speech_input.close()
         finally:
-            if self._speech_output is not None:
-                await self._speech_output.close()
+            try:
+                if self._speech_output is not None:
+                    await self._speech_output.close()
+            finally:
+                await self._close_lifecycle()
+
+    async def _close_lifecycle(self) -> None:
+        """逐个释放常驻语音资源，单个失败不跳过其余资源，最后重新抛出首个异常."""
+        if self.audio is None:
+            return
+        failure: BaseException | None = None
+        for resource in self.audio.lifecycle:
+            try:
+                await resource.close()
+            except Exception as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
 
     async def _close_devices(self) -> None:
         """无论感知关闭是否成功，运行时与事件广播均释放."""

@@ -15,3 +15,6 @@ Thumbs.db
 .vscode/
 .idea/
 .zed/
+
+# 本地下载的模型权重，不提交仓库
+models/

@@ -1,12 +1,13 @@
 # app/robot_console.py
-"""赛题主入口：文字任务控制台，设备与感知采用显式模拟装配."""
+"""赛题主入口：文字与语音任务控制台，设备与感知采用显式模拟装配."""
 
 import asyncio
 import logging
 import os
 import sys
+from uuid import uuid4
 
-from app.audio import build_simulated_audio
+from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
 from app.robot_application import RobotApplication
 from domain.models import TaskStatus
 from perception.simulated import SimulatedPerception
@@ -20,9 +21,13 @@ async def run_console() -> None:
     robot = RobotAdapterFactory().create(os.environ.get("ROBOT_ADAPTER", "simulated"))
     evidence = EvidenceStore()
     audio_mode = os.environ.get("ROBOT_AUDIO", "off")
-    if audio_mode not in {"off", "simulated"}:
-        raise ValueError("ROBOT_AUDIO must be off or simulated")
-    audio = build_simulated_audio(evidence) if audio_mode == "simulated" else None
+    if audio_mode not in {"off", "simulated", "real"}:
+        raise ValueError("ROBOT_AUDIO must be off, simulated or real")
+    audio: AudioAdapters | None = None
+    if audio_mode == "simulated":
+        audio = build_simulated_audio(evidence)
+    elif audio_mode == "real":
+        audio = build_real_audio(evidence)
     app = RobotApplication(
         robot,
         SimulatedPerception(evidence),
@@ -42,6 +47,7 @@ async def run_console() -> None:
 
     worker: asyncio.Task[None] | None = None
     task_id: int | None = None
+    recording_id: str | None = None
 
     async def show_reply(expected_task_id: int) -> None:
         """显示一次任务结果，异常显式呈现，取消不输出迟到回答."""
@@ -59,13 +65,46 @@ async def run_console() -> None:
                 f"任务失败：{type(error).__name__}；请检查服务与运行日志。", flush=True
             )
 
+    async def transcribe_and_reply(identifier: str, expected_task_id: int) -> None:
+        """结束录音并等待识别，非空转写由服务入队后显示机器人回答."""
+        try:
+            item = await app.finish_recording(identifier)
+        except asyncio.CancelledError:
+            print("本次录音已取消。", flush=True)
+            return
+        except Exception as error:
+            print(
+                f"语音识别失败：{type(error).__name__}；请检查模型与设备。", flush=True
+            )
+            return
+        if item is None:
+            print("没有识别到语音，请重新 /record。", flush=True)
+            return
+        print(f"你（语音）：{item.text}", flush=True)
+        await show_reply(expected_task_id)
+
+    async def active_task() -> int:
+        """沿用未结束的任务，否则为本次输入创建新任务."""
+        nonlocal task_id
+        if task_id is None or (await app.gateway.get_snapshot(task_id)).task.status in {
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }:
+            task_id = (await app.create_task("语音或文字对话")).task_id
+        return task_id
+
     loop.add_reader(sys.stdin, read_line)
     try:
         await app.start()
         print("家庭学习陪伴与安全教育机器人：模型为真实本地模型，设备和感知为模拟。")
-        print(f"语音模式：{audio_mode}（simulated 仅模拟播放，不输出真实声音）。")
         print(
-            "直接输入或追问；/finish 确认完成，/stop 停止，/quit 退出。",
+            f"语音模式：{audio_mode}（simulated 仅模拟播放；real 使用本机麦克风、"
+            + "常驻识别模型和扬声器）。"
+        )
+        print(
+            "直接输入或追问；/record 开始录音，/done 结束录音并识别；"
+            + "/finish 确认完成，/stop 停止，/quit 退出。",
             flush=True,
         )
         while True:
@@ -85,7 +124,45 @@ async def run_console() -> None:
                         except (ValueError, RuntimeError) as error:
                             print(f"无法验收：{error}", flush=True)
                 continue
+            if text == "/record":
+                if audio is None:
+                    print(
+                        "未启用语音：设置 ROBOT_AUDIO=real 或 simulated。", flush=True
+                    )
+                elif recording_id is not None or (
+                    worker is not None and not worker.done()
+                ):
+                    print("正在录音或处理中，请先 /done 或 /stop。", flush=True)
+                else:
+                    identifier = uuid4().hex
+                    try:
+                        await app.start_recording(
+                            await active_task(),
+                            identifier,
+                            audio.max_duration_s,
+                            audio.timeout_s,
+                        )
+                    except (ValueError, RuntimeError) as error:
+                        print(f"无法开始录音：{error}", flush=True)
+                    else:
+                        recording_id = identifier
+                        print(
+                            f"正在录音（最长 {audio.max_duration_s:.0f} 秒），说完输入 /done。",
+                            flush=True,
+                        )
+                continue
+            if text == "/done":
+                if recording_id is None or task_id is None:
+                    print("当前没有录音，先输入 /record。", flush=True)
+                else:
+                    worker = asyncio.create_task(
+                        transcribe_and_reply(recording_id, task_id),
+                        name="robot-console-speech",
+                    )
+                    recording_id = None
+                continue
             if text == "/stop":
+                recording_id = None
                 if task_id is not None:
                     state = await app.cancel_task(task_id)
                     if worker is not None and not worker.done():
@@ -94,6 +171,9 @@ async def run_console() -> None:
                     print("停止结果：", state.status.value, flush=True)
                 continue
             if not text:
+                continue
+            if recording_id is not None:
+                print("正在录音，请先 /done 结束录音。", flush=True)
                 continue
             if worker is not None and not worker.done():
                 print("当前任务处理中，可输入 /stop 停止后再提交。", flush=True)

@@ -138,3 +138,11 @@
   - M2：`lookup_knowledge` 结果在 Agent 转为工具消息时按 `- 标题：讲解（来源：…）` 紧凑渲染，最多 3 条，讲解截断 200 字，无结果返回“资料库没有相关条目”；`ToolAdapter.lookup_knowledge` 返回类型不变，课程调用方不受影响。
   - I3（未解决，待负责人裁定）：最坏情况为 4 轮满额记忆、8 个物体、3 条关联资料、200 字当前问题，最后一次模型调用的消息内容合计 6292 字（系统 686、记忆 2490、本轮状态 2443、当前输入 218、工具结果 455），超过 4000 字预算。按裁定依次尝试：紧凑资料渲染对该场景无影响（6292），回答上限降为 200 字后为 5891，再降为 3 轮后为 5408，仍超预算。主要占用是本轮状态的 dataclass repr，其中观察结果 repr 约 1297 字，与观察简报重复。记忆上限保持 4 轮、用户原话 200 字、回答 300 字，预算测试未合入。
   - 验证：Ruff 通过；147 个文件格式检查通过；basedpyright 0 errors / 0 warnings / 0 notes；270 项 unittest 通过（`test_scene_brief.py` 9 项、`test_dialogue_memory.py` 15 项、`test_object_safety_flow.py` 14 项）。
+
+## 2026-10-14：本机常驻 ASR 接入主控制台
+
+- **背景**：远端 SSH 识别每次都新起 SSH 连接与 Python 进程并重新加载模型，热状态约 2.6 秒；服务器实测推理本身仅约 0.8 秒（CPU），换 GPU 仅快约 0.2 秒，瓶颈在每次重来的固定开销。按负责人要求改为由代码管理模型生命周期。
+- **实现**：新增 `providers/asr/resident.py` `ResidentWhisperASRProvider`，`RobotApplication.start()` 加载一次模型、`close()` 释放；同一模型串行推理；取消、超时与关闭都等待原生推理结束再传播或释放，迟到结果丢弃。`providers/asr/whisper_engine.py` 抽出 faster-whisper 类型边界与转写步骤，子进程 worker 与常驻识别共用。`AudioAdapters` 增加 `lifecycle`；`app.audio.build_real_audio` 装配本机麦克风、常驻识别、系统合成与扬声器。控制台新增 `ROBOT_AUDIO=real` 与 `/record`、`/done`（`/finish` 仍为任务验收）。本机系统合成音色改用 `SPEECH_SYSTEM_TTS_VOICE`，与服务器 Piper 的 `SPEECH_TTS_VOICE` 分开。`models/` 加入 `.gitignore`。
+- **测试**：新增 `tests/test_resident_asr.py` 12 项（只加载一次、未加载/关闭后拒绝、模型缺失、参数校验、并发串行、取消与超时等待推理结束、推理中关闭、应用启停与语音入队回答、启动失败不降级、真实装配）。Ruff、150 个文件格式检查通过，basedpyright 0 errors / 0 warnings，282 项 unittest 通过。
+- **真实验证**：Apple M2 CPU、base int8：加载约 0.6 秒，3.2 秒/1.1 秒合成中文语音识别约 0.5–0.7 秒/0.4 秒；`ROBOT_AUDIO=real` 控制台启动、开始录音、退出释放链路实际运行。尚未用真人麦克风说话做识别验收；base 模型将“热水壶”识别为“热水湖”。
+- **远端链路**：服务器 `~/opt/teaching-robot-speech` 已部署 ASR 环境与 base 模型（未部署 Piper），`speech.real_demo` 仍可使用；虚拟环境另装了 CUDA 12 运行库但未启用，当前协议无法向远端传递设备配置。

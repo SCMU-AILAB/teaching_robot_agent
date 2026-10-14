@@ -1,16 +1,36 @@
 # app/audio.py
 """语音依赖装配配置，真实适配器可以沿用同一组接口替换模拟器."""
 
+import os
+import sys
 from dataclasses import dataclass
+from typing import Protocol
 
 from domain.services import TranscriptResult
+from domain.validation import finite_float
 from providers.asr.mock import MockASRProvider
+from providers.asr.resident import ResidentWhisperASRProvider
 from providers.audio.mock import MockAudioRecorder
 from providers.audio.player import MockAudioPlayer
+from providers.audio.real_player import PortAudioPlayer
+from providers.audio.recorder import PortAudioRecorder
 from providers.tts.mock import MockTTSProvider
+from providers.tts.system import SystemTTSProvider
 from speech.interfaces import ASRProvider, AudioPlayer, AudioRecorder, TTSProvider
 from speech.resources import AudioDeviceLease
 from storage.evidence import EvidenceStore
+
+
+class AudioLifecycle(Protocol):
+    """需要随应用启动加载、随应用关闭释放的语音资源."""
+
+    async def start(self) -> None:
+        """加载资源."""
+        ...
+
+    async def close(self) -> None:
+        """释放资源，重复调用安全."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -22,6 +42,10 @@ class AudioAdapters:
     tts: TTSProvider
     player: AudioPlayer
     simulated: bool
+    # 由应用在 start/close 中管理的常驻资源，例如进程内识别模型。
+    lifecycle: tuple[AudioLifecycle, ...] = ()
+    max_duration_s: float = 15.0
+    timeout_s: float = 30.0
 
 
 def build_simulated_audio(
@@ -35,4 +59,55 @@ def build_simulated_audio(
         MockTTSProvider(evidence),
         MockAudioPlayer(evidence, device),
         simulated=True,
+    )
+
+
+def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
+    """按环境装配本机麦克风、常驻识别、系统合成与扬声器，缺配置直接报错.
+
+    Args:
+        evidence: 录音与合成音频共用的证据存储.
+
+    Returns:
+        非模拟的语音依赖；识别模型在应用启动时加载.
+
+    Raises:
+        ValueError: 模型目录、采样率、时长或期限配置非法.
+    """
+    rate = int(os.environ.get("SPEECH_SAMPLE_RATE", "16000"))
+    duration = finite_float(
+        float(os.environ.get("SPEECH_MAX_DURATION_S", "15")), "max_duration_s"
+    )
+    timeout = finite_float(float(os.environ.get("SPEECH_TIMEOUT_S", "30")), "timeout_s")
+    if not 8000 <= rate <= 48000 or not 0 < duration <= 60 or not 0 < timeout <= 300:
+        raise ValueError("Invalid speech sample rate, duration or timeout")
+    engine = os.environ.get(
+        "SPEECH_TTS_ENGINE", "say" if sys.platform == "darwin" else "espeak-ng"
+    )
+    # 与服务器 Piper 的 SPEECH_TTS_VOICE 分开，避免把 huayan 交给系统合成引擎。
+    voice = os.environ.get(
+        "SPEECH_SYSTEM_TTS_VOICE", "Tingting" if engine == "say" else "cmn"
+    )
+    model_path = os.environ.get("SPEECH_ASR_MODEL_PATH", "")
+    if not model_path.strip():
+        raise ValueError("Set SPEECH_ASR_MODEL_PATH to a downloaded Whisper model")
+    device = AudioDeviceLease()
+    asr = ResidentWhisperASRProvider(
+        evidence,
+        model_path,
+        os.environ.get("SPEECH_ASR_LANGUAGE", "zh"),
+        os.environ.get("SPEECH_ASR_DEVICE", "cpu"),
+        os.environ.get("SPEECH_ASR_COMPUTE_TYPE", "int8"),
+    )
+    return AudioAdapters(
+        PortAudioRecorder(
+            evidence, device, os.environ.get("SPEECH_INPUT_DEVICE", ""), rate
+        ),
+        asr,
+        SystemTTSProvider(evidence, engine, voice),
+        PortAudioPlayer(evidence, device, os.environ.get("SPEECH_OUTPUT_DEVICE", "")),
+        simulated=False,
+        lifecycle=(asr,),
+        max_duration_s=duration,
+        timeout_s=timeout,
     )
