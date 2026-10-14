@@ -46,7 +46,9 @@ async def run_once(question: str) -> None:
         raise ValueError("未知相机来源")
 
     camera = factory.create(name)
-    service = LivePerception(camera, provider, SceneStore(), _CAMERA_ID, model_id)
+    service = LivePerception(
+        camera, provider, SceneStore(), evidence, _CAMERA_ID, model_id
+    )
     try:
         await camera.connect()
         result = await service.observe(

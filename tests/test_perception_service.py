@@ -15,16 +15,20 @@ from domain.services import (
 )
 from perception.perception_service import LivePerception
 from perception.scene_store import SceneStore
+from storage.evidence import EvidenceStore
 
 
 class FakeCamera:
-    """假相机：不碰硬件，只数采集了几次."""
+    """假相机：不碰硬件，只数采集了几次，帧内容登记到真实证据存储."""
 
-    def __init__(self) -> None:
-        """初始化计数器和关闭标志."""
+    def __init__(self, _evidence: EvidenceStore, _camera_id: str = "cam-1") -> None:
+        """初始化计数器、关闭标志和证据存储."""
+        self.evidence: EvidenceStore = _evidence
+        self.camera_id: str = _camera_id
         self.captures: int = 0
         self.closed: bool = False
         self.close_calls: int = 0
+        self.evidence_ids: list[str] = []
 
     async def connect(self) -> None:
         """假相机不需要连接."""
@@ -32,13 +36,16 @@ class FakeCamera:
     async def capture(self, scene_revision: int) -> FrameReference:
         """造一个帧，并把版本号原样写进去."""
         self.captures += 1
+        captured_at = time.time()
+        receipt = await self.evidence.save(b"frame", "image/png", captured_at)
+        self.evidence_ids.append(receipt.evidence_id)
         return FrameReference(
             frame_id=f"frame-{self.captures}",
-            camera_id="cam-1",
-            captured_at=time.time(),
+            camera_id=self.camera_id,
+            captured_at=captured_at,
             width=4,
             height=4,
-            evidence_id=f"ev-{self.captures}",
+            evidence_id=receipt.evidence_id,
             scene_revision=scene_revision,
         )
 
@@ -51,8 +58,9 @@ class FakeCamera:
 class FakeProvider:
     """假模型：不碰网络，只数推理了几次."""
 
-    def __init__(self, _delay_s: float = 0.0) -> None:
+    def __init__(self, _delay_s: float = 0.0, _model_id: str = "qwen3.5:9b") -> None:
         """初始化计数器."""
+        self.model_id: str = _model_id
         self.analyzes: int = 0
         self.delay_s: float = _delay_s
         self.requests: list[VisionRequest] = []
@@ -70,7 +78,7 @@ class FakeProvider:
         except asyncio.CancelledError:
             self.interrupted = True
             raise
-        return VisionAnalysis("假结论", "qwen3.5:9b", False)
+        return VisionAnalysis("假结论", self.model_id, False)
 
 
 class SpyStore(SceneStore):
@@ -98,14 +106,25 @@ class LivePreceptionTests(unittest.IsolatedAsyncioTestCase):
     """验证管家的缓存,失效,超时与关闭行为."""
 
     def make_service(
-        self, _provider_delay_s: float = 0.0
+        self,
+        _provider_delay_s: float = 0.0,
+        _camera_id: str = "cam-1",
+        _model_id: str = "qwen3.5:9b",
     ) -> tuple[FakeCamera, FakeProvider, SpyStore, LivePerception]:
         """造一整套假对象并接线，返回给用例逐个断言."""
-        camera = FakeCamera()
-        provider = FakeProvider(_provider_delay_s)
+        evidence = EvidenceStore()
+        camera = FakeCamera(evidence, _camera_id)
+        provider = FakeProvider(_provider_delay_s, _model_id)
         store = SpyStore()
-        service = LivePerception(camera, provider, store, "cam-1", "qwen3.5:9b")
+        service = LivePerception(
+            camera, provider, store, evidence, "cam-1", "qwen3.5:9b"
+        )
         return camera, provider, store, service
+
+    def assert_released(self, _camera: FakeCamera) -> None:
+        """断言失败观察拍下的第一帧证据已经释放."""
+        with self.assertRaises(KeyError):
+            _ = _camera.evidence.get(_camera.evidence_ids[0])
 
     async def test_first_observation_captures_and_records(self) -> None:
         """首次观察应真实采集、真实推理，并写入账本一次."""
@@ -203,10 +222,11 @@ class LivePreceptionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(camera.captures, 1)  # 照片已经拍过了
         self.assertEqual(store.remembered, 0)  # 超时了 → 不许记账
+        self.assert_released(camera)  # 没交出去的帧要释放
         self.assertFalse(asyncio.all_tasks() - before - {asyncio.current_task()})
 
     async def test_close_cancels_in_flight_observation(self) -> None:
-        """关闭应取消在途观察，而不是等它自然跑完."""
+        """关闭应取消在途作业，调用方收到 RuntimeError 而不是被注入取消."""
         camera, provider, _, service = self.make_service(_provider_delay_s=5.0)
         started = asyncio.Event()
         provider.during = started.set  # ★ 推理一开始就发信号（本身是同步方法）
@@ -221,9 +241,70 @@ class LivePreceptionTests(unittest.IsolatedAsyncioTestCase):
         elapsed = time.monotonic() - tick
 
         self.assertLess(elapsed, 1.0)  # ★ 没有干等那 5 秒
-        self.assertTrue(task.cancelled())  # ★ 任务真的被取消
+        with self.assertRaises(RuntimeError):
+            _ = await task  # ★ 调用方任务没有被取消，而是明确得知服务已关闭
+        self.assertFalse(task.cancelled())
         self.assertTrue(provider.interrupted)  # ★ 取消打进了推理那一行
         self.assertEqual(camera.close_calls, 1)  # 相机被关了一次
+        self.assert_released(camera)
+
+    async def test_close_does_not_cancel_or_wait_for_caller_task(self) -> None:
+        """长期运行的调用方循环不能被关闭取消，关闭也不等它整个结束."""
+        _, provider, _, service = self.make_service(_provider_delay_s=5.0)
+        started = asyncio.Event()
+        provider.during = started.set
+        resume = asyncio.Event()
+        errors: list[BaseException] = []
+
+        async def host_loop() -> str:
+            """观察失败后继续等待下一条输入的宿主循环."""
+            try:
+                _ = await service.observe(ObservationRequest("o1", 7, "桌上有什么"))
+            except RuntimeError as error:
+                errors.append(error)
+            _ = await resume.wait()
+            return "still running"
+
+        host = asyncio.create_task(host_loop())
+        _ = await started.wait()
+        async with asyncio.timeout(1.0):
+            await service.close()  # ★ 宿主循环还在等 resume，关闭也必须返回
+
+        self.assertFalse(host.done())
+        resume.set()
+        self.assertEqual(await host, "still running")
+        self.assertEqual(len(errors), 1)
+
+    async def test_caller_cancel_propagates_after_job_exits(self) -> None:
+        """调用方取消仍按取消传播，并且等推理真正退出、释放帧后才返回."""
+        camera, provider, _, service = self.make_service(_provider_delay_s=5.0)
+        started = asyncio.Event()
+        provider.during = started.set
+        task = asyncio.create_task(
+            service.observe(ObservationRequest("o1", 7, "桌上有什么"))
+        )
+        _ = await started.wait()
+
+        _ = task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            _ = await task
+
+        self.assertTrue(provider.interrupted)
+        self.assert_released(camera)
+        await service.close()
+
+    async def test_mismatched_camera_or_model_is_rejected(self) -> None:
+        """帧或结论来自别的相机/模型时拒绝，不写入一行永远查不到的账."""
+        for camera_id, model_id in (("cam-2", "qwen3.5:9b"), ("cam-1", "other-vlm")):
+            with self.subTest(camera_id=camera_id, model_id=model_id):
+                camera, _, store, service = self.make_service(
+                    _camera_id=camera_id, _model_id=model_id
+                )
+                with self.assertRaises(ValueError):
+                    _ = await service.observe(ObservationRequest("o1", 7, "桌上有什么"))
+                self.assertEqual(store.remembered, 0)
+                self.assert_released(camera)
+                await service.close()
 
     async def test_close_releases_camera_and_is_idempotent(self) -> None:
         """关闭应释放相机，且重复调用安全."""
