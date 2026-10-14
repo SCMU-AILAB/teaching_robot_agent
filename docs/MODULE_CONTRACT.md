@@ -71,6 +71,10 @@ VisionRequest：`request_id:str,question:str,frame:FrameReference,timeout_s:floa
 
 VisionAnalysis：`summary:str,objects:list[ObjectObservation],relations:list[RelationObservation],model_id:str,simulated:bool`。对象与关系字段遵循 HTTP 合同；原始模型文本由适配器解析，不泄漏为未知字典。模型不支持可靠对象框时 bbox=null；不支持对象结构时至少提供有依据的 summary，objects/relations 可为空且不能虚构。空列表只能表示未提取对象，并不保证画面没有对象。
 
+本地 VLM 适配器的 `objects` 约定：模型 JSON 为 `{"summary":"…","objects":[{"label":"…","position":"…"}]}`；`position` 只取 `左侧`、`中间`、`右侧`、`不确定`，标签 1–20 字，最多 8 个物体。适配器把每项转为 `ObjectObservation`，编号按响应顺序生成，方位放入 `attributes` 的 `("position", 取值)`，`bbox=None`；不输出距离与边界框。任何字段缺失、超限或取值非法一律以 ServiceError 50001 失败，不做部分采纳。
+
+共享模型 `KnowledgePoint`（`domain/education.py`）新增两个可选字段：`keywords: tuple[str, ...] = ()` 与 `related_objects: tuple[str, ...] = ()`，默认空，已有构造不受影响。`KnowledgeService.lookup` 按标题（+3）、关键词（+2）、关联物体（+2）、子串（+1）排序；新增 `for_objects(labels)` 按物体标签（容忍修饰词、去重）返回关联条目。`source` 统一为人工编写的示例说明，内容待负责人审核。
+
 模型输出为外部不可信数据，不能成为执行命令。模型输出中的时间、task_id、证据路径不作为事实字段采纳；这些字段由宿主程序根据真实输入填入。
 
 ### PerceptionService

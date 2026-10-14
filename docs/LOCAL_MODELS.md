@@ -44,10 +44,10 @@
 ## 接入代码
 
 - `providers/local_model.py`：从环境创建 LangChain `ChatOllama`；不在导入时连接，不修改全局代理；请求绕过环境代理，限制上下文和超时。
-- `providers/ollama_vision.py`：实现已有 `VisionProvider.analyze()` 契约。读取 EvidenceStore，验证图片、尺寸和采集时间，严格解析 JSON；首版仅填 `summary`，不伪造对象框、关系或距离。
+- `providers/ollama_vision.py`：实现已有 `VisionProvider.analyze()` 契约。读取 EvidenceStore，验证图片、尺寸和采集时间，严格解析 JSON，格式为 `{"summary":"观察描述","objects":[{"label":"物体中文名称","position":"左侧|中间|右侧|不确定"}]}`，最多 8 个物体、标签 1–20 字；方位放入对象属性，不伪造对象框、关系或距离，任何非法输出返回 ServiceError 50001。新格式只经单元测试验证，未做真机验证（本环境未配置 `OLLAMA_BASE_URL`）。
 - `agent/langchain_tools.py`：把七个已有工具注册为 LangChain 工具。
 - `agent/embodied_agent.py`：刷新统一上下文，执行有界工具循环；逐批校验工具参数与任务归属；学生答案必须匹配宿主输入。动作提交独占一批并返回 `pending_action_id`，宿主通过事件或 `wait_for_action()` 等待终态后再决策。
-- `app/model_demo.py`：静态图片视觉联调和教学知识工具联调。
+- `app/model_demo.py`：静态图片视觉联调和教学知识工具联调；视觉联调同时打印 `物体：{label}（{position}）`。
 
 两类模型可分别配置，默认均为 `qwen3.5:9b`。宇树当前安装包未声明 tools 能力，切换到宇树时只设置 `VLM_MODEL`。
 
@@ -82,7 +82,7 @@ uv run python -m app.model_demo agent '请先查询圆形的教学资料，再�
 - 真实摄像头依然由感知实现负责，将同一个 EvidenceStore 和本适配器注入即可；真实音频、设备 SDK 及 HTTP/SSE 未在本次接入。
 - asyncio 取消可停止客户端等待、丢弃迟到回答；不保证远端 Ollama 已立即中止 GPU 计算。停止机器人仍由 Runtime 直接处理，不等待模型。
 - 工具错误与格式错误明确失败，不自动重试动作。ClassroomHost 按输入编号去重；失败输入禁止重放并取消任务，成功输入返回缓存结果。
-- 对话历史仅保留于单次有界决策中；跨轮事实来自教学、任务和观察状态。模型输出仍需真实场景验收，不能把提示词视为消除幻觉的保证。
+- 主机器人入口在同一任务内保留最近 4 轮有界对话记忆（不跨任务）；课堂模式的跨轮事实仍来自教学、任务和观察状态。模型输出仍需真实场景验收，不能把提示词视为消除幻觉的保证。
 
 ## 课堂宿主联调补充
 
@@ -91,3 +91,14 @@ uv run python -m app.model_demo agent '请先查询圆形的教学资料，再�
 ## 赛题主框架更新（2026-10-05）
 
 主入口已改为 `uv run main.py` 的机器人控制台，由 RobotApplication 和 RobotHost 装配；普通观察、移动和安全问答不创建教学会话。ClassroomHost 保留为显式课程模式。新架构与验收边界以 [赛题框架](COMPETITION_ARCHITECTURE.md) 为准。
+
+## 物体讲解与追问的真机验收（待做）
+
+本环境未配置 `OLLAMA_BASE_URL`，物体 JSON 格式、观察简报与任务内追问只通过单元测试和受控模型验证，未做真机验证。后续由负责人在可连接服务器的环境依次运行：
+
+```bash
+uv run python -m app.model_demo vision /path/to/kettle.jpg '图中有什么？哪些东西小朋友要小心？'
+uv run main.py
+```
+
+第一条应打印摘要及 `物体：…（左侧/中间/右侧/不确定）`；进入控制台后依次输入“这是什么？能碰吗？”“为什么会烫？”“那插座呢？”，记录回答并与资料库条目、画面事实对照。

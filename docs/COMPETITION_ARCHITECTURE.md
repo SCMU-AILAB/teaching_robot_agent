@@ -6,10 +6,10 @@
 
 | 赛题能力 | 框架入口 | 当前实现 |
 | --- | --- | --- |
-| 陪伴交互 | RobotApplication → RobotHost → EmbodiedAgent | 真实本地模型与文字控制台；同任务可继续输入，显式验收或取消后开启新任务 |
-| 物体识别 | observe_scene → PerceptionService → VisionProvider | 主入口模拟感知；本地 VLM 已独立联调，真实相机待接入 |
+| 陪伴交互 | RobotApplication → RobotHost → EmbodiedAgent | 真实本地模型与文字控制台；同任务可继续输入，并保留最近 4 轮有界对话记忆以支持追问；显式验收或取消后开启新任务，记忆不跨任务；提示词行为未在真机 9B 模型上验证 |
+| 物体识别 | observe_scene → PerceptionService → VisionProvider | 主入口模拟感知；本地 VLM 输出物体标签与相对方位（左侧/中间/右侧/不确定，不含距离与边界框），观察工具返回场景简报；新 JSON 格式未做真机验证，真实相机待接入 |
 | 移动讲解 | submit_action → Runtime → Skill → RobotAdapter | 模拟相对移动、转向及终态反馈；真实设备和导航待接入 |
-| 安全教育 | lookup_knowledge → KnowledgeService | 热水、插座开发示例，明确来源与待审核状态；不是风险检测或安全认证 |
+| 安全教育 | lookup_knowledge → KnowledgeService | 热水、插座、刀具、药品、燃气灶、清洁剂、窗户阳台共 7 条开发示例，按标题、关键词与关联物体检索，并可由观察到的物体关联；明确来源与待审核状态，内容待负责人审核；不是风险检测或安全认证 |
 | 语音交互 | ASRProvider → submit_transcript；输出可接 TTSProvider/AudioPlayer | 主应用可选装配模拟语音、Runtime 播报和任务统一取消；真实设备尚未装配 |
 | 可选系统教学 | ClassroomHost → TeachingFlow → EducationService | 规则出题、评价与学习进度；独立演示入口 |
 
@@ -59,12 +59,13 @@ flowchart TD
 - 课程：显式选择 `app.classroom_demo`。与主控制台不能共享竞争同一个 next_input 的两个消费者；选择一种模式或在更外层明确分发。
 - 语音：通过 AudioAdapters 注入录音、ASR、TTS 和播放器；转写统一入队，最终回答自动进入 SpeakSkill，Runtime 验证实际播放终态。任务资源注册到协调器，停止等待录音/识别和动作确认。当前仅模拟适配器验证，不输出真实声音。
 
-当前控制台使用 macOS/Linux 的事件循环终端读取；退出释放输入监听、任务、感知与设备。每条输入独立决策，动作续接保留该输入与工具历史，尚无跨任务长期陪伴记忆；同一任务内部的动作与观察状态用于续接，不把“它”“刚才那个”自动绑定到上一个已结束任务。
+当前控制台使用 macOS/Linux 的事件循环终端读取；退出释放输入监听、任务、感知与设备。每条输入独立决策，动作续接保留该输入与工具历史，尚无跨任务长期陪伴记忆；同一任务内保留最近 4 轮有界对话记忆（仅最终文字回答计入），动作与观察状态用于续接，不把“它”“刚才那个”自动绑定到上一个已结束任务。
 
 ## 验收
 
 - 无 EducationService 的应用可完成安全知识问答并显式验收零动作任务。
 - 观察 → 相对转向 → 等待成功 → 再观察 → 回答，可由受控模型完整驱动；结果明确模拟。
+- 观察 → 讲解 + 提醒 → 两轮追问：观察工具返回物体、方位与关联安全资料，模型据此讲解并提醒，同任务内追问可使用记忆；受控模型与模拟感知的自动化测试已覆盖（`tests/test_object_safety_flow.py`），真实 VLM/Qwen 的表现待真机验收。
 - 移动后的旧观察 stale 为 True；不支持的设备能力在提交前拒绝。
 - 停止不等模型完成；设备失败不重试，重复输入不再次运动。
 - 固定课堂的已有测试继续通过，作为可选模式保留。
