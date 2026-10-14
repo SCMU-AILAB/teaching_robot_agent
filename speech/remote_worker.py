@@ -22,6 +22,8 @@ from providers.audio.wav import save_wav
 from providers.tts.piper import PiperTTSProvider
 from storage.evidence import EvidenceStore
 
+_MIN_REPLY_BYTES_PER_S = 256 * 1024
+
 
 @dataclass(frozen=True)
 class RemoteRequest:
@@ -76,7 +78,7 @@ async def read_request(reader: asyncio.StreamReader) -> RemoteRequest:
         if set(header) != {"operation", "size", "timeout_s", "option"}:
             raise ValueError("Unexpected speech request fields")
         operation = header.get("operation")
-        if operation not in {"asr", "tts"} or not isinstance(operation, str):
+        if not isinstance(operation, str) or operation not in {"asr", "tts"}:
             raise ValueError("Unknown speech operation")
         size = positive_int(header.get("size"), "size")
         if size > (32 * 1024 * 1024 if operation == "asr" else 8000):
@@ -168,7 +170,8 @@ async def main(
             + b"\n"
             + content
         )
-        async with asyncio.timeout(5):
+        # 结果写入本地 sshd 管道，慢速链路下按体积放宽期限，至少 5 秒。
+        async with asyncio.timeout(5 + len(content) / _MIN_REPLY_BYTES_PER_S):
             await writer.drain()
     finally:
         input_transport.close()

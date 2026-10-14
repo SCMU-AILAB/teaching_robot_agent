@@ -75,14 +75,19 @@ async def _read_reply(process: asyncio.subprocess.Process, limit: int) -> _Reply
     """先校验有界响应头，再读取声明长度的结果并等待远端退出."""
     assert process.stdout is not None
     line = await process.stdout.readline()
+    if not line:
+        # SSH 认证、主机密钥或远端启动失败时没有任何响应，保留退出码便于排查。
+        raise RuntimeError(
+            f"Remote speech worker closed without response (exit {await process.wait()})"
+        )
     if len(line) > 4096:
         raise ValueError("Oversized speech response header")
     header = string_key_dict(cast(object, json.loads(line)), "response")
     status = header.get("status")
     size = header.get("size")
     if (
-        status not in {"ok", "cancelled", "failed", "timed_out"}
-        or not isinstance(status, str)
+        not isinstance(status, str)
+        or status not in {"ok", "cancelled", "failed", "timed_out"}
         or not isinstance(size, int)
         or isinstance(size, bool)
         or not 0 <= size <= limit
@@ -179,6 +184,8 @@ class SSHSpeechTransport:
         except BaseException:
             _ = reply.cancel()
             _ = await asyncio.gather(reply, return_exceptions=True)
+            # 连接或协议失败时保留原因；确认超时则没有可追溯的远端异常。
+            failure = None if reply.cancelled() else reply.exception()
             raise RuntimeError(
                 "Remote speech cleanup not confirmed; do not assume the job stopped"
-            ) from None
+            ) from failure

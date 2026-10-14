@@ -17,7 +17,7 @@ from providers.tts.piper import PiperTTSProvider
 from providers.tts.remote import RemoteTTSProvider
 from speech.config import SpeechConfig
 from speech.remote import SpeechServer, SSHSpeechTransport
-from speech.remote_worker import RemoteRequest, serve
+from speech.remote_worker import RemoteRequest, read_request, serve
 from storage.evidence import EvidenceStore
 
 
@@ -123,6 +123,43 @@ class RemoteSpeechTests(unittest.IsolatedAsyncioTestCase):
                 self.store, self.transport("invalid")
             ).synthesize("测试", None, 3)
         self.assert_reaped()
+
+    async def test_connection_failure_keeps_cause_and_exit_status(self) -> None:
+        """SSH 无响应退出或返回非法响应头时，保留原因而不是只报清理未确认."""
+        cases: tuple[tuple[str, type[Exception], str], ...] = (
+            ("import sys; sys.exit(255)", RuntimeError, "exit 255"),
+            (
+                "import sys; sys.stdin.buffer.read(10); "
+                + 'sys.stdout.write(\'{"status": [1], "size": 0}\\n\')',
+                ValueError,
+                "Invalid speech server response",
+            ),
+        )
+        for script, cause, message in cases:
+            with self.subTest(script=script):
+                transport = SSHSpeechTransport(
+                    SpeechServer("localhost", "tester", 22, "/srv/speech")
+                )
+                with patch.object(
+                    transport, "_command", (sys.executable, "-c", script)
+                ):
+                    with self.assertRaises(RuntimeError) as raised:
+                        _ = await transport.request("tts", b"test", 3, "cmn")
+                self.assertIsInstance(raised.exception.__cause__, cause)
+                self.assertIn(message, str(raised.exception.__cause__))
+        self.assert_reaped()
+
+    async def test_non_string_operation_is_value_error(self) -> None:
+        """不可哈希的操作字段按非法请求拒绝，不抛出类型错误."""
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            json.dumps(
+                {"operation": ["asr"], "size": 1, "timeout_s": 1, "option": "zh"}
+            ).encode()
+            + b"\na"
+        )
+        with self.assertRaisesRegex(ValueError, "Unknown speech operation"):
+            _ = await read_request(reader)
 
     def reader(self, timeout_s: float = 1) -> asyncio.StreamReader:
         """构造有效请求但保留输入通道打开，用于精确控制 EOF 时序."""
