@@ -19,7 +19,12 @@ from agent.embodied_agent import EmbodiedAgent
 from agent.tools import ToolAdapter
 from app.team_gateway import TeamGateway
 from domain.models import ActionStatus
-from domain.services import FrameReference, ServiceError, VisionRequest
+from domain.services import (
+    FrameReference,
+    ServiceError,
+    VisionAnalysis,
+    VisionRequest,
+)
 from education.knowledge import build_shapes_lesson
 from education.service import EducationService
 from perception.simulated import SimulatedPerception
@@ -44,6 +49,39 @@ class LocalVisionTests(unittest.IsolatedAsyncioTestCase):
             "frame", "camera", evidence.captured_at, 8, 8, evidence.evidence_id, 0
         )
         return VisionRequest("request", "什么颜色？", frame, 1)
+
+    async def _analyze(self, text: str) -> VisionAnalysis:
+        """用固定模型回复构造提供器并分析一张有效图片."""
+        store = EvidenceStore()
+        request = await self._request(store)
+        model = FakeMessagesListChatModel(responses=[AIMessage(text)])
+        provider = OllamaVisionProvider(model, "test-vlm", store)
+        return await provider.analyze(request)
+
+    async def test_objects_and_positions(self) -> None:
+        """物体标签与相对方位被转为带编号的观察对象."""
+        text = '{"summary":"桌上有热水壶","objects":[{"label":"热水壶","position":"左侧"}]}'
+        result = await self._analyze(text)
+        self.assertEqual(result.objects[0].label, "热水壶")
+        self.assertEqual(result.objects[0].object_id, "obj-1")
+        self.assertEqual(dict(result.objects[0].attributes), {"position": "左侧"})
+        self.assertIsNone(result.objects[0].bbox)
+
+    async def test_missing_objects_is_empty(self) -> None:
+        """未返回物体列表时对象为空，不影响文字观察."""
+        self.assertEqual((await self._analyze('{"summary":"红色"}')).objects, ())
+
+    async def test_invalid_objects_rejected(self) -> None:
+        """非法方位、空白标签、额外字段和过多物体均被拒绝."""
+        nine = ",".join('{"label":"杯子","position":"中间"}' for _ in range(9))
+        for text in (
+            '{"summary":"s","objects":[{"label":"杯子","position":"前面"}]}',
+            '{"summary":"s","objects":[{"label":"  ","position":"左侧"}]}',
+            '{"summary":"s","objects":[{"label":"杯子","position":"左侧","distance":1}]}',
+            '{"summary":"s","objects":[' + nine + "]}",
+        ):
+            with self.subTest(text=text), self.assertRaises(ServiceError):
+                _ = await self._analyze(text)
 
     async def test_valid_and_malformed_response(self) -> None:
         """有效文字可用，额外字段、空文本和非 JSON 输出均被拒绝."""

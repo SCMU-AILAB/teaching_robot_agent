@@ -52,6 +52,8 @@ async def run_vision(image_path: str, question: str) -> None:
     result = await provider.analyze(VisionRequest(uuid4().hex, question, frame, 90))
     print(f"模型：{result.model_id}；输入：静态图片；推理：真实模型")
     print(result.summary)
+    for item in result.objects:
+        print(f"物体：{item.label}（{dict(item.attributes)['position']}）")
 
 
 async def run_agent(question: str) -> None:
