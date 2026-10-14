@@ -146,3 +146,9 @@
 - **测试**：新增 `tests/test_resident_asr.py` 12 项（只加载一次、未加载/关闭后拒绝、模型缺失、参数校验、并发串行、取消与超时等待推理结束、推理中关闭、应用启停与语音入队回答、启动失败不降级、真实装配）。Ruff、150 个文件格式检查通过，basedpyright 0 errors / 0 warnings，282 项 unittest 通过。
 - **真实验证**：Apple M2 CPU、base int8：加载约 0.6 秒，3.2 秒/1.1 秒合成中文语音识别约 0.5–0.7 秒/0.4 秒；`ROBOT_AUDIO=real` 控制台启动、开始录音、退出释放链路实际运行。尚未用真人麦克风说话做识别验收；base 模型将“热水壶”识别为“热水湖”。
 - **远端链路**：服务器 `~/opt/teaching-robot-speech` 已部署 ASR 环境与 base 模型（未部署 Piper），`speech.real_demo` 仍可使用；虚拟环境另装了 CUDA 12 运行库但未启用，当前协议无法向远端传递设备配置。
+
+## 2026-10-14：常驻识别默认改为 SenseVoice
+
+- **评测**：服务器上 72 段合成中文语音（6 种音色 × 12 句）。Whisper base 字错率 49.7%、small 34.6%、medium 31.8%（出现重复幻觉）、large-v3-turbo 13.1%（需 GPU）；SenseVoice-small 18.6%，自然音色 1%，CPU 每段约 0.13 秒。给 Whisper 加领域提示词会输出提示原文或无关文本，已弃用。
+- **实现**：`ResidentASRProvider` 改为通用生命周期层（加载一次、串行推理、取消/超时/关闭等待推理结束），引擎可替换：`providers/asr/sensevoice_engine.py`（sherpa-onnx，默认）与 `WhisperEngine`；`SPEECH_ASR_ENGINE` 选择。`speech` 依赖新增 `sherpa-onnx==1.13.8` 与 `sherpa-onnx-core==1.13.8`（前者 wheel 元数据缺少对 core 的依赖声明，需显式锁定）。
+- **验证**：新增 `tests/test_sensevoice_engine.py` 7 项；Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过。M2 本机真实模型：加载约 0.85 秒，“你好，桌子上的热水壶能碰吗？”“那插座呢？”识别正确，各约 0.02–0.06 秒。尚未用真人录音验收。
