@@ -10,16 +10,17 @@ from uuid import uuid4
 
 from app.team_gateway import TeamGateway
 from perception.simulated import SimulatedPerception
-from providers.asr.whisper import WhisperASRProvider
+from providers.asr.remote import RemoteASRProvider
 from providers.audio.real_player import PortAudioPlayer
 from providers.audio.recorder import PortAudioRecorder
-from providers.tts.system import SystemTTSProvider
+from providers.tts.remote import RemoteTTSProvider
 from robot.simulated import SimulatedAdapter
 from runtime.action_manager import ActionManager
 from skills.registry import SkillRegistry
 from speech.config import SpeechConfig
 from speech.input import SpeechInputService
 from speech.output import SpeechOutputService
+from speech.remote import SSHSpeechTransport
 from speech.resources import AudioDeviceLease
 from storage.evidence import EvidenceStore
 
@@ -33,14 +34,9 @@ async def run_demo() -> None:
         evidence, lease, config.input_device, config.sample_rate
     )
     player = PortAudioPlayer(evidence, lease, config.output_device)
-    asr = WhisperASRProvider(
-        evidence,
-        config.model_path,
-        config.language,
-        config.compute_device,
-        config.compute_type,
-    )
-    tts = SystemTTSProvider(evidence, config.tts_engine, config.voice)
+    transport = SSHSpeechTransport(config.server)
+    asr = RemoteASRProvider(evidence, transport, config.language)
+    tts = RemoteTTSProvider(evidence, transport, config.voice)
     perception = SimulatedPerception(evidence)
     loop = asyncio.get_running_loop()
     lines: asyncio.Queue[str] = asyncio.Queue()
@@ -107,7 +103,7 @@ async def run_demo() -> None:
         # ========== Step2: 主循环持续接收停止，不等待识别和播放完成 ==========
         loop.add_reader(sys.stdin, read_line)
         try:
-            print("真实麦克风 + 离线 Whisper + 系统 TTS + 实际扬声器；固定测试回答。")
+            print("本地麦克风 → 服务器 ASR/TTS → 本地扬声器；固定测试回答。")
             print(
                 "/record 开始，/finish 结束录音，/stop 取消本轮，/quit 退出。",
                 flush=True,
