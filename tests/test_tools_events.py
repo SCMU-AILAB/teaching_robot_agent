@@ -3,6 +3,8 @@
 
 import asyncio
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 
 from agent.tools import ToolAdapter
 from app.team_gateway import TeamGateway
@@ -21,6 +23,23 @@ from storage.evidence import EvidenceStore
 class ToolsEventsTests(unittest.IsolatedAsyncioTestCase):
     """通过真实运行时验证工具和事件消费者的行为."""
 
+    async def test_observe_scene_brief_pose_follows_localization(self) -> None:
+        """观察摘要仅在设备具备定位能力时携带位姿，并关联安全资料."""
+        async with ActionManager(
+            SimulatedAdapter(), SkillRegistry([MoveRelativeSkill()])
+        ) as runtime:
+            gateway = TeamGateway(runtime, SimulatedPerception(EvidenceStore()))
+            task = gateway.create_task("观察")
+            tools = ToolAdapter(task.task_id, gateway)
+            brief = await tools.observe_scene("物体")
+            self.assertIsNotNone(brief.robot_pose)
+            self.assertIn("机器人位姿：x=", brief.to_prompt())
+            snapshot = await gateway.get_snapshot(task.task_id)
+            no_pose = replace(snapshot, capabilities=())
+            with patch.object(gateway, "get_snapshot", return_value=no_pose):
+                brief = await tools.observe_scene("物体")
+            self.assertIsNone(brief.robot_pose)
+
     async def test_action_scope_and_stale_scene(self) -> None:
         """运动中观察标记过期，其他任务不能查询或取消动作."""
         async with ActionManager(
@@ -35,7 +54,7 @@ class ToolsEventsTests(unittest.IsolatedAsyncioTestCase):
             tools = ToolAdapter(task.task_id, gateway, education)
             self.assertTrue(tools.lookup_knowledge("圆形"))
             action = await tools.submit_action("move_relative", {"distance_m": 0.1})
-            self.assertTrue((await tools.observe_scene("物体")).stale)
+            self.assertTrue((await tools.observe_scene("物体")).observation.stale)
             with self.assertRaises(KeyError):
                 _ = await gateway.cancel_action(other.task_id, action.action_id)
             _ = await tools.cancel_action(action.action_id)

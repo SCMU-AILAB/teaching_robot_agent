@@ -166,7 +166,7 @@ class ReviewRegressionTests(unittest.IsolatedAsyncioTestCase):
             await app.start()
             task = await app.create_task("观察")
             tools = ToolAdapter(task.task_id, app.gateway)
-            old = await tools.observe_scene("原观察")
+            old = (await tools.observe_scene("原观察")).observation
             action = await tools.submit_action("turn_relative", {"angle_rad": 0.01})
             context = await RobotContextBuilder(app.gateway).build(
                 task.task_id, observation=old
@@ -174,7 +174,7 @@ class ReviewRegressionTests(unittest.IsolatedAsyncioTestCase):
             assert context.observation is not None
             self.assertTrue(context.observation.stale)
             _ = await app.gateway.wait_for_action(task.task_id, action.action_id)
-            new = await tools.observe_scene("新观察")
+            new = (await tools.observe_scene("新观察")).observation
             context = await RobotContextBuilder(app.gateway).build(
                 task.task_id, observation=old
             )

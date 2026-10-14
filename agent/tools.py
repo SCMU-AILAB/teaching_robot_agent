@@ -3,10 +3,12 @@
 
 from uuid import uuid4
 
+from agent.scene_brief import SceneBrief, build_scene_brief
 from app.team_gateway import TeamGateway
 from domain.education import AnswerEvaluation, KnowledgePoint, TeachingSession
 from domain.models import ActionRecord
-from domain.services import ObservationRequest, ObservationResult
+from domain.robot import RobotCapability
+from domain.services import ObservationRequest
 from education.knowledge_service import KnowledgeService, build_home_knowledge
 from education.service import EducationService
 
@@ -47,13 +49,21 @@ class ToolAdapter:
 
     async def observe_scene(
         self, question: str, max_age_s: float = 2, timeout_s: float = 30
-    ) -> ObservationResult:
-        """获取观察与证据；调用方必须检查 stale 与 simulated."""
-        return await self._gateway.observe(
+    ) -> SceneBrief:
+        """获取观察与证据，并附带位姿和关联安全资料；调用方必须检查 stale 与 simulated."""
+        observation = await self._gateway.observe(
             ObservationRequest(
                 uuid4().hex, self._task_id, question, max_age_s, timeout_s
             )
         )
+        snapshot = await self._gateway.get_snapshot(self._task_id)
+        # 仅当设备声明定位能力时才暴露位姿，避免把默认零值当作真实位置
+        pose = (
+            snapshot.robot.position
+            if RobotCapability.LOCALIZATION in snapshot.capabilities
+            else None
+        )
+        return build_scene_brief(observation, pose, self._knowledge)
 
     def lookup_knowledge(self, query: str) -> tuple[KnowledgePoint, ...]:
         """查询教学资料，不使用模型记忆冒充外部来源."""

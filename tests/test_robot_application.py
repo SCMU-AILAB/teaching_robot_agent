@@ -170,7 +170,9 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
         try:
             await app.start()
             task = await app.create_task("观察后转向")
-            before = await ToolAdapter(task.task_id, app.gateway).observe_scene("桌面")
+            before = (
+                await ToolAdapter(task.task_id, app.gateway).observe_scene("桌面")
+            ).observation
             _ = app.gateway.submit_text(task.task_id, "转向")
             with patch.object(
                 FakeMessagesListChatModel, "bind_tools", return_value=model
