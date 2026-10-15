@@ -2,7 +2,12 @@
 
 ## 部署职责
 
-服务器没有声卡，也不需要声卡。本地 Mac 或机器人负责录音和播放；服务器负责 ASR 和 TTS。当前默认入口已按这一分工装配，不再默认在 Mac 执行识别和合成。
+当前存在两条真实语音链路，部署职责不同，适配器装配互相独立：
+
+- **远程推理链路**（`python -m speech.real_demo`）：本地负责录音和播放，服务器负责 Whisper ASR 与 Piper TTS。服务器没有声卡，也不需要声卡。
+- **本机常驻链路**（`ROBOT_AUDIO=real` 启动主控制台）：录音、SenseVoice 常驻识别、系统合成与播放都在本机完成，不需要服务器。识别引擎经 sherpa-onnx 在 CPU 运行，见下文"本机常驻识别"。
+
+两条链路各自拥有独立的输入消费者，不得与现有教学消费者竞争读取同一队列。
 
 ```text
 本地麦克风 → 本地 WAV 证据 → SSH 上传 → 服务器 Whisper ASR
@@ -45,7 +50,7 @@ uv run --extra speech-client python -m speech.real_demo
 
 枚举本地设备：`uv run --extra speech-client python -m providers.audio.worker devices`。本地仍需麦克风授权和扬声器；这些设置与服务器声卡无关。
 
-## 操作流程
+## 远程链路操作流程（real_demo）
 
 1. 输入 `/record`，等待“正在录音”后说话。
 2. `/finish` 主动结束，或等待最大时长。音频上传服务器识别，控制台显示最终转写。
@@ -54,6 +59,22 @@ uv run --extra speech-client python -m speech.real_demo
 5. 连续三次验证设备可重复打开；现场确认播放停止后不再发声。
 
 固定回答不是 Agent 生成的回答。独立演示拥有自己的输入消费者，不得与现有教学消费者竞争读取同一队列。
+
+## 本机常驻识别（主控制台 real 模式）
+
+```bash
+uv sync --locked --extra speech
+export ROBOT_AUDIO=real
+export SPEECH_ASR_MODEL_PATH=models/sensevoice-small
+uv run --extra speech main.py
+```
+
+- 模型目录须包含 `model.int8.onnx`（或 `model.onnx`）与 `tokens.txt`；启动时校验，缺失或非法直接报错，不回退模拟。
+- `SPEECH_ASR_ENGINE` 默认 `sensevoice`，可切换 `whisper`（此时模型目录应为 faster-whisper 模型）；两者互为对照，用于识别质量评测。
+- 识别模型在应用启动时进程内加载一次；合成使用系统 TTS（macOS say、Linux espeak-ng），中文 TTS 选型见 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。
+- 控制台命令：`/record` 开始录音，`/done` 结束录音并识别，`/finish` 确认任务完成，`/stop` 停止本轮，`/quit` 退出并清理。
+
+本机常驻链路尚未完成真人语音验收；实测计划与统计口径见 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。
 
 ## 服务器安装记录
 
