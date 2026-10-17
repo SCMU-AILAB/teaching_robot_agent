@@ -1,5 +1,5 @@
 # app/robot_console.py
-"""赛题主入口：文字与语音任务控制台，设备与感知采用显式模拟装配."""
+"""赛题主入口：文字与语音任务控制台，设备与感知采用显式装配."""
 
 import asyncio
 import logging
@@ -8,9 +8,9 @@ import sys
 from uuid import uuid4
 
 from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
+from app.perception import build_live_perception, build_simulated_perception
 from app.robot_application import RobotApplication
 from domain.models import TaskStatus
-from perception.simulated import SimulatedPerception
 from providers.local_model import build_local_model
 from robot.factory import RobotAdapterFactory
 from storage.evidence import EvidenceStore
@@ -28,9 +28,19 @@ async def run_console() -> None:
         audio = build_simulated_audio(evidence)
     elif audio_mode == "real":
         audio = build_real_audio(evidence)
+    mode = os.environ.get("ROBOT_PERCEPTION", "simulated")
+    if mode not in {"simulated", "live"}:
+        raise ValueError("ROBOT_PERCEPTION must be simulated or live")
+    if mode == "simulated":
+        perception = build_simulated_perception(evidence)
+    else:
+        perception = build_live_perception(evidence)
+    if perception.camera is not None:
+        await perception.camera.connect()
+
     app = RobotApplication(
         robot,
-        SimulatedPerception(evidence),
+        perception.service,
         build_local_model("AGENT"),
         _audio=audio,
         _evidence=evidence,
@@ -97,7 +107,11 @@ async def run_console() -> None:
     loop.add_reader(sys.stdin, read_line)
     try:
         await app.start()
-        print("家庭学习陪伴与安全教育机器人：模型为真实本地模型，设备和感知为模拟。")
+        print(
+            "家庭学习陪伴与安全教育机器人：模型为真实本地模型，"
+            + f"设备：{os.environ.get('ROBOT_ADAPTER', 'simulated')}，"
+            + f"感知：{'模拟' if perception.simulated else '真实相机'}。"
+        )
         print(
             f"语音模式：{audio_mode}（simulated 仅模拟播放；real 使用本机麦克风、"
             + "常驻识别模型和扬声器）。"
