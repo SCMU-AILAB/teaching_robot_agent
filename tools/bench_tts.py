@@ -1,9 +1,11 @@
 # tools/bench_tts.py
-"""离线中文语音合成方案对比：合成耗时、首块延迟与实时率."""
+"""离线中文语音合成方案对比：合成耗时、首块延迟、实时率与内存占用."""
 
 import argparse
+import resource
 import statistics
 import subprocess
+import sys
 import time
 import wave
 from collections.abc import Callable, Sequence
@@ -14,16 +16,44 @@ from typing import Protocol, cast
 
 from domain.validation import nonempty_string
 
-# 覆盖控制指令、短问答与教学回答三类真实长度，避免只用单句得出片面结论.
+# 覆盖控制指令、短问答、多句与教学回答四类真实长度，避免只用单句得出片面结论.
 BENCH_TEXTS: dict[str, str] = {
     "短句(2字)": "停下",
     "中句(7字)": "热水壶能碰吗？",
+    "多句(15字)": "你好。请不要触碰插座。",
     "长句(27字)": "水壶刚烧开的时候不要碰，先关掉电源，等凉一点再倒水。",
     "回答(28字)": "插座不能用手碰，也不能把金属东西插进去，要找大人帮忙。",
 }
 
-# 合成函数返回（整句耗时秒, 首块耗时秒, 音频时长秒）.
-Synthesizer = Callable[[str], tuple[float, float, float]]
+
+@dataclass(frozen=True)
+class Measurement:
+    """单次合成的耗时、首块时刻、音频时长与分块数."""
+
+    total_s: float
+    first_s: float
+    duration_s: float
+    chunks: int
+
+
+@dataclass(frozen=True)
+class Timing:
+    """同一档文本重复测量的中位数结果."""
+
+    label: str
+    total_s: float
+    first_s: float
+    duration_s: float
+    chunks: int
+
+    @property
+    def rtf(self) -> float:
+        """实时率：合成耗时除以音频时长，越小越快."""
+        return self.total_s / self.duration_s if self.duration_s else 0.0
+
+
+# 合成函数返回单次测量结果.
+Synthesizer = Callable[[str], Measurement]
 
 
 class _SherpaAudio(Protocol):
@@ -55,23 +85,26 @@ class _SherpaTts(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class Timing:
-    """单句合成的时间测量结果."""
+def samples_to_seconds(byte_count: int, sample_rate: int) -> float:
+    """把 16-bit 单声道 PCM 字节数换算为音频时长秒.
 
-    label: str
-    total_s: float
-    first_s: float
-    duration_s: float
+    不同模型输出采样率不同（Piper 中文音色为 22050，系统 say 为 16000），
+    必须按模型实际采样率换算，不能硬编码。
+    """
+    if sample_rate <= 0:
+        raise ValueError("采样率必须为正数")
+    return byte_count / 2 / sample_rate
 
-    @property
-    def rtf(self) -> float:
-        """实时率：合成耗时除以音频时长，越小越快."""
-        return self.total_s / self.duration_s if self.duration_s else 0.0
+
+def peak_rss_mb() -> float:
+    """返回进程峰值常驻内存 MB；macOS 以字节计，Linux 以 KB 计."""
+    value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return value / divisor
 
 
 def measure(synthesizer: Synthesizer, repeat: int) -> list[Timing]:
-    """对全部文本档位重复合成，每档取中位数."""
+    """对全部文本档位重复合成，每档取耗时与块数的中位数."""
     if repeat < 1:
         raise ValueError("repeat 必须为正整数")
     timings: list[Timing] = []
@@ -79,17 +112,20 @@ def measure(synthesizer: Synthesizer, repeat: int) -> list[Timing]:
         totals: list[float] = []
         firsts: list[float] = []
         durations: list[float] = []
+        chunks: list[int] = []
         for _ in range(repeat):
-            total_s, first_s, duration_s = synthesizer(text)
-            totals.append(total_s)
-            firsts.append(first_s)
-            durations.append(duration_s)
+            result = synthesizer(text)
+            totals.append(result.total_s)
+            firsts.append(result.first_s)
+            durations.append(result.duration_s)
+            chunks.append(result.chunks)
         timings.append(
             Timing(
                 label=label,
                 total_s=statistics.median(totals),
                 first_s=statistics.median(firsts),
                 duration_s=statistics.median(durations),
+                chunks=round(statistics.median(chunks)),
             )
         )
     return timings
@@ -125,8 +161,8 @@ def build_sherpa(model_directory: str) -> Synthesizer:
     config = config_class(model=model, max_num_sentences=1)
     engine = tts_class(config)
 
-    def synthesize(text: str) -> tuple[float, float, float]:
-        """返回整句耗时、首块耗时与音频时长."""
+    def synthesize(text: str) -> Measurement:
+        """返回整句耗时、首块耗时、音频时长与回调块数."""
         marks: list[float] = []
 
         def on_chunk(_samples: object, _progress: float) -> int:
@@ -142,7 +178,8 @@ def build_sherpa(model_directory: str) -> Synthesizer:
         audio = engine.generate(text, sid=0, speed=1.0, callback=on_chunk)
         total_s = time.perf_counter() - started
         first_s = marks[0] - started if marks else total_s
-        return total_s, first_s, len(audio.samples) / audio.sample_rate
+        duration_s = len(audio.samples) / audio.sample_rate
+        return Measurement(total_s, first_s, duration_s, len(marks))
 
     return synthesize
 
@@ -155,18 +192,24 @@ def build_piper(model_path: str) -> Synthesizer:
     from piper import PiperVoice
 
     voice = PiperVoice.load(str(path))
+    # Piper 中文音色通常为 22050 Hz，禁止按 16000 硬编码换算.
+    sample_rate = int(voice.config.sample_rate)
 
-    def synthesize(text: str) -> tuple[float, float, float]:
-        """逐块累计样本数，记录首块到达时刻."""
-        sample_count = 0
+    def synthesize(text: str) -> Measurement:
+        """逐块累计字节数与块数，记录首块到达时刻."""
+        byte_count = 0
+        chunks = 0
         started = time.perf_counter()
         first_s = 0.0
         for index, chunk in enumerate(voice.synthesize(text)):
             if index == 0:
                 first_s = time.perf_counter() - started
-            sample_count += len(chunk.audio_int16_bytes) // 2
+            byte_count += len(chunk.audio_int16_bytes)
+            chunks += 1
         total_s = time.perf_counter() - started
-        return total_s, first_s, sample_count / 16000
+        return Measurement(
+            total_s, first_s, samples_to_seconds(byte_count, sample_rate), chunks
+        )
 
     return synthesize
 
@@ -176,7 +219,7 @@ def build_say(voice: str) -> Synthesizer:
     voice_name = nonempty_string(voice, "say_voice")
     target = Path("/tmp/bench_say.wav")
 
-    def synthesize(text: str) -> tuple[float, float, float]:
+    def synthesize(text: str) -> Measurement:
         """子进程合成后读取 WAV 计算音频时长."""
         started = time.perf_counter()
         _ = subprocess.run(
@@ -195,27 +238,29 @@ def build_say(voice: str) -> Synthesizer:
         total_s = time.perf_counter() - started
         with wave.open(str(target), "rb") as handle:
             duration_s = handle.getnframes() / handle.getframerate()
-        # 子进程模式没有增量输出，首块即整句完成时刻.
-        return total_s, total_s, duration_s
+        # 子进程模式按整段一次性输出，没有增量块.
+        return Measurement(total_s, total_s, duration_s, 1)
 
     return synthesize
 
 
-def render_markdown(load_s: float, engine_name: str, timings: list[Timing]) -> str:
+def render_markdown(
+    load_s: float, memory_mb: float, engine_name: str, timings: list[Timing]
+) -> str:
     """渲染单方案结果表."""
     lines = [
         f"## {engine_name}",
         "",
-        f"模型加载：{load_s * 1000:.0f} ms",
+        f"模型加载：{load_s * 1000:.0f} ms；进程峰值内存增量：{memory_mb:.0f} MB",
         "",
-        "| 文本档位 | 合成耗时 ms | 首块 ms | 音频 s | 实时率 |",
-        "| --- | --- | --- | --- | --- |",
+        "| 文本档位 | 合成耗时 ms | 首块 ms | 音频 s | 实时率 | 分块数 |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for timing in timings:
         total_ms = timing.total_s * 1000
         first_ms = timing.first_s * 1000
         lines.append(
-            f"| {timing.label} | {total_ms:.0f} | {first_ms:.0f} | {timing.duration_s:.2f} | {timing.rtf:.2f} |"
+            f"| {timing.label} | {total_ms:.0f} | {first_ms:.0f} | {timing.duration_s:.2f} | {timing.rtf:.2f} | {timing.chunks} |"
         )
     return "\n".join(lines)
 
@@ -270,6 +315,8 @@ def main() -> None:
     names = [item.strip() for item in arguments.engines.split(",") if item.strip()]
     if not names:
         raise ValueError("至少需要指定一个方案")
+    # 内存增量以进程启动后的峰值为基线；同进程多方案会累积，建议分方案运行.
+    baseline_mb = peak_rss_mb()
 
     # ========== Step2: 逐方案测量 ==========
     reports: list[str] = []
@@ -285,7 +332,8 @@ def main() -> None:
             raise ValueError(f"未知合成方案：{name}")
         load_s = time.perf_counter() - started
         timings = measure(synthesizer, arguments.repeat)
-        reports.append(render_markdown(load_s, name, timings))
+        memory_mb = peak_rss_mb() - baseline_mb
+        reports.append(render_markdown(load_s, memory_mb, name, timings))
 
     # ========== Step3: 输出结果 ==========
     document = "\n\n".join(reports) + "\n"
