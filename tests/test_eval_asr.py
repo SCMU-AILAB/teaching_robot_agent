@@ -60,6 +60,22 @@ class EvalAsrTests(unittest.TestCase):
             normalize_text(" 热水壶，能碰吗？ Hello! "), "热水壶能碰吗hello"
         )
 
+    def test_normalize_text_unifies_digit_forms(self) -> None:
+        """半角、全角阿拉伯数字与中文数字归一到同一书写形式."""
+        self.assertEqual(normalize_text("第5课"), "第五课")
+        self.assertEqual(normalize_text("８４消毒液"), "八四消毒液")
+        self.assertEqual(normalize_text("早上９点"), "早上九点")
+
+    def test_cer_ignores_digit_notation(self) -> None:
+        """识别服务的数字规范化不再被判为错误."""
+        self.assertEqual(
+            character_error_rate(
+                "八四消毒液和洁厕灵能混着用吗", "84消毒液和洁厕灵能混着用吗"
+            ),
+            0.0,
+        )
+        self.assertEqual(character_error_rate("第五课", "第5课"), 0.0)
+
     def test_cer_basic_cases(self) -> None:
         """完全一致为零，替换按比例计，空参考与非空识别按 1 处理."""
         self.assertEqual(character_error_rate("热水壶能碰吗", "热水壶能碰吗"), 0.0)

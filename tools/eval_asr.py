@@ -4,11 +4,27 @@
 import argparse
 import csv
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
 from domain.validation import nonempty_string
+
+# 识别服务的 ITN 会把口语数字输出为阿拉伯数字，参考文本按中文书写；
+# 逐位映射到中文数字，使「八四消毒液」与「84消毒液」不再被判为错误。
+_DIGIT_NAMES = {
+    "0": "零",
+    "1": "一",
+    "2": "二",
+    "3": "三",
+    "4": "四",
+    "5": "五",
+    "6": "六",
+    "7": "七",
+    "8": "八",
+    "9": "九",
+}
 
 
 class EvalEngine(Protocol):
@@ -58,8 +74,19 @@ class Sample:
 
 
 def normalize_text(text: str) -> str:
-    """归一化文本：仅保留字母数字并整体小写，去除中英文标点与空白."""
-    return "".join(character for character in text.casefold() if character.isalnum())
+    """归一化文本：兼容归一、整体小写、逐位数字转中文，去除标点与空白.
+
+    先做 NFKC 兼容归一，使全角数字与字母收敛到半角；阿拉伯数字按位映射为
+    中文数字，避免识别服务的数字规范化被计为错误。单位读法（十、百）与
+    逐位读法的差异不在本函数覆盖范围内，评测结论中需如实说明。
+    """
+    characters: list[str] = []
+    for character in unicodedata.normalize("NFKC", text).casefold():
+        if character in _DIGIT_NAMES:
+            characters.append(_DIGIT_NAMES[character])
+        elif character.isalnum():
+            characters.append(character)
+    return "".join(characters)
 
 
 def character_error_rate(reference: str, hypothesis: str) -> float:
