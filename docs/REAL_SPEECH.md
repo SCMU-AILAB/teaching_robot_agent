@@ -7,7 +7,7 @@
 - **远程推理链路**（`python -m speech.real_demo`）：本地负责录音和播放，服务器负责 Whisper ASR 与 Piper TTS。服务器没有声卡，也不需要声卡。
 - **本机常驻链路**（`ROBOT_AUDIO=real` 启动主控制台）：录音、SenseVoice 常驻识别、合成与播放都在运行主程序的机器上完成，不需要服务器。识别引擎经 sherpa-onnx 在 CPU 运行，见下文"本机常驻识别"。
 
-比赛设备（2026-10-19 起）为 **Jetson Orin Nano 8GB 开发板 + USB 声卡**。板端可运行本机常驻链路，此时"本机"指 Jetson，不是 Mac；也可保留远程链路作为板端算力不足时的备份。板端 TTS 方案尚未定稿，见 `TTS_SELECTION.md` 与 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。
+比赛设备（2026-10-19 起）为 **Jetson Orin Nano 8GB 开发板 + USB 声卡**，但**推理分工不变**：ASR、TTS 与模型推理仍在服务器，Jetson 只承担采音、上传音频、接收并播放音频与设备控制。比赛链路使用上面的远程推理链路；下面的本机常驻链路只用于开发机本地调试，不作为比赛方案。
 
 两条链路各自拥有独立的输入消费者，不得与现有教学消费者竞争读取同一队列。
 
@@ -73,10 +73,10 @@ uv run --extra speech main.py
 
 - 模型目录须包含 `model.int8.onnx`（或 `model.onnx`）与 `tokens.txt`；启动时校验，缺失或非法直接报错，不回退模拟。
 - `SPEECH_ASR_ENGINE` 默认 `sensevoice`，可切换 `whisper`（此时模型目录应为 faster-whisper 模型）；两者互为对照，用于识别质量评测。
-- 识别模型在应用启动时进程内加载一次。合成当前使用系统 TTS（macOS `say`、Linux `espeak-ng`）：**Jetson 上只有 `espeak-ng`，中文发音不满足要求**，比赛设备必须替换为离线神经 TTS（Piper 或 sherpa-onnx VITS），选型见 `TTS_SELECTION.md`。
+- 识别模型在应用启动时进程内加载一次。合成使用本机系统 TTS（macOS `say`、Linux `espeak-ng`），仅用于开发调试；**比赛链路的合成在服务器执行**（Piper 中文音色），不依赖开发机或 Jetson 的系统语音。
 - 控制台命令：`/record` 开始录音，`/done` 结束录音并识别，`/finish` 确认任务完成，`/stop` 停止本轮，`/quit` 退出并清理。
 
-本机常驻链路尚未完成真人语音验收；实测计划与统计口径见 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。板端（Jetson Orin Nano）的识别与合成延迟、aarch64 依赖可用性均未验证，不得引用 Mac 上的实测数据代替。
+本机常驻链路尚未完成真人语音验收；实测计划与统计口径见 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。Jetson 设备端需要验证的是声卡、采播、通信与资源释放，**不承担识别与合成**；服务器到 Jetson 的实际出声延迟尚未测量，不得用 Mac 上的合成数据代替。
 
 ## 服务器安装记录
 

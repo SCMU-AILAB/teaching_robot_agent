@@ -2,36 +2,37 @@
 
 记录日期：2026-10-19（修订：采样率与分块口径修正）。范围：比赛机器人播放链路的离线中文 TTS 选型，比较合成延迟、增量输出、内存占用与许可证。
 
-**当前状态：Mac 合成侧初测完成，选型待补证。**
+**当前状态：Mac 上完成合成侧初测，服务器与端到端链路待补证。**
 
-本记录只覆盖 macOS Apple Silicon 上的合成侧测量。Jetson Orin Nano 板端的延迟与内存、USB 声卡的播放链路、合成到实际出声的端到端延迟均未测量，不能据此外推。
+本记录只覆盖 macOS Apple Silicon 上的合成侧测量，仅用于方案间相对比较。服务器（Linux x86）的实际合成性能、服务器到 Jetson 的传输与出声延迟均未测量，不能据此外推。
 
 ## 1. 背景约束
 
-2026-10-19 比赛设备变更：主控由 ESP32-S3-WROOM-1-N8R8 改为 **Jetson Orin Nano 8GB 开发板**，音频经 **USB 声卡**（麦克风 + 喇叭）接入。
+2026-10-19 设备变更：设备端由 ESP32-S3-WROOM-1-N8R8 改为 **Jetson Orin Nano 8GB 开发板 + USB 声卡**。**推理分工不变**：ASR、TTS 与模型推理仍在服务器执行，Jetson 只承担采音、上传音频、接收并播放音频与设备控制。
 
-设备变更带来的结论调整：
+变更带来的口径调整：
 
 | 原假设（ESP32-S3） | 变更后（Orin Nano 8GB） |
 | --- | --- |
-| 本机无法运行语音合成 | 可本地运行 SenseVoice 与轻量 TTS，合成不再必须走服务器或随行 Mac |
-| 首包延迟 = 合成侧 + 网络传输 | 本地合成并播放时传输段消失，代价是 ARM CPU 性能约束 |
-| SSH 远程链路可能从冻结转为必选 | 本地可推理后，远程链路可冻结为备份或重负载选项 |
+| 设备端经 I2S 麦克风与功放采播 | 设备端经 USB 声卡（ALSA / PortAudio）采播，需确认设备号与缓冲 |
+| 设备端无推理能力，也不需要 | 设备端算力更强，但**仍不承担推理**，不作为本轮选型前提 |
+| 首包延迟 = 合成 + 网络传输 | 不变，传输仍在链路中，且需实测服务器到 Jetson 的真实延迟 |
 
-变更后仍然成立的事实：
+仍然成立的事实：
 
-- 本记录全部数据在 macOS Apple Silicon 测得，**ARM（Cortex-A78AE）上的延迟与内存占用尚未实测**，不能直接外推。
-- Jetson 上可用的系统合成只有 `espeak-ng`，中文发音不满足要求（`docs/REAL_SPEECH.md` 已有联调结论），因此本地 TTS 必须在 Piper 与 sherpa-onnx VITS 之间选。
-- Orin Nano 带 Ampere GPU，sherpa-onnx 能否使用 CUDA 取决于 JetPack 与 onnxruntime 版本，本轮未验证。
+- 合成侧选型仍是**服务器端**方案：Piper（服务器已部署）与 sherpa-onnx VITS（与识别同框架的备选）。
+- 本记录数据在 macOS Apple Silicon 测得，**不能代替服务器（Linux x86）实测**。
+- 端到端指标需拆成三段：服务器合成耗时、网络传输、Jetson 播放缓冲；本记录只覆盖第一段。
+- Jetson 板上的 `espeak-ng` 不参与比赛链路（合成在服务器），仅在开发机本地调试时出现。
 - Edge 神经语音仍只作音质对标，不作为比赛方案。
 
 ## 2. 候选方案
 
 | 方案 | 版本 | 形态 | 备注 |
 | --- | --- | --- | --- |
-| sherpa-onnx VITS | 1.13.8 | 进程内常驻 Python API | 与 SenseVoice 识别同框架，`speech` extra 已含依赖 |
-| Piper | piper-tts 1.8.0 | 进程内常驻 Python API 或子进程 | `speech-server` extra 已含依赖，服务器部署过 |
-| 系统合成 | macOS `say` / Linux `espeak-ng` | 每次调用启动子进程 | Mac 上的 `say` 为基线；Jetson 上只有 `espeak-ng`，中文发音不达标 |
+| sherpa-onnx VITS | 1.13.8 | 进程内常驻 Python API | 服务器端备选，与 SenseVoice 识别同框架，`speech` extra 已含依赖 |
+| Piper | piper-tts 1.8.0 | 进程内常驻 Python API 或子进程 | 服务器已部署，当前远程链路默认合成方案 |
+| 系统合成 | macOS `say` / Linux `espeak-ng` | 每次调用启动子进程 | 仅开发机本地调试使用，不进入比赛链路 |
 
 模型：
 
@@ -114,23 +115,21 @@ Piper 的输出采样率为 22050 Hz，音频时长与实时率均按该采样�
 
 ## 9. 结论与建议
 
-设备改为 Jetson Orin Nano 8GB 本地推理后，选型目标从「服务器部署」变为「板端常驻」。以下结论在 ARM 实测前只作方向判断：
+推理仍在服务器，本轮选型只比较服务器端合成方案。Jetson 换板不改变选型目标，只改变设备端的采播实现与端到端延迟的测法。
 
 - **合成速度**：Piper 明显领先，整句可压到 150 ms 内；sherpa-onnx 整句偏慢，但首块更早，适合需要边合成边播的场景。
 - **增量输出**：两者都有按句/按段切块的能力，粒度不同；当前适配器都没有利用，流式播放不是现成能力。
-- **许可证**：Piper 运行时为 GPL-3.0-or-later，两个中文模型许可不明，这是选型的主要阻塞项，不是技术指标问题。
-- **板端可行性**：Orin Nano 8GB 内存有余量（两方案实测增量 241–352 MB）；关键未知是 ARM CPU 上的实时率，以及 aarch64 预编译包是否齐备（`piper-phonemize` 风险最高）。
-- **建议顺序**：① 在 Jetson 上实测两方案的 ARM 延迟与安装可行性；② 确认 GPL 与模型许可口径；③ 再决定常驻方案。技术倾向 **sherpa-onnx VITS**（与识别同依赖、框架 Apache-2.0、aarch64 wheel 通常齐全），Piper 作为速度备选。
-- **明确不采用**：Jetson 上的 `espeak-ng` 系统合成，中文发音已在服务器联调中确认不满足要求。
+- **许可证**：Piper 运行时为 GPL-3.0-or-later，两个中文模型许可不明，仍是主要阻塞项，不是技术指标问题。
+- **建议**：服务器端维持 **Piper 进程内常驻**（部署成本最低、速度最快）；sherpa-onnx VITS 作为许可或部署受限时的备选。是否改为常驻需先确认 GPL 口径。
+- **端到端指标**：服务器合成耗时只是第一段，选型验收必须补「服务器合成 → 网络传输 → Jetson 出声」的实测，网络段可能远大于合成段。
 - **若采用流式播放**：需要扩展 `TTSProvider.synthesize()` 的返回形态，属于接口合同变更，须先更新合同并审核。
 
 ## 10. 未验证
 
-- **Jetson Orin Nano（ARM aarch64）上的合成延迟与内存占用**：本轮全部在 macOS Apple Silicon 测得，不能外推。
-- **aarch64 预编译包可用性**：sherpa-onnx 的 ARM wheel 与 `piper-tts` 依赖的 `piper-phonemize` 是否有现成包，均未验证。
-- **JetPack 的 Python 版本**：项目要求 ≥3.12，JetPack 6 系统 Python 为 3.10，需独立解释器方案，未验证。
-- **USB 声卡的 ALSA 设备号与 PortAudio 兼容性**：未在板端验证。
-- **GPU 加速**：sherpa-onnx 的 CUDA provider 在 Orin Nano 上是否可用，未验证。
+- **服务器（Linux x86）上的合成延迟、内存与 CPU 占用**：本轮全部在 macOS Apple Silicon 测得，不能外推。
+- **服务器到 Jetson 的传输延迟**：SSH 单次往返、音频回传耗时、网络抖动均未测。
+- **Jetson 端播放**：USB 声卡的 ALSA 设备号、PortAudio 缓冲大小、从收到音频到实际出声的延迟。
+- **停止确认链路**：播放中途停止时，服务器侧合成作业能否及时取消并回收。
 - 真人听辨与长时间连续合成的稳定性。
 - 多句并发与打断场景下的资源占用。
 
