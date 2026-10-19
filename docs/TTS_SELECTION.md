@@ -4,14 +4,26 @@
 
 **当前状态：Mac 合成侧初测完成，选型待补证。**
 
-本记录只覆盖 macOS Apple Silicon 上的合成侧测量。服务器资源占用、ESP32-S3 传输与播放链路、合成到实际出声的端到端延迟均未测量，不能据此外推。
+本记录只覆盖 macOS Apple Silicon 上的合成侧测量。Jetson Orin Nano 板端的延迟与内存、USB 声卡的播放链路、合成到实际出声的端到端延迟均未测量，不能据此外推。
 
 ## 1. 背景约束
 
-- 比赛机器主控为 ESP32-S3-WROOM-1-N8R8（PCB v0.5 PCBA），带 I2S 麦克风与功放，**无法在本机运行语音合成**。
-- 合成必须在服务器或随行 Mac 上执行，ESP32 只负责接收音频并播放。
-- 因此「首包延迟」由两段构成：合成侧出首块音频的时间 + 网络传输到 ESP32 的时间。本记录只测前一段。
-- Edge 神经语音音质接近真人，但在线服务依赖公网，不作为比赛方案，仅作音质对标上限。
+2026-10-19 比赛设备变更：主控由 ESP32-S3-WROOM-1-N8R8 改为 **Jetson Orin Nano 8GB 开发板**，音频经 **USB 声卡**（麦克风 + 喇叭）接入。
+
+设备变更带来的结论调整：
+
+| 原假设（ESP32-S3） | 变更后（Orin Nano 8GB） |
+| --- | --- |
+| 本机无法运行语音合成 | 可本地运行 SenseVoice 与轻量 TTS，合成不再必须走服务器或随行 Mac |
+| 首包延迟 = 合成侧 + 网络传输 | 本地合成并播放时传输段消失，代价是 ARM CPU 性能约束 |
+| SSH 远程链路可能从冻结转为必选 | 本地可推理后，远程链路可冻结为备份或重负载选项 |
+
+变更后仍然成立的事实：
+
+- 本记录全部数据在 macOS Apple Silicon 测得，**ARM（Cortex-A78AE）上的延迟与内存占用尚未实测**，不能直接外推。
+- Jetson 上可用的系统合成只有 `espeak-ng`，中文发音不满足要求（`docs/REAL_SPEECH.md` 已有联调结论），因此本地 TTS 必须在 Piper 与 sherpa-onnx VITS 之间选。
+- Orin Nano 带 Ampere GPU，sherpa-onnx 能否使用 CUDA 取决于 JetPack 与 onnxruntime 版本，本轮未验证。
+- Edge 神经语音仍只作音质对标，不作为比赛方案。
 
 ## 2. 候选方案
 
@@ -19,7 +31,7 @@
 | --- | --- | --- | --- |
 | sherpa-onnx VITS | 1.13.8 | 进程内常驻 Python API | 与 SenseVoice 识别同框架，`speech` extra 已含依赖 |
 | Piper | piper-tts 1.8.0 | 进程内常驻 Python API 或子进程 | `speech-server` extra 已含依赖，服务器部署过 |
-| 系统合成 | macOS `say` / Linux `espeak-ng` | 每次调用启动子进程 | 当前 `ROBOT_AUDIO=real` 生产路径 |
+| 系统合成 | macOS `say` / Linux `espeak-ng` | 每次调用启动子进程 | Mac 上的 `say` 为基线；Jetson 上只有 `espeak-ng`，中文发音不达标 |
 
 模型：
 
@@ -102,16 +114,23 @@ Piper 的输出采样率为 22050 Hz，音频时长与实时率均按该采样�
 
 ## 9. 结论与建议
 
+设备改为 Jetson Orin Nano 8GB 本地推理后，选型目标从「服务器部署」变为「板端常驻」。以下结论在 ARM 实测前只作方向判断：
+
 - **合成速度**：Piper 明显领先，整句可压到 150 ms 内；sherpa-onnx 整句偏慢，但首块更早，适合需要边合成边播的场景。
 - **增量输出**：两者都有按句/按段切块的能力，粒度不同；当前适配器都没有利用，流式播放不是现成能力。
 - **许可证**：Piper 运行时为 GPL-3.0-or-later，两个中文模型许可不明，这是选型的主要阻塞项，不是技术指标问题。
-- **建议**：在许可证口径确认前，不把任何方案写入默认配置。技术上优先评估 **Piper 进程内常驻**（速度、内存均优）；若许可不可接受，再评估 **sherpa-onnx VITS**（Apache-2.0 框架、与识别同依赖）并单独解决模型许可。
+- **板端可行性**：Orin Nano 8GB 内存有余量（两方案实测增量 241–352 MB）；关键未知是 ARM CPU 上的实时率，以及 aarch64 预编译包是否齐备（`piper-phonemize` 风险最高）。
+- **建议顺序**：① 在 Jetson 上实测两方案的 ARM 延迟与安装可行性；② 确认 GPL 与模型许可口径；③ 再决定常驻方案。技术倾向 **sherpa-onnx VITS**（与识别同依赖、框架 Apache-2.0、aarch64 wheel 通常齐全），Piper 作为速度备选。
+- **明确不采用**：Jetson 上的 `espeak-ng` 系统合成，中文发音已在服务器联调中确认不满足要求。
 - **若采用流式播放**：需要扩展 `TTSProvider.synthesize()` 的返回形态，属于接口合同变更，须先更新合同并审核。
 
 ## 10. 未验证
 
-- Linux 服务器上的合成延迟与内存占用（本轮全部在 macOS Apple Silicon 测得）。
-- ESP32-S3 传输与播放链路：首包到达功放的实际延迟、缓冲策略、网络抖动影响。
+- **Jetson Orin Nano（ARM aarch64）上的合成延迟与内存占用**：本轮全部在 macOS Apple Silicon 测得，不能外推。
+- **aarch64 预编译包可用性**：sherpa-onnx 的 ARM wheel 与 `piper-tts` 依赖的 `piper-phonemize` 是否有现成包，均未验证。
+- **JetPack 的 Python 版本**：项目要求 ≥3.12，JetPack 6 系统 Python 为 3.10，需独立解释器方案，未验证。
+- **USB 声卡的 ALSA 设备号与 PortAudio 兼容性**：未在板端验证。
+- **GPU 加速**：sherpa-onnx 的 CUDA provider 在 Orin Nano 上是否可用，未验证。
 - 真人听辨与长时间连续合成的稳定性。
 - 多句并发与打断场景下的资源占用。
 
