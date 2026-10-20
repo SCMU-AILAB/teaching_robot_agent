@@ -45,7 +45,7 @@ uv run --extra speech-client python -m speech.real_demo
 
 - SPEECH_SSH_HOST、SPEECH_SSH_USER、SPEECH_SSH_PORT：服务器 SSH 连接信息。
 - SPEECH_SERVER_DIRECTORY：服务器语音安装目录，必须是绝对路径。
-- SPEECH_INPUT_DEVICE、SPEECH_OUTPUT_DEVICE：本地设备编号/名称，空值为系统默认。
+- SPEECH_INPUT_DEVICE、SPEECH_OUTPUT_DEVICE：本地设备**名称**，空值为系统默认。必须填名称而不是枚举序号，因为序号由内核枚举顺序决定，拔插后会变化；名称支持子串匹配并忽略大小写，匹配不到或有多个同名设备时启动即报错，不会静默退回系统默认设备。
 - SPEECH_SAMPLE_RATE：默认 16000；SPEECH_MAX_DURATION_S：默认 15，最长 60 秒。
 - SPEECH_TIMEOUT_S：默认 60，包含连接、传输及推理，最大 300 秒。
 - SPEECH_ASR_LANGUAGE：默认 zh；SPEECH_TTS_VOICE：默认 huayan。未部署的音色明确拒绝。
