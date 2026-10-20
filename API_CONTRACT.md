@@ -1,6 +1,8 @@
-# 接口合同 v0.1（待审核）
+# 接口合同 v0.2（待审核）
 
 审核人：项目负责人（用户本人）。状态：接口设计草案，尚未批准或实现 HTTP 服务。
+
+v0.2 变更摘要（2026-10-20）：新增设备独占与采集约束、`DeviceStatusResponse` 与 `SessionSnapshotResponse` 两个结构、`GET /api/v1/device`、`GET /api/v1/camera/snapshot`、`GET /api/v1/camera/stream`、`GET /api/v1/tasks/{task_id}/session` 四个端点，事件表补 `playback.updated` 与 `camera.status` 两类。**v0.1 原有条目一律未改动**。
 
 本文件是前端与后端路径、参数、响应、错误码的唯一真相来源。Python 内部模块交接见 [模块协作合同](docs/MODULE_CONTRACT.md)。先审核本合同，再实现 HTTP 路由；队友现在可以使用本文示例制作模拟服务和页面。
 
@@ -28,6 +30,14 @@
 - PATCH 取消是幂等操作：终态资源返回当前记录，不重启动作。取消请求被接受不代表设备停止。
 - 资源与去重记录首版存于内存；每次后端启动生成新的 `instance_id`。重启后前端清空旧资源，重新建立任务，不自动重放旧控制命令。
 - 本地单用户演示按受控网络部署；身份认证、多租户与公网访问不属于本合同首版。
+
+### 设备独占与采集约束（v0.2 新增，待审核）
+
+- 摄像头、麦克风、扬声器由服务进程**独占持有**。HTTP 端点只读取服务内部状态，不按请求打开或重建设备。
+- RealSense 同一路视频流不能被两个进程同时打开。实测第二个采集进程报 `Call to S_FMT failed for YUYV @ 960x540: Device or resource busy`，因此本地 VLM、预览端点与其他消费者**必须复用同一采集管道**，任何模块都不得自行打开 `/dev/video*`。
+- 拉起采集管道存在固定启动开销（实测单帧含启动 0.47 秒）。快照端点必须返回常驻管道的最近一帧，**不得每次请求重启管道**。
+- 摄像头首帧存在自动曝光与白平衡收敛过程（实测前若干帧整体偏色）。首帧不可用时返回 50002，不得把偏色帧当作正常画面返回。
+- 采集管道异常退出后，服务应自动重建并更新 `camera.last_frame_at`；重建失败持续返回 50002。
 
 ### 通用错误表
 
@@ -90,6 +100,28 @@ RelationObservation：`subject_id:str`、`relation:str`、`object_id:str`；两�
 `observation_id:str`、`task_id:int`、`status:str`、`created_at:float`、`ended_at:float|null`、`snapshot:SceneSnapshotResponse|null`、`from_cache:bool`、`stale:bool`、`error:ResourceError|null`。
 
 status：`queued/running/succeeded/failed/cancelled/timed_out`。stale 在读取时按采集时间和场景版本计算；即使推理完成，图片过旧也只能作为 stale 证据展示，Agent 必须刷新或明确告知无法获取新观察。失败不伪装成空对象列表。
+
+### DeviceStatusResponse（v0.2 新增，待审核）
+
+`instance_id:str`、`uptime_s:float`、`camera:CameraStatus`、`audio:AudioStatus`。
+
+CameraStatus：`available:bool`、`device:str`、`width:int`、`height:int`、`fps:float`、`last_frame_at:float|null`、`error:ResourceError|null`。
+
+device 为设备名称而非序号（序号随拔插漂移，见模块协作合同同名约定）。`available=false` 时 `error` 必须非空，不得返回空对象。
+
+AudioStatus：`input_device:str`、`output_device:str`、`recording:bool`、`playing:bool`、`volume_percent:int|null`。
+
+volume_percent 指播放设备的当前音量百分比；设备无音量控件时返回 null。前端据此解释“已播但无声”的设备问题，不得自行假定音量正常。
+
+### SessionSnapshotResponse（v0.2 新增，待审核）
+
+`instance_id:str`、`task:TaskResponse`、`teaching:TeachingStateResponse|null`、`actions:list[ActionResponse]`、`latest_observation:ObservationResponse|null`、`recording:RecordingResponse|null`、`playback:PlaybackState|null`、`assistant_messages:list[AssistantMessage]`、`truncated:{actions:bool,messages:bool}`、`event_cursor:str`。
+
+PlaybackState：`playback_id:str`、`status:str`、`started_at:float`、`ended_at:float|null`、`error:str|null`。status：`playing/completed/stopped/failed`。
+
+这是页面初始化与断线重连的**唯一聚合快照**：一次请求拿到任务、教学阶段、动作、最近观察、当前录音、当前播放与消息列表，避免前端串联十余个接口。`event_cursor` 与 `GET /api/v1/tasks/{task_id}/events` 的 `Last-Event-ID` 同格式，客户端拿到后直接建流，不重复拉取。
+
+`actions` 按 `action_id` 升序，首版最多返回最近 200 条；`assistant_messages` 最多返回最近 100 条，两者都超出时在同一响应中用 `truncated:{actions:bool,messages:bool}` 标明截断，不得静默丢弃。
 
 ## 4. HTTP 接口
 
@@ -323,6 +355,70 @@ AssistantMessage：`message_id:str,text:str,created_at:float,speech_action_id:in
 
 变更记录：2026-10-01，初始草案，待审核。
 
+### GET /api/v1/device（v0.2 新增，待审核）
+
+描述：查询设备端能力与健康状态，用于页面初始化提示与故障定位；不触发推理、不打开设备。
+
+请求参数：无。
+
+响应（200）：DeviceStatusResponse。
+
+错误码：50001。
+
+变更记录：2026-10-20，设备端补充草案，待审核。
+
+### GET /api/v1/camera/snapshot（v0.2 新增，待审核）
+
+描述：返回摄像头最近一帧 JPEG，用于页面定时刷新画面。不重启采集管道。
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| max_width | integer | 否 | 缩放目标宽度，范围 160..1920；按比例缩放，默认返回原始分辨率 |
+
+响应（200）：`image/jpeg` 二进制，带 `Cache-Control: no-store`。这是统一 JSON 响应的媒体例外；失败仍为统一 JSON 错误。
+
+错误码：40001（max_width 越界）、50002（摄像头不可用或首帧未就绪）。
+
+建议前端按 2–5 fps 轮询，单帧实测约 110 KB、局域网取帧约 32 ms。轮询不得因单次失败清空页面已有画面，应保留最后一帧并显示断流提示。
+
+变更记录：2026-10-20，设备端补充草案，待审核。
+
+### GET /api/v1/camera/stream（v0.2 新增，待审核）
+
+描述：MJPEG 连续流，用于页面实时预览。
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| fps | integer | 否 | 推送帧率，范围 1..15，默认 10；不得超过采集管道帧率 |
+
+响应（200）：`multipart/x-mixed-replace; boundary=frame`，每段包含 `Content-Type: image/jpeg` 与 `Content-Length`。这是统一 JSON 响应的流式例外；建流前失败仍为统一 JSON 错误。
+
+客户端断开后，服务必须停止对该订阅者的推送并释放订阅槽，**不得影响采集管道与其他订阅者**。订阅者处理过慢时丢弃旧帧而不是累积积压。
+
+错误码（建流前）：40001、50002。
+
+前端适配说明（非合同约束）：浏览器可用 `<img src>` 直接显示；Flutter Web 需通过 `HtmlElementView` 承载 `<img>`，`Image.network` 不支持 `multipart/x-mixed-replace`。若适配成本过高，页面可只使用快照轮询。
+
+变更记录：2026-10-20，设备端补充草案，待审核。
+
+### GET /api/v1/tasks/{task_id}/session（v0.2 新增，待审核）
+
+描述：一次取回任务的聚合快照，供页面初始化与断线重连；比逐接口拉取更适合弱网与重连场景。
+
+请求参数：task_id 正整数。
+
+响应（200）：SessionSnapshotResponse。
+
+错误码：40001、40401。
+
+后端必须原子生成快照与 `event_cursor`，避免前端在快照与建流之间漏事件。`recording` 与 `playback` 无进行中资源时为 null，不是空对象。
+
+变更记录：2026-10-20，设备端补充草案，待审核。
+
 ### GET /api/v1/tasks/{task_id}/events
 
 描述：SSE 推送任务变化；动作完成触发后端下一轮决策，前端无需反复询问模型。
@@ -346,6 +442,8 @@ data: {"code":0,"message":"success","data":{"instance_id":"instance-demo","seque
 | observation.updated | ObservationResponse |
 | recording.updated | RecordingResponse |
 | input.updated | InputResponse |
+| playback.updated | PlaybackState（v0.2 新增，待审核；合成完成不等于播放完成，只有实际播完才是 completed） |
+| camera.status | `{available:bool,device:str,last_frame_at:float|null,error:ResourceError|null}`（v0.2 新增，待审核；状态变化才推送，不按帧推送） |
 | assistant.message | AssistantMessage |
 | stream.reset | `{reason:string}`，客户端重新 GET 任务快照 |
 
@@ -364,4 +462,26 @@ data: {"code":0,"message":"success","data":{"instance_id":"instance-demo","seque
 3. 语音负责人按内部接口完成录音/识别和合成/播放；核心转发最终输入并实现 SpeechSkill。
 4. 验证运行中取消、模型超时、摄像头失联、识别空文本、播放停止失败及前端重连。
 
+v0.2 建议追加的联调顺序（待审核）：
+
+5. 设备端先提供 `GET /api/v1/device` 与 `GET /api/v1/camera/snapshot`，前端用真实画面替换页面静态图，确认“画面 + 设备状态”可用。
+6. 再补 `GET /api/v1/tasks/{task_id}/session`，前端用它替换模拟数据源，页面其余部分不变。
+7. 最后接 `GET /api/v1/tasks/{task_id}/events` 与 `GET /api/v1/camera/stream`，处理断线重连、断流保留最后一帧、摄像头失联提示。
+
+部署形态（v0.2 补充，待审核）：首版 HTTP 服务运行在设备端（Jetson），`/api/v1` 与摄像头同源，前端只配置一个 base URL。若后续改为服务器统一网关，本合同的路径与字段不变，仅 base URL 改变；前端不得硬编码主机地址。设备端与服务器之间如何传输画面，属于服务器网关阶段的问题，不在本合同首版范围。
+
 首版不开放前端任意执行 Skill 的端点：教学动作由核心决策器提交。播报走 SpeechSkill，前端展示 speech_action_id 对应状态；无需单独的任意播报 HTTP 入口。
+
+## 6. v0.2 待负责人确认（草案，未批准）
+
+以下五项在本合同批准前不得实现，逐项给出建议只是为了便于决断，不代表已决定。
+
+| # | 待定事项 | 建议 |
+| --- | --- | --- |
+| 1 | 部署形态：前端直连设备端，还是服务器统一网关 | 首版直连设备端（已验证同源可取画面与状态）；网关阶段再迁移，路径不变 |
+| 2 | 摄像头预览：只做快照轮询，还是同时提供 MJPEG | 先快照轮询（前端改造成本最低），MJPEG 作为可选增强 |
+| 3 | `PlaybackState.error` 类型：`str\|null` 还是 `ResourceError` | 用 `str\|null`（与当前代码一致），同时修正模块合同里的旧写法，避免两套错误模型并存 |
+| 4 | `SessionSnapshotResponse` 是否包含 `assistant_messages` | 建议包含；但需先确认消息存储归属（核心还是语音），否则该字段无法落地 |
+| 5 | 新增事件 `playback.updated`、`camera.status` 是否批准 | 建议批准；两者都只在状态变化时推送，不按帧推送，避免放大事件量 |
+
+另需确认：`/api/v1/camera/*` 首版是否保持无鉴权（当前假设受控局域网部署），若比赛现场网络不可信，需要另行设计令牌机制，不在 v0.2 范围。
