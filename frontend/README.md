@@ -28,8 +28,32 @@ flutter run -d chrome --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
 flutter build web --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
 ```
 
-地址解析优先级见 `lib/core/config/device_endpoint.dart`：构建期注入 →
-页面同源 → 本机 `127.0.0.1:8090`。
+地址解析优先级见 `lib/core/config/device_endpoint.dart`：查询参数 `?api=`
+覆盖 → 构建期注入 → 页面同源 → 本机 `127.0.0.1:8090`。
+
+## macOS 桌面版与 DMG
+
+```bash
+# 桌面版同样在构建期注入设备地址（无 URL 参数可用）
+flutter build macos --release --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
+
+# 打成 DMG：应用 + Applications 快捷方式，拖拽即安装
+mkdir -p /tmp/dmg-stage
+cp -R build/macos/Build/Products/Release/TeachingRobot.app /tmp/dmg-stage/
+ln -s /Applications /tmp/dmg-stage/Applications
+hdiutil create -volname "教学机器人" -srcfolder /tmp/dmg-stage \
+  -ov -format UDZO TeachingRobot-<版本>-macos.dmg
+```
+
+- 应用名 `TeachingRobot`，Finder 显示名「教学机器人」，Bundle ID
+  `com.scmu.ailab.teachingrobot`；已开沙箱网络出口权限
+  （`com.apple.security.network.client`），否则应用内 HTTP/SSE/MJPEG 全部被拒。
+- 签名是 ad-hoc（无开发者证书、未公证）。从网络下载后首次打开若被 Gatekeeper
+  拦住，右键「打开」，或 `xattr -dr com.apple.quarantine /Applications/TeachingRobot.app`。
+- 本工程未使用 Swift Package Manager（没有 Swift 插件依赖，Xcode 工程里的
+  `FlutterGeneratedPluginSwiftPackage` 引用已移除）。若以后引入 macOS 原生插件，
+  需要 `flutter config --enable-swift-package-manager` 或改用 CocoaPods。
+
 
 已验证 Flutter 3.47.4 / Dart 3.10；最低 Dart 版本为 3.10。依赖由
 `pubspec.yaml` 与 `pubspec.lock` 管理。
