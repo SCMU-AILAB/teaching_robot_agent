@@ -1,6 +1,9 @@
-# P3 课堂展示：Flutter 模拟版本
+# 课堂操作终端（Flutter，接 Jetson 设备端）
 
-本阶段只完成页面模拟版本。数据源为进程内 `MockClassroomService`，不调用 Python 语音服务、不访问麦克风、不实际播音，也没有 HTTP/SSE 后端。页面持续标记“模拟课堂”，场景图片为项目自绘的示例桌面。
+页面只接设备端真实数据：任务、对话、观察、录音/播报状态来自
+`GET /api/v1/...` 与 SSE 事件流，观察视野是 Jetson 摄像头的实时画面。
+没有本地示例对话、示例场景图片，也没有模拟数据源兜底——连不上设备时
+整块显示「未连接服务器」。
 
 ## 运行与检查
 
@@ -8,42 +11,70 @@
 cd frontend
 flutter pub get
 flutter analyze
-flutter test
-flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5174
+flutter test                       # 55 项
 ```
 
-已验证 Flutter 3.38.2 / Dart 3.10.0；最低 Dart 版本为 3.10。依赖由 pubspec.yaml 与 pubspec.lock 管理。升级 Flutter 时需重新解析依赖并执行分析、测试与构建。
+页面由设备端服务同源托管时（推荐，端口 8090）直接构建即可：
+
+```bash
+flutter build web
+# 把 build/web 交给设备端服务托管
+```
+
+开发机与设备分离时显式注入设备地址（地址不写进源码）：
+
+```bash
+flutter run -d chrome --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
+flutter build web --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
+```
+
+地址解析优先级见 `lib/core/config/device_endpoint.dart`：构建期注入 →
+页面同源 → 本机 `127.0.0.1:8090`。
+
+已验证 Flutter 3.47.4 / Dart 3.10；最低 Dart 版本为 3.10。依赖由
+`pubspec.yaml` 与 `pubspec.lock` 管理。
 
 ## 已实现
 
-- 创建课堂目标、文字提问、回答文本显示。
-- 示例场景图片、观察结果、刷新观察。
-- 教学阶段、动作记录、合成和播放状态分开展示。
-- 开始录音、主动结束、15 秒自动结束、录音计时。
-- 停止请求先进入 cancelling，收到模拟确认后才进入 cancelled；取消清除后续模拟事件。
-- 本地事件快照刷新、重复与乱序事件去重、断线提示、重连获取完整快照。
-- 请求失败、无有效语音、识别失败和合成失败场景。
-- 桌面与手机布局；页面销毁时关闭订阅、定时器与模拟数据源。
+- 观察视野即设备摄像头：Web 端把 `GET /api/v1/camera/stream`（MJPEG）
+  交给浏览器 `<img>` 原生解码；其他平台轮询 `camera/snapshot` 换帧。
+  首帧未到达、断流或未连接服务器时显示未连接占位（断线云图标）。
+- 创建课堂目标、文字提问、语音录音入口；对话按 SSE 事件增量追加并去重。
+- 观察结果、教学阶段、动作记录、合成与播放状态分开展示，字段全部来自快照。
+- 停止请求先进入 cancelling，收到设备确认后才进入 cancelled。
+- 断线提示、重连重取聚合快照、`stream.reset` 触发快照重放。
+- 桌面与手机布局；页面销毁时关闭订阅、定时器与 HTTP 连接。
 
-右上角“演示场景”菜单切换失败场景。连接图标可模拟断线，再通过“重新连接”恢复。请求失败场景切回“正常交互”后可以重试。
+## 分层与边界
 
-## 分层与后续对接
+`features/classroom/` 存放页面、控制器、模型与数据源适配器；`widgets/`
+只负责展示。页面不发网络请求，统一走 `ClassroomService`。
 
-`features/classroom/` 存放页面、控制器、模型和内部数据源接口；widgets/ 只负责展示。页面不发网络请求。`ClassroomService` 是本地页面数据源边界，不是新增后端接口合同。
+`DeviceClassroomService` 是合同 `API_CONTRACT.md` v0.2 草案的前端实现：
+聚合快照 + SSE（`Last-Event-ID` 断点续传）+ 命令通道，统一响应
+`{code,message,data}`，非 0 code 包装为 `ClassroomFailure`。合同仍为草案，
+端点或字段变更须先改合同再改适配器。
 
-`core/constants/api_paths.dart` 当前不定义网络端点。API_CONTRACT.md 和 MODULE_CONTRACT.md 均仍为草案；真实 API/SSE 适配必须等核心提供已审核的端点、快照和广播能力。以后只由数据源适配器连接核心事件接口，禁止新增 Runtime.next_event() 消费者。
+`MockClassroomService` 只作为测试替身存在（`test/` 使用），页面不再引用，
+避免把模拟结果当真实能力。
 
-本地快照的 sequence 用于模拟去重，不能宣称已验证后端事件游标、SSE 重放或网络恢复协议。页面的停止按钮只记录模拟 stop_task 命令，尚不能停止真实设备。教学反馈文本是固定示例，不替代 Teaching Agent。
+连接语义：断线由连接流即时下发；「已连上」以命令/快照成功为准（首屏
+快照、重连、SSE 建流三种确认），因此快照失败时不会误报连接正常。
 
-音频互斥的真实 Python 实现归语音层 AudioDeviceLease，由应用装配方注入共享实例；页面禁用按钮只是交互约束，不替代服务端设备互斥。参见 MODULE_CONTRACT 的待审核归属补充。
+摄像头是只读资源，页面不提供任何设备控制入口；停止按钮只发任务的
+`cancelling`，不直接操作机械或音频硬件。
 
 ## 素材
 
-- `assets/scene.png`：项目自绘模拟场景，无真实摄像头信息。
-- `assets/NotoSansSC.ttf`：Google Fonts Noto Sans SC，SIL Open Font License，许可见 `assets/OFL.txt`。字体随应用本地加载。
+- `assets/NotoSansSC.ttf`：Google Fonts Noto Sans SC，SIL Open Font
+  License，许可见 `assets/OFL.txt`。
 
 ## 尚未完成
 
-真实摄像头/语音设备与模型服务、页面到 Python 服务的网络集成、核心教学决策、任务级统一资源取消、HTTP/SSE、真实断网集成验收及学生完整交互验收均未完成。此版本可用于审查页面流程和内部状态处理。
-
-2026-10-07 合并前复核：首次观察期间禁止启动新输入；同实例的迟到快照不能覆盖新事件；重连须成功恢复快照后才显示连接正常。新增对应回归测试，Flutter 分析无诊断，18 项测试通过。页面仍是可选课堂模拟，不替代 Python 家庭机器人主链路。
+- 录音与播报仍是设备端状态展示，真实采音与 TTS 播放由语音层（`speech/`）
+  落地后再联调。
+- 教学回答在设备端仍是模拟内容（响应里标记 `simulated`），待 Teaching
+  Agent 接入后替换。
+- Web 平台视图是真实 DOM 节点，Flutter 控件无法叠在其上，因此画面状态
+  角标放在面板标题行而不是画面内；如需画面内叠加，要改为 DOM 合成或
+  退回单帧轮询。

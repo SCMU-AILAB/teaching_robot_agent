@@ -4,13 +4,13 @@ import 'package:flutter/material.dart';
 import 'core/constants/app_radius.dart';
 import 'features/classroom/classroom_page.dart';
 
-/// 教学机器人模拟展示入口。
+/// 教学机器人课堂展示入口。
 class TeachingRobotApp extends StatelessWidget {
   const TeachingRobotApp({super.key});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: '教学机器人 · 模拟课堂',
+    title: '教学机器人 · 课堂',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       useMaterial3: true,

@@ -18,6 +18,7 @@ class SessionModel {
     this.actions = const [],
     this.recordingSeconds = 0,
     this.note = '',
+    this.pendingQuestionId,
   });
 
   final String instanceId;
@@ -36,6 +37,11 @@ class SessionModel {
   final int recordingSeconds;
   final String note;
 
+  /// 当前待答问题编号（合同 TeachingStateResponse.pending_question）。
+  ///
+  /// 非空时学生输入按 answer 提交并携带此编号；null 表示自由提问。
+  final String? pendingQuestionId;
+
   bool get active => taskStatus == 'running' || taskStatus == 'cancelling';
 
   SessionModel copyWith({
@@ -51,6 +57,7 @@ class SessionModel {
     List<ClassAction>? actions,
     int? recordingSeconds,
     String? note,
+    String? pendingQuestionId,
   }) => SessionModel(
     instanceId: instanceId,
     sequence: sequence ?? this.sequence,
@@ -67,6 +74,7 @@ class SessionModel {
     actions: List.unmodifiable(actions ?? this.actions),
     recordingSeconds: recordingSeconds ?? this.recordingSeconds,
     note: note ?? this.note,
+    pendingQuestionId: pendingQuestionId ?? this.pendingQuestionId,
   );
 }
 

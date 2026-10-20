@@ -24,6 +24,17 @@ class DelayedSnapshotService extends MockClassroomService {
   Future<SessionModel> snapshot() => pending?.future ?? super.snapshot();
 }
 
+/// 快照失败/成功可切换，模拟设备不可达后恢复。
+class FlakySnapshotService extends MockClassroomService {
+  bool fail = true;
+
+  @override
+  Future<SessionModel> snapshot() async {
+    if (fail) throw const ClassroomFailure('设备不可达');
+    return super.snapshot();
+  }
+}
+
 void main() {
   testWidgets('首次观察期间拒绝新输入，避免重叠播报覆盖动作', (tester) async {
     final service = MockClassroomService(
@@ -96,6 +107,8 @@ void main() {
       MaterialApp(home: ClassroomPage(controller: controller)),
     );
     await tester.pump();
+    // 课堂目标不再预填示例文本，先输入目标再开始课堂。
+    await tester.enterText(find.byKey(const Key('task-target')), '认识桌面物体');
     await tester.tap(find.byKey(const Key('task-toggle')));
     await advance(tester);
     await tester.ensureVisible(find.byKey(const Key('record-button')));
@@ -245,6 +258,8 @@ void main() {
       MaterialApp(home: ClassroomPage(controller: controller)),
     );
     await tester.pump();
+    // 课堂目标不再预填示例文本，先输入目标再开始课堂。
+    await tester.enterText(find.byKey(const Key('task-target')), '认识桌面物体');
     await tester.tap(find.byKey(const Key('task-toggle')));
     await advance(tester);
     await tester.ensureVisible(find.byKey(const Key('record-button')));
@@ -279,6 +294,8 @@ void main() {
   testWidgets('销毁自有页面时释放活动定时器和订阅', (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ClassroomPage()));
     await tester.pump();
+    // 课堂目标不再预填示例文本，先输入目标再开始课堂。
+    await tester.enterText(find.byKey(const Key('task-target')), '认识桌面物体');
     await tester.tap(find.byKey(const Key('task-toggle')));
     await tester.pump();
     await tester.pumpWidget(const SizedBox());
@@ -491,6 +508,58 @@ void main() {
     service.dispose();
   });
 
+  testWidgets('首屏快照失败即标记未连接，恢复后重新连上', (WidgetTester tester) async {
+    final FlakySnapshotService service = FlakySnapshotService();
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    // 服务不可达：初始化失败必须落成「未连接」，不能默认显示连接正常。
+    expect(await controller.initialize(), isFalse);
+    expect(controller.connected, isFalse);
+    expect(controller.errorSource, 'connection');
+
+    service.fail = false;
+    expect(await controller.reconnect(), isTrue);
+    expect(controller.connected, isTrue);
+    expect(controller.error, isNull);
+    service.dispose();
+  });
+
+  testWidgets('课堂目标为空时本地拦截，不伪造创建请求', (WidgetTester tester) async {
+    final MockClassroomService service = MockClassroomService();
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    expect(await controller.createTask('   '), isFalse);
+    expect(controller.errorSource, 'task');
+    expect(controller.error, contains('课堂目标'));
+    expect(controller.state.taskStatus, 'idle');
+    expect(service.commands, isEmpty);
+    service.dispose();
+  });
+
+  testWidgets('未连接服务器时画面与观察显示未连接，不出现示例内容', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final MockClassroomService service = MockClassroomService();
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    controller.disconnect();
+    await tester.pumpWidget(
+      MaterialApp(home: ClassroomPage(controller: controller)),
+    );
+    await tester.pump();
+    expect(find.text('未连接服务器'), findsWidgets);
+    expect(find.text('未连接服务器，暂无观察结果。'), findsOneWidget);
+    expect(find.text('设备连接正常'), findsNothing);
+    expect(find.text('实时画面'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    service.dispose();
+  });
+
   for (final Size size in [const Size(1366, 900), const Size(390, 844)]) {
     testWidgets('页面 $size 无布局溢出且停止按钮调用正确入口', (WidgetTester tester) async {
       tester.view.physicalSize = size;
@@ -506,6 +575,8 @@ void main() {
         MaterialApp(home: ClassroomPage(controller: controller)),
       );
       await tester.pump();
+      // 课堂目标不再预填示例文本，先输入目标再开始课堂。
+      await tester.enterText(find.byKey(const Key('task-target')), '认识桌面物体');
       await tester.tap(find.byKey(const Key('task-toggle')));
       await advance(tester);
       expect(tester.takeException(), isNull);

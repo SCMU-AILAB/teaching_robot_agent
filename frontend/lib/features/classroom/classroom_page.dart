@@ -4,9 +4,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../core/config/device_endpoint.dart';
 import '../../core/constants/app_radius.dart';
 import 'classroom_controller.dart';
-import 'mock_classroom_service.dart';
+import 'classroom_service.dart';
+import 'device_classroom_service.dart';
 import 'session_model.dart';
 import 'widgets/activity_panel.dart';
 import 'widgets/conversation_panel.dart';
@@ -18,7 +20,14 @@ import 'widgets/send_button.dart';
 import 'widgets/status_label.dart';
 import 'widgets/task_toggle_button.dart';
 
-/// 自适应课堂操作页面，默认使用独立本地模拟数据源。
+/// 数据源装配：页面只接 Jetson 设备端真实数据，不再有模拟数据源。
+///
+/// 服务地址由 [resolveDeviceBaseUrl] 解析（构建期注入 → 页面同源 → 本机
+/// 端口），连不上时页面显示「未连接服务器」，不退回任何示例内容。
+ClassroomService _createService() =>
+    DeviceClassroomService(baseUrl: resolveDeviceBaseUrl());
+
+/// 自适应课堂操作页面，数据、画面与状态全部来自设备端。
 class ClassroomPage extends StatefulWidget {
   const ClassroomPage({this.controller, super.key});
   final ClassroomController? controller;
@@ -29,7 +38,7 @@ class ClassroomPage extends StatefulWidget {
 
 class _ClassroomPageState extends State<ClassroomPage> {
   late final ClassroomController _controller;
-  final TextEditingController _target = TextEditingController(text: '认识桌面物体');
+  final TextEditingController _target = TextEditingController();
   final TextEditingController _message = TextEditingController();
   final GlobalKey _messageInputKey = GlobalKey();
 
@@ -39,8 +48,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
   @override
   void initState() {
     super.initState();
-    _controller =
-        widget.controller ?? ClassroomController(MockClassroomService());
+    _controller = widget.controller ?? ClassroomController(_createService());
     unawaited(_controller.initialize());
   }
 
@@ -93,9 +101,12 @@ class _ClassroomPageState extends State<ClassroomPage> {
               shape: AppRadius.containerShape(radius: AppRadius.chip),
               color: const Color(0xffe6eee9),
             ),
-            child: const Text(
-              '模拟课堂',
-              style: TextStyle(fontSize: 11, color: Color(0xff147d64)),
+            child: Text(
+              // 任务编号来自设备端快照，未开始时只标明数据来源。
+              _controller.state.taskId > 0
+                  ? '课堂 #${_controller.state.taskId}'
+                  : '设备课堂',
+              style: const TextStyle(fontSize: 11, color: Color(0xff147d64)),
             ),
           ),
         ],
@@ -112,44 +123,18 @@ class _ClassroomPageState extends State<ClassroomPage> {
           ),
           const SizedBox(width: 7),
           Text(
-            _controller.connected ? '模拟连接正常' : '连接已断开',
+            _controller.connected ? '设备连接正常' : '未连接服务器',
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 8),
-          PopupMenuButton<DemoScenario>(
-            tooltip: '演示场景',
-            icon: Icon(Symbols.tune_rounded, size: 20),
-            initialValue: _controller.scenario,
-            onSelected: _controller.selectScenario,
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: DemoScenario.normal, child: Text('正常交互')),
-              PopupMenuItem(value: DemoScenario.silence, child: Text('无有效语音')),
-              PopupMenuItem(
-                value: DemoScenario.asrFailure,
-                child: Text('识别失败'),
-              ),
-              PopupMenuItem(
-                value: DemoScenario.synthesisFailure,
-                child: Text('合成失败'),
-              ),
-              PopupMenuItem(
-                value: DemoScenario.requestFailure,
-                child: Text('请求失败'),
-              ),
-            ],
-          ),
           IconButton(
-            tooltip: _controller.connected ? '模拟断线' : '重新连接',
-            onPressed: () {
-              if (_controller.connected) {
-                _controller.disconnect();
-              } else {
-                unawaited(_controller.reconnect());
-              }
-            },
+            tooltip: _controller.connected ? '刷新设备状态' : '重新连接',
+            onPressed: _controller.busy
+                ? null
+                : () => unawaited(_controller.reconnect()),
             icon: Icon(
               _controller.connected
-                  ? Symbols.wifi_off_rounded
+                  ? Symbols.sync_rounded
                   : Symbols.refresh_rounded,
               size: 20,
             ),
@@ -175,7 +160,11 @@ class _ClassroomPageState extends State<ClassroomPage> {
       key: const Key('task-target'),
       enabled: !state.active && _controller.connected,
       maxLength: 2000,
-      decoration: const InputDecoration(labelText: '课堂目标', counterText: ''),
+      decoration: const InputDecoration(
+        labelText: '课堂目标',
+        hintText: '输入本次课堂要完成的目标',
+        counterText: '',
+      ),
       onSubmitted: (_) => unawaited(_controller.createTask(_target.text)),
     );
     final Widget button = TaskToggleButton(
@@ -213,8 +202,9 @@ class _ClassroomPageState extends State<ClassroomPage> {
   Widget _composer() {
     final SessionModel state = _controller.state;
     final bool recording = state.recording == 'recording';
+    // 只拦真正的音频占用：播报中、转写中。观察是否已有结果不构成录音前提，
+    // 设备端的观察是按次请求（POST observations），教学任务开始即可说话。
     final bool audioBusy =
-        !state.observed ||
         ['playing', 'synthesizing'].contains(state.playback) ||
         state.recording == 'transcribing';
     final bool available =
@@ -328,6 +318,9 @@ class _ClassroomPageState extends State<ClassroomPage> {
             );
             final Widget observation = ObservationPanel(
               state: state,
+              connected: _controller.connected,
+              streamUrl: _controller.cameraStreamUrl(),
+              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 960),
               onRefresh: state.taskStatus == 'running' && _controller.connected
                   ? () => unawaited(_controller.refresh())
                   : null,
@@ -392,7 +385,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
                         ActivityPanel(state: state),
                         const Divider(height: 36),
                         const Text(
-                          '本地模拟会话 · 摄像头、录音与播报均为演示数据',
+                          '设备端实时数据 · 摄像头画面来自 Jetson 设备，教学回答仍为服务端模拟',
                           style: TextStyle(
                             fontSize: 12,
                             color: Color(0xff73817b),

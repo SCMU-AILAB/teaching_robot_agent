@@ -52,13 +52,22 @@ class ClassroomController extends ChangeNotifier {
   }
 
   void _onConnection(bool value) {
-    if (!value) connected = false;
-    // 断线后回复无法送达，结束加载态。
-    if (!value) awaitingReply = false;
-    if (!value) {
-      _fail('连接已断开，当前显示最后一次状态。停止请求尚未送达。', 'connection');
+    connected = value;
+    if (value) {
+      _clearConnectionError();
+    } else {
+      // 断线后回复无法送达，结束加载态。
+      awaitingReply = false;
+      _fail('未连接服务器，当前显示最后一次状态。停止请求尚未送达。', 'connection');
     }
     _notify();
+  }
+
+  /// 恢复连接后清掉上一条连接级错误，避免成功后仍显示断线提示。
+  void _clearConnectionError() {
+    if (errorSource != 'connection') return;
+    error = null;
+    errorSource = null;
   }
 
   void _onStreamError(Object failure) => _onConnection(false);
@@ -132,11 +141,18 @@ class ClassroomController extends ChangeNotifier {
     _notify();
     try {
       await command();
+      // 连接级命令成功即证明服务可达（首屏快照、重连）。
+      if (source == 'connection') {
+        connected = true;
+        _clearConnectionError();
+      }
       return true;
     } on ClassroomFailure catch (failure) {
+      if (source == 'connection') connected = false;
       _fail(failure.message, source);
       return false;
     } catch (_) {
+      if (source == 'connection') connected = false;
       _fail('操作失败，请重试。', source);
       return false;
     } finally {
@@ -161,8 +177,24 @@ class ClassroomController extends ChangeNotifier {
     },
     source: 'connection',
   );
-  Future<bool> createTask(String target) =>
-      _run(() => _service.createTask(target), source: 'task');
+
+  /// 创建课堂：目标为空或超长时本地拦截，不发无效请求。
+  Future<bool> createTask(String target) {
+    final String trimmed = target.trim();
+    if (trimmed.isEmpty || trimmed.length > 2000) {
+      _fail('请输入 1–2000 字的课堂目标。', 'task');
+      _notify();
+      return Future<bool>.value(false);
+    }
+    return _run(() => _service.createTask(trimmed), source: 'task');
+  }
+
+  /// 摄像头 MJPEG 地址，供观察面板直接装载；数据源不支持时为空。
+  Uri? cameraStreamUrl({int fps = 10}) => _service.cameraStreamUrl(fps: fps);
+
+  /// 摄像头单帧地址，非 Web 平台轮询使用。
+  Uri? cameraSnapshotUrl({int? maxWidth}) =>
+      _service.cameraSnapshotUrl(maxWidth: maxWidth);
   /// 发送文字：点击瞬间进入加载态，直到老师回答事件到达或失败才结束。
   Future<bool> submitText(String text) async {
     if (_disposed || busy || awaitingReply) return false;
@@ -176,7 +208,12 @@ class ClassroomController extends ChangeNotifier {
     awaitingReply = true;
     _notify();
     final bool ok = await _run(
-      () => _service.submitText(text),
+      () => _service.submitText(
+        text,
+        // 有待答问题时按回答提交并携带问题编号（合同 inputs 通道）。
+        kind: state.pendingQuestionId != null ? 'answer' : 'question',
+        questionId: state.pendingQuestionId,
+      ),
       source: 'message',
     );
     if (!ok) {
@@ -188,11 +225,14 @@ class ClassroomController extends ChangeNotifier {
   Future<bool> record() => _run(
     () => state.recording == 'recording'
         ? _service.finishRecording()
-        : _service.startRecording(),
+        : _service.startRecording(
+            kind: state.pendingQuestionId != null ? 'answer' : 'question',
+            questionId: state.pendingQuestionId,
+          ),
     source: 'record',
   );
   Future<bool> refresh() =>
-      _run(_service.refreshObservation, source: 'connection');
+      _run(() => _service.refreshObservation(), source: 'connection');
 
   /// 停止绕过普通命令的忙碌标记，失败时保留最后确认的任务状态。
   Future<void> stop() async {

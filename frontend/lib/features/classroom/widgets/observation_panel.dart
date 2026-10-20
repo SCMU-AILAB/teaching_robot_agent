@@ -4,15 +4,33 @@ import 'package:material_symbols_icons/symbols.dart';
 
 import '../../../core/constants/app_radius.dart';
 import '../session_model.dart';
+import 'camera_view.dart';
 
-/// 展示明确标记的示例场景和观察，不冒充真实摄像头画面。
+/// 展示设备摄像头实时画面与真实观察结果。
+///
+/// 画面来自 Jetson 设备端 MJPEG 流；未连接服务器时整块替换为未连接占位，
+/// 观察文本一并显示真实状态，不用任何本地示例图或示例文案。
 class ObservationPanel extends StatelessWidget {
   const ObservationPanel({
     required this.state,
-    required this.onRefresh,
+    required this.connected,
+    this.streamUrl,
+    this.snapshotUrl,
+    this.onRefresh,
     super.key,
   });
+
   final SessionModel state;
+
+  /// 设备端连接状态：决定画面、观察文本与刷新入口是否可用。
+  final bool connected;
+
+  /// 摄像头 MJPEG 地址（合同 GET /api/v1/camera/stream）。
+  final Uri? streamUrl;
+
+  /// 摄像头单帧地址（合同 GET /api/v1/camera/snapshot）。
+  final Uri? snapshotUrl;
+
   final VoidCallback? onRefresh;
 
   @override
@@ -24,6 +42,10 @@ class ObservationPanel extends StatelessWidget {
           const Icon(Symbols.videocam_rounded, size: 21),
           const SizedBox(width: 9),
           Text('观察视野', style: Theme.of(context).textTheme.titleMedium),
+          if (connected) ...[
+            const SizedBox(width: 10),
+            _liveChip(),
+          ],
           const Spacer(),
           IconButton(
             onPressed: onRefresh,
@@ -35,36 +57,15 @@ class ObservationPanel extends StatelessWidget {
       const SizedBox(height: 8),
       AspectRatio(
         aspectRatio: 16 / 10,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.media),
-              child: Image.asset(
-                'assets/scene.png',
-                fit: BoxFit.cover,
-                semanticLabel: '模拟桌面：绿色杯子在蓝色书左侧，橙色方块在右侧',
-                errorBuilder: (_, _, _) => const ColoredBox(
-                  color: Color(0xffe8eded),
-                  child: Center(child: Text('场景图片加载失败')),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 12,
-              top: 12,
-              child: DecoratedBox(
-                decoration: ShapeDecoration(
-                  shape: AppRadius.containerShape(radius: AppRadius.chip),
-                  color: Colors.white,
-                ),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  child: Text('示例场景 · 非实时摄像头', style: TextStyle(fontSize: 11)),
-                ),
-              ),
-            ),
-          ],
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.media),
+          child: connected
+              ? CameraView(
+                  streamUrl: streamUrl,
+                  snapshotUrl: snapshotUrl,
+                  unavailable: const CameraUnavailable(),
+                )
+              : const CameraUnavailable(),
         ),
       ),
       const SizedBox(height: 18),
@@ -72,15 +73,43 @@ class ObservationPanel extends StatelessWidget {
         children: [
           const Text('场景观察', style: TextStyle(fontWeight: FontWeight.w600)),
           const Spacer(),
-          if (state.observed)
+          if (!connected)
+            const Text(
+              '未连接服务器',
+              style: TextStyle(fontSize: 12, color: Color(0xffb6403a)),
+            )
+          else if (state.observed)
             Text(
-              state.stale ? '观察已过期' : '模拟结果',
+              state.stale ? '观察已过期' : '设备观察',
               style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
             ),
         ],
       ),
       const SizedBox(height: 8),
-      Text(state.observation, style: const TextStyle(height: 1.8)),
+      Text(
+        connected ? state.observation : '未连接服务器，暂无观察结果。',
+        style: const TextStyle(height: 1.8),
+      ),
     ],
+  );
+
+  /// 实时画面标签：与页面其它角标同一套字号与配色。
+  Widget _liveChip() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: ShapeDecoration(
+      shape: AppRadius.containerShape(radius: AppRadius.chip),
+      color: const Color(0xffe6eee9),
+    ),
+    child: const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Symbols.circle_rounded, size: 7, color: Color(0xff147d64)),
+        SizedBox(width: 5),
+        Text(
+          '实时画面',
+          style: TextStyle(fontSize: 11, color: Color(0xff147d64)),
+        ),
+      ],
+    ),
   );
 }
