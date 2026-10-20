@@ -1,6 +1,7 @@
 // frontend/lib/app.dart
 import 'package:flutter/material.dart';
 
+import 'core/constants/app_radius.dart';
 import 'features/classroom/classroom_page.dart';
 
 /// 教学机器人模拟展示入口。
@@ -36,7 +37,7 @@ class TeachingRobotApp extends StatelessWidget {
         filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           borderSide: const BorderSide(color: Color(0xffdce3e5)),
         ),
         contentPadding: const EdgeInsets.symmetric(
@@ -47,7 +48,7 @@ class TeachingRobotApp extends StatelessWidget {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          shape: AppRadius.controlShape(),
         ),
       ),
     ),

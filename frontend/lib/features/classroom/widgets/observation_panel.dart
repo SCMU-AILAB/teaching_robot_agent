@@ -1,6 +1,8 @@
 // frontend/lib/features/classroom/widgets/observation_panel.dart
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 
+import '../../../core/constants/app_radius.dart';
 import '../session_model.dart';
 
 /// 展示明确标记的示例场景和观察，不冒充真实摄像头画面。
@@ -19,14 +21,14 @@ class ObservationPanel extends StatelessWidget {
     children: [
       Row(
         children: [
-          const Icon(Icons.videocam_outlined, size: 21),
+          const Icon(Symbols.videocam_rounded, size: 21),
           const SizedBox(width: 9),
           Text('观察视野', style: Theme.of(context).textTheme.titleMedium),
           const Spacer(),
           IconButton(
             onPressed: onRefresh,
             tooltip: '刷新观察',
-            icon: const Icon(Icons.refresh, size: 20),
+            icon: const Icon(Symbols.refresh_rounded, size: 20),
           ),
         ],
       ),
@@ -36,24 +38,27 @@ class ObservationPanel extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.asset(
-              'assets/scene.png',
-              fit: BoxFit.cover,
-              semanticLabel: '模拟桌面：绿色杯子在蓝色书左侧，橙色方块在右侧',
-              errorBuilder: (_, _, _) => const ColoredBox(
-                color: Color(0xffe8eded),
-                child: Center(child: Text('场景图片加载失败')),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.media),
+              child: Image.asset(
+                'assets/scene.png',
+                fit: BoxFit.cover,
+                semanticLabel: '模拟桌面：绿色杯子在蓝色书左侧，橙色方块在右侧',
+                errorBuilder: (_, _, _) => const ColoredBox(
+                  color: Color(0xffe8eded),
+                  child: Center(child: Text('场景图片加载失败')),
+                ),
               ),
             ),
-            const Positioned(
+            Positioned(
               left: 12,
               top: 12,
               child: DecoratedBox(
-                decoration: BoxDecoration(
+                decoration: ShapeDecoration(
+                  shape: AppRadius.containerShape(radius: AppRadius.chip),
                   color: Colors.white,
-                  borderRadius: BorderRadius.all(Radius.circular(4)),
                 ),
-                child: Padding(
+                child: const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   child: Text('示例场景 · 非实时摄像头', style: TextStyle(fontSize: 11)),
                 ),

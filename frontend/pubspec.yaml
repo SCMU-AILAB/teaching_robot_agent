@@ -8,6 +8,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  material_symbols_icons: ^4.2960.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

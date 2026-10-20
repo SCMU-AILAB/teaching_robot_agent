@@ -178,7 +178,12 @@ class MockClassroomService implements ClassroomService {
     if (text.trim().isEmpty || text.length > 4000) {
       throw const ClassroomFailure('请输入 1–4000 字的内容。');
     }
-    if (_audioBusy) throw const ClassroomFailure('请等待当前语音交互结束。');
+    // 只拦录音/转写/初始化：回答播报期间仍可连续发文字。
+    if (_initializing ||
+        _state.recording == 'recording' ||
+        _state.recording == 'transcribing') {
+      throw const ClassroomFailure('请等待当前语音交互结束。');
+    }
     commands.add('submit_text');
     _submitInput(text.trim());
   }
@@ -194,7 +199,13 @@ class MockClassroomService implements ClassroomService {
         note: '',
       ),
     );
-    _answer('收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。');
+    // 老师回答延迟发出（约 4 个 step），贴近真实思考/合成耗时。
+    _schedule(
+      () => _answer(
+        '收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。',
+      ),
+      4,
+    );
   }
 
   @override

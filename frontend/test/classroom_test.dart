@@ -9,7 +9,8 @@ import 'package:teaching_robot_frontend/features/classroom/mock_classroom_servic
 import 'package:teaching_robot_frontend/features/classroom/session_model.dart';
 
 /// 推进完整模拟课堂到等待学生回答。
-Future<void> advance(WidgetTester tester, [int ticks = 8]) async {
+/// 默认 14 tick 覆盖「转写 + 回答延迟 4 step + 播报链」的全部计时器。
+Future<void> advance(WidgetTester tester, [int ticks = 14]) async {
   for (int index = 0; index < ticks; index++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
@@ -95,7 +96,7 @@ void main() {
       MaterialApp(home: ClassroomPage(controller: controller)),
     );
     await tester.pump();
-    await tester.tap(find.byKey(const Key('start-task')));
+    await tester.tap(find.byKey(const Key('task-toggle')));
     await advance(tester);
     await tester.ensureVisible(find.byKey(const Key('record-button')));
     await tester.tap(find.byKey(const Key('record-button')));
@@ -119,7 +120,15 @@ void main() {
     await tester.tap(find.byKey(const Key('send-message')));
     await tester.pump();
     expect(controller.error, contains('请求失败'));
+    // 错误就近显示在消息输入下方，而不是页面顶部横幅。
     expect(find.text('杯子是什么颜色？'), findsOneWidget);
+    final Finder errorBox = find.byKey(const Key('field-error-box'));
+    expect(errorBox, findsOneWidget);
+    final double errorTop = tester.getTopLeft(errorBox).dy;
+    final double inputTop = tester.getTopLeft(
+      find.byKey(const Key('message-input')),
+    ).dy;
+    expect(errorTop, greaterThan(inputTop));
     controller.selectScenario(DemoScenario.normal);
     await tester.pump();
     await tester.tap(find.byKey(const Key('send-message')));
@@ -130,10 +139,147 @@ void main() {
     service.dispose();
   });
 
+  testWidgets('点击发送立即进入加载，老师回答事件到达才结束', (
+    WidgetTester tester,
+  ) async {
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await controller.createTask('认识物体');
+    await advance(tester);
+    expect(controller.awaitingReply, isFalse);
+
+    // 调用瞬间（Future 未完成）即进入加载，不依赖服务端时长。
+    final Future<bool> sent = controller.submitText('杯子是什么颜色？');
+    expect(controller.awaitingReply, isTrue);
+
+    expect(await sent, isTrue);
+    // 提交命令已完成但回答未到：仍保持加载——由事件收口，非写死时长。
+    expect(controller.awaitingReply, isTrue);
+
+    // 回答延迟 4 step 后到达，加载随之结束。
+    await advance(tester, 6);
+    expect(controller.awaitingReply, isFalse);
+    expect(
+      controller.state.messages.any(
+        (ClassMessage m) => m.role == 'assistant',
+      ),
+      isTrue,
+    );
+    // 排干回答后的播报链计时器，避免测试收尾时挂起 Timer。
+    await advance(tester);
+    service.dispose();
+  });
+
+  testWidgets('录音输入与文字一致：转写即加载，回答到达才结束', (
+    WidgetTester tester,
+  ) async {
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await controller.createTask('认识物体');
+    await advance(tester);
+    expect(controller.awaitingReply, isFalse);
+
+    await controller.record();
+    await tester.pump();
+    // 录音中不加载（等同文字的打字阶段）。
+    expect(controller.awaitingReply, isFalse);
+
+    // 结束录音即「提交」：转写事件到达后立即进入加载。
+    await controller.record();
+    await tester.pump();
+    expect(controller.awaitingReply, isTrue);
+
+    // 转写产生学生提问，老师回答到达后收口。
+    await advance(tester);
+    expect(controller.awaitingReply, isFalse);
+    expect(
+      controller.state.messages.any(
+        (ClassMessage m) => m.role == 'student',
+      ),
+      isTrue,
+    );
+    await advance(tester);
+    service.dispose();
+  });
+
+  testWidgets('录音无有效语音时加载态收口，不空等回答', (WidgetTester tester) async {
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await controller.createTask('认识物体');
+    await advance(tester);
+    controller.selectScenario(DemoScenario.silence);
+    await controller.record();
+    await controller.record();
+    await tester.pump();
+    expect(controller.awaitingReply, isTrue);
+
+    // 静音收口：没有学生提问就不会有回答，加载自行结束。
+    await advance(tester);
+    expect(controller.awaitingReply, isFalse);
+    await advance(tester);
+    service.dispose();
+  });
+
+  testWidgets('录音计时数字逐位滚动', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1366, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+      recordTick: const Duration(seconds: 1),
+      maxRecordingSeconds: 30,
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ClassroomPage(controller: controller)),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('task-toggle')));
+    await advance(tester);
+    await tester.ensureVisible(find.byKey(const Key('record-button')));
+    await tester.tap(find.byKey(const Key('record-button')));
+    await tester.pump(const Duration(milliseconds: 80));
+    // 计时数字只在 record-timer 滚轮内查找（页面其他处有 1/2/3 步骤序号）。
+    Finder digit(String d) => find.descendant(
+      of: find.byKey(const Key('record-timer')),
+      matching: find.text(d),
+    );
+    // 计时 00：两个数字格。
+    expect(digit('0'), findsNWidgets(2));
+    expect(digit('1'), findsNothing);
+
+    // 1 秒整跳到 01，滚动进行中：新旧数字共存。
+    await tester.pump(const Duration(milliseconds: 1050));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(digit('1'), findsOneWidget);
+    expect(digit('0'), findsWidgets);
+
+    await tester.pump(const Duration(milliseconds: 500));
+    // 滚动结束：十位 0、个位 1。
+    expect(digit('0'), findsOneWidget);
+    expect(digit('1'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('record-button')));
+    await advance(tester);
+    await tester.pumpWidget(const SizedBox());
+    service.dispose();
+  });
+
   testWidgets('销毁自有页面时释放活动定时器和订阅', (WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: ClassroomPage()));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('start-task')));
+    await tester.tap(find.byKey(const Key('task-toggle')));
     await tester.pump();
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
@@ -360,11 +506,11 @@ void main() {
         MaterialApp(home: ClassroomPage(controller: controller)),
       );
       await tester.pump();
-      await tester.tap(find.byKey(const Key('start-task')));
+      await tester.tap(find.byKey(const Key('task-toggle')));
       await advance(tester);
       expect(tester.takeException(), isNull);
-      await tester.ensureVisible(find.byKey(const Key('stop-task')));
-      await tester.tap(find.byKey(const Key('stop-task')));
+      await tester.ensureVisible(find.byKey(const Key('task-toggle')));
+      await tester.tap(find.byKey(const Key('task-toggle')));
       await advance(tester);
       expect(service.commands, contains('stop_task'));
       expect(controller.state.taskStatus, 'cancelled');
