@@ -75,6 +75,7 @@
 ```
 ~/teachingrobotagent/
 ├── README.md                    ← 本文件
+├── CODING_SPEC.pdf              ← 代码规范原件（v1.0，与下文第 9 节对应）
 ├── requirements.txt             ← 设备端唯一第三方依赖（sounddevice）
 ├── .env.example                 ← 环境变量模板
 ├── domain/                      # 共享数据模型（只读，不要改）
@@ -265,7 +266,7 @@ set -a; source .env.speech; set +a       # 或手动 export
 
 ## 9. 编码规范（必须遵守）
 
-来源：主仓库 `docs/CODING_SPEC.md`。
+来源：本目录内 `CODING_SPEC.pdf`（v1.0 原件），主仓库另有 Markdown 版 `docs/CODING_SPEC.md`。两者冲突时以 PDF 原件为准，并按主仓库实际配置（`pyproject.toml` 的 ruff / basedpyright 规则）执行。
 
 - Python ≥ 3.12；类型标注完整，用 `X | None`，禁用 `Optional`。
 - 标识符英文，注释与 docstring 中文；Google 风格，摘要以句号结尾。
