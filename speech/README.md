@@ -76,3 +76,14 @@ uv run python -m unittest discover -s tests -v
 跨服务测试还覆盖连续两轮输入输出、设备占用失败后的恢复，以及关闭一侧服务时不释放另一侧服务正在使用的租约。
 
 核心闭环演示：`uv run python -m app.robot_audio_demo`；不是上述固定回复的组件级 `speech.demo`。语音启动拒绝终结任务；启动与取消交错时先释放部分启动的录音，再确认任务终态。
+
+## GPT-SoVITS 训练音色（Jetson 部署记录，2026-10-21）
+
+- 客户端：`providers/tts/gpt_sovits.py`，设置 `SPEECH_TTS_ENGINE=gpt-sovits` 及 `.env.example` 中的 `SPEECH_GPTSOVITS_*` 后由 `app.audio.build_tts` 装配，随应用启动、关闭。
+- 服务端：Jetson `~/opt/GPT-SoVITS`，`./run_api.sh` 启动 api_v2，只监听 `127.0.0.1:9880`（接口可读取任意参考音频路径，不得开放到局域网）。音色 `cf`（v2Pro）：GPT `GPT_weights_v2Pro/cf-e15.ckpt`，SoVITS `SoVITS_weights_v2Pro/cf_e8_s112.pth`，参考音频 `refs/cf_ref.wav` 及同名 `.txt` 原文。训练在 3080 主机完成。
+- 部署要点：
+  - PyTorch 用官方 `2.10.0+cu130` aarch64 版（含 sm_80 内核，可在 Orin sm_87 运行）；Jetson AI Lab 的 sbsa/cu130 版只含 sm_110/sm_121，在 Orin 上报 “no kernel image”。
+  - `run_api.sh` 设置 `TORCH_CUDNN_V8_API_DISABLED=1`：PyTorch 2.10/2.11 + cuDNN 9 新接口每次卷积都在 CPU 上重新规划且不缓存，单句合成会从几秒变成一分钟以上（3080 与 Jetson 均复现）。
+  - torchaudio 2.10 读取音频需要 torchcodec，而 torchcodec 0.10 只支持 FFmpeg 4–7，Jetson 为 FFmpeg 8；`api_jetson.py` 以 soundfile 替换 `torchaudio.load` 后运行原版 api_v2，不修改 GPT-SoVITS 仓库代码。
+  - v2Pro 需要额外安装 `resampy`。
+- 实测（Jetson Orin NX 8GB）：首句含预热约 29 s；之后 2.5–4.9 s 音频耗时 3.9–7.8 s。服务加载后整机可用内存约 0.5 GB，**不能与 `go2-unifolm.service`（llama-server 视觉模型）同时运行**；后者为 systemd 用户服务，开机自启，GPT-SoVITS 目前需手动启动。
