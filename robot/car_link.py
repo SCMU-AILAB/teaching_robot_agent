@@ -69,6 +69,30 @@ def motor(seq: int, index: int, duty: int) -> bytes:
     return encode_command("M", seq, index, duty)
 
 
+TRIM_MAX = 500
+
+
+def compensate_strafe(vx: int, vy: int, trim: int) -> tuple[int, int]:
+    """横移时叠加 vy × trim / 1000 的前后速度，抵消对角线抓地力不均造成的前后偏移.
+
+    Args:
+        vx: 前进速度千分比。
+        vy: 向左平移速度千分比。
+        trim: 补偿系数千分比，-500..500；左移往前偏时取负值。
+
+    Returns:
+        补偿后的 (vx, vy)，vx 限制在 ±1000。
+
+    Raises:
+        ValueError: 补偿系数超出范围。
+    """
+    _ = _check_int(trim, -TRIM_MAX, TRIM_MAX, "trim")
+    product = vy * trim
+    # 向零取整，使左右横移的补偿量对称
+    adjust = product // PERMILLE_MAX if product >= 0 else -(-product // PERMILLE_MAX)
+    return max(-PERMILLE_MAX, min(PERMILLE_MAX, vx + adjust)), vy
+
+
 def stop(seq: int) -> bytes:
     """编码立即停车命令."""
     return encode_command("S", seq)

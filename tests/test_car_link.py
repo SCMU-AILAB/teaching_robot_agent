@@ -11,6 +11,7 @@ from robot.car_link import (
     CarLink,
     ErrorFrame,
     Telemetry,
+    compensate_strafe,
     crc8,
     motor,
     open_serial,
@@ -202,6 +203,26 @@ class CarLinkTest(unittest.TestCase):
         self.assertEqual(fake.baudrate, 115200)
 
 
+class StrafeTrimTest(unittest.TestCase):
+    """横移补偿：按横移速度叠加反向前后速度."""
+
+    def test_trim_adds_proportional_forward_component(self) -> None:
+        """补偿量为 vy × trim / 1000，与横移方向同号或反号取决于 trim."""
+        self.assertEqual(compensate_strafe(0, 500, -120), (-60, 500))
+        self.assertEqual(compensate_strafe(0, -500, -120), (60, -500))
+        self.assertEqual(compensate_strafe(300, 0, -120), (300, 0))
+
+    def test_trim_result_is_clamped(self) -> None:
+        """叠加后前后速度不超出千分比范围."""
+        self.assertEqual(compensate_strafe(950, 1000, 200), (1000, 1000))
+        self.assertEqual(compensate_strafe(-950, 1000, -200), (-1000, 1000))
+
+    def test_trim_range_is_validated(self) -> None:
+        """补偿系数只允许 -500..500."""
+        with self.assertRaises(ValueError):
+            _ = compensate_strafe(0, 100, 600)
+
+
 class TeleopKeyTest(unittest.TestCase):
     """遥控按键：切换保持、调速与退出."""
 
@@ -215,6 +236,16 @@ class TeleopKeyTest(unittest.TestCase):
         self.assertEqual(apply_key(moving, " "), DriveState(0, 0, 0, 500))
         self.assertIsNone(apply_key(state, "x"))
         self.assertEqual(apply_key(state, "z"), state)
+
+    def test_bracket_keys_adjust_trim_and_keep_motion(self) -> None:
+        """[ 与 ] 以 10 为步长调整补偿系数，并保持当前运动."""
+        moving = DriveState(0, 500, 0, 500, trim=0)
+        self.assertEqual(apply_key(moving, "["), DriveState(0, 500, 0, 500, trim=-10))
+        self.assertEqual(apply_key(moving, "]"), DriveState(0, 500, 0, 500, trim=10))
+        edge = apply_key(DriveState(trim=-500), "[")
+        self.assertIsNotNone(edge)
+        assert edge is not None
+        self.assertEqual(edge.trim, -500)
 
     def test_speed_change_rescales_current_motion(self) -> None:
         """调速同步改变当前方向的速度，并受上下限约束."""

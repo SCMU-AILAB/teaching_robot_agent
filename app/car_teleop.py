@@ -17,10 +17,12 @@ import tty
 from dataclasses import dataclass, replace
 
 from robot.car_link import (
+    TRIM_MAX,
     Ack,
     CarFrame,
     CarLink,
     Telemetry,
+    compensate_strafe,
     motor,
     open_serial,
     ping,
@@ -30,10 +32,11 @@ from robot.car_link import stop as stop_frame
 
 SEND_PERIOD_S = 0.05
 SPEED_STEP = 100
+TRIM_STEP = 10
 DEFAULT_SPEED = 500
 HELP = (
     "W/S 前进/后退  A/D 左移/右移  Q/E 逆时针/顺时针旋转  空格 停车  +/- 调速  "
-    + "X 退出（按键切换并保持，不需要按住）"
+    + "[/] 调横移补偿  X 退出（按键切换并保持，不需要按住）"
 )
 
 
@@ -41,6 +44,7 @@ class TeleopArguments(argparse.Namespace):
     """命令行参数的类型声明."""
 
     port: str = ""
+    trim: int = 0
     motor: int | None = None
     duty: int = 300
     seconds: float = 2.0
@@ -54,6 +58,7 @@ class DriveState:
     vy: int = 0
     wz: int = 0
     speed: int = DEFAULT_SPEED
+    trim: int = 0
 
     @property
     def moving(self) -> bool:
@@ -79,6 +84,10 @@ def apply_key(state: DriveState, key: str) -> DriveState | None:
     if key in motions:
         vx, vy, wz = motions[key]
         return replace(state, vx=vx, vy=vy, wz=wz)
+    if key == "[":
+        return replace(state, trim=max(-TRIM_MAX, state.trim - TRIM_STEP))
+    if key == "]":
+        return replace(state, trim=min(TRIM_MAX, state.trim + TRIM_STEP))
     if key in ("+", "="):
         return _rescale(state, min(1000, s + SPEED_STEP))
     if key in ("-", "_"):
@@ -94,7 +103,11 @@ def _sign(value: int) -> int:
 def _rescale(state: DriveState, speed: int) -> DriveState:
     """改变速度大小并同步缩放当前运动方向."""
     return DriveState(
-        speed * _sign(state.vx), speed * _sign(state.vy), speed * _sign(state.wz), speed
+        speed * _sign(state.vx),
+        speed * _sign(state.vy),
+        speed * _sign(state.wz),
+        speed,
+        state.trim,
     )
 
 
@@ -109,12 +122,12 @@ def describe(frames: list[CarFrame]) -> str | None:
     return text
 
 
-def run_teleop(link: CarLink) -> None:
-    """终端原始模式下读取按键，以 20 Hz 持续发送当前速度."""
+def run_teleop(link: CarLink, trim: int) -> None:
+    """终端原始模式下读取按键，以 20 Hz 持续发送当前速度（含横移补偿）."""
     print(HELP, flush=True)
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
-    state = DriveState()
+    state = DriveState(trim=trim)
     try:
         _ = tty.setcbreak(fd)
         while True:
@@ -127,16 +140,14 @@ def run_teleop(link: CarLink) -> None:
                     link.send(stop_frame(link.next_seq()))
                 state = updated
             seq = link.next_seq()
+            vx, vy = compensate_strafe(state.vx, state.vy, state.trim)
             # 停车时只发心跳，不刷新运动看门狗
-            link.send(
-                velocity(seq, state.vx, state.vy, state.wz)
-                if state.moving
-                else ping(seq)
-            )
+            link.send(velocity(seq, vx, vy, state.wz) if state.moving else ping(seq))
             status = describe(link.poll())
             if status is not None:
                 print(
-                    f"\r[v={state.vx},{state.vy},{state.wz} speed={state.speed}] "
+                    f"\r[v={state.vx},{state.vy},{state.wz} speed={state.speed} "
+                    + f"trim={state.trim}] "
                     + f"{status}\033[K",
                     end="",
                     flush=True,
@@ -173,6 +184,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="麦克纳姆底盘键盘遥控与单电机标定")
     _ = parser.add_argument("port", help="小车 UART2 口对应的串口设备")
+    _ = parser.add_argument(
+        "--trim", type=int, default=0, help="横移补偿系数千分比，左移往前偏时取负值"
+    )
     _ = parser.add_argument("--motor", type=int, choices=range(1, 5))
     _ = parser.add_argument("--duty", type=int, default=300)
     _ = parser.add_argument("--seconds", type=float, default=2.0)
@@ -180,7 +194,7 @@ def main() -> None:
     link = CarLink(open_serial(args.port))
     try:
         if args.motor is None:
-            run_teleop(link)
+            run_teleop(link, args.trim)
         else:
             run_motor_test(link, args.motor, args.duty, args.seconds)
     finally:
