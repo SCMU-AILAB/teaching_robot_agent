@@ -1,0 +1,11 @@
+/Users/feng/teaching_robot_agent/firmware/car/target/thumbv7em-none-eabihf/debug/deps/sdio_host-ec915a9993d3faa1.d: /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/lib.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc.rs
+
+/Users/feng/teaching_robot_agent/firmware/car/target/thumbv7em-none-eabihf/debug/deps/libsdio_host-ec915a9993d3faa1.rmeta: /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/lib.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc_cmd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc.rs
+
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/lib.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common_cmd.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd_cmd.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc_cmd.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/common.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/sd.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sdio-host-0.9.0/src/emmc.rs:

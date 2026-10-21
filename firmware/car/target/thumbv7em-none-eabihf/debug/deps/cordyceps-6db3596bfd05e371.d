@@ -1,0 +1,12 @@
+/Users/feng/teaching_robot_agent/firmware/car/target/thumbv7em-none-eabihf/debug/deps/cordyceps-6db3596bfd05e371.d: /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/lib.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/util.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list/cursor.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/sorted_list.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/stack.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/mpsc_queue.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/loom.rs
+
+/Users/feng/teaching_robot_agent/firmware/car/target/thumbv7em-none-eabihf/debug/deps/libcordyceps-6db3596bfd05e371.rmeta: /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/lib.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/util.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list/cursor.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/sorted_list.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/stack.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/mpsc_queue.rs /Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/loom.rs
+
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/lib.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/util.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/list/cursor.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/sorted_list.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/stack.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/mpsc_queue.rs:
+/Users/feng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/cordyceps-0.3.5/src/loom.rs:
