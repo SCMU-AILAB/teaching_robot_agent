@@ -1,7 +1,7 @@
 name: teaching_robot_frontend
 description: 教学机器人课堂操作终端（接入 Jetson 设备端）
 publish_to: none
-version: 0.3.1+4
+version: 0.3.2+5
 environment:
   sdk: '>=3.10.0 <4.0.0'
 dependencies:

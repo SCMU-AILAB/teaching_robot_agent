@@ -1,42 +1,33 @@
 // frontend/lib/features/classroom/widgets/endpoint_dialog.dart
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../../core/config/device_discovery.dart';
 import '../../../core/config/device_endpoint.dart';
 
 /// 探测设备服务：成功返回摘要文案，失败抛异常。
 typedef EndpointProbe = Future<String> Function(String baseUrl);
 
-/// 默认探测：`GET /api/v1/system`，回显实例名与摄像头状态。
-Future<String> probeDevice(String baseUrl) async {
-  final Uri system = Uri.parse(
-    '${baseUrl.replaceAll(RegExp(r'/+$'), '')}/api/v1/system',
-  );
-  final http.Response response = await http
-      .get(system)
-      .timeout(const Duration(seconds: 6));
-  final Object? body = jsonDecode(utf8.decode(response.bodyBytes));
-  if (body is! Map<String, dynamic> || body['code'] != 0) {
-    throw const FormatException('响应不是约定的统一结构');
+/// 默认探测：复用设备发现模块的校验，回显实例名与摄像头状态。
+///
+/// 与自动扫描用同一套判定（`code`/`data.instance_id`/`data.camera`），
+/// 避免设置框说「连接成功」而扫描认不出同一台设备。
+Future<String> describeDevice(String baseUrl) async {
+  final DeviceProbe? probe = await probeDevice(baseUrl);
+  if (probe == null) {
+    throw const FormatException('未收到设备端响应，检查地址、端口与网络');
   }
-  final Map<String, dynamic> data =
-      (body['data'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-  final Map<String, dynamic> camera =
-      (data['camera'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-  final String instance = data['instance_id']?.toString() ?? '未知实例';
-  final String cameraState = camera['available'] == true ? '摄像头就绪' : '摄像头未就绪';
-  return '连接成功 · $instance · $cameraState';
+  final String camera = probe.cameraAvailable ? '摄像头就绪' : '摄像头未就绪';
+  return '连接成功 · ${probe.instanceId} · $camera';
 }
 
 /// 设备服务地址设置框：Mac 端通过公网 IP 连 Jetson 时在此填写。
 ///
 /// 保存前可以「测试连接」验证地址可达；点保存返回新地址（取消返回 null）。
 class EndpointDialog extends StatefulWidget {
-  const EndpointDialog({required this.current, this.probe = probeDevice, super.key});
+  const EndpointDialog({required this.current, this.probe = describeDevice, super.key});
 
   /// 当前生效地址。
   final String current;

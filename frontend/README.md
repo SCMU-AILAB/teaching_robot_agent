@@ -33,6 +33,31 @@ Mac App 右上角有「设备地址」按钮（`dns` 图标），填 `http://<�
 4. 页面同源（页面由设备端托管时命中）
 5. 本机 `http://127.0.0.1:8090`
 
+### 启动自动发现（换网络不用改配置）
+
+App 启动顺序：读上次保存的地址 → 先连一次（1.5 s 超时）→ 连不上才扫局域网：
+
+1. mDNS 名字 `qwq.local` / `jetson.local` / `orin.local`（命中只需几十毫秒）；
+2. 逐个扫本机各 `/24` 网段的 `8090`，每批 64 个并发，一个网段约 1–2 秒；
+3. 用 `GET /api/v1/system` 校验 `code` + `data.instance_id` + `data.camera`，
+   多个候选优先 `instance_id` 以 `jetson` 开头的那台；
+4. 命中即写回配置文件并自动连上；头部状态依次是
+   「正在查找设备…」→「设备连接正常」。
+
+失败不假装成功：扫不到就停在「未连接服务器」，点右上角刷新可重新扫描。
+浏览器开不了裸 TCP 与 mDNS，Web 版只保留单地址校验（手填或用 `?api=`）。
+
+命令行版（含服务器连通性检查）在 `tooling/find-jetson.sh`：
+
+```bash
+./tooling/find-jetson.sh                  # 发现 + 校验 + 写配置
+./tooling/find-jetson.sh --restart        # 顺手重启 App
+./tooling/find-jetson.sh --server 1.2.3.4:22   # 顺带测服务器 SSH 端口
+```
+
+服务器地址不参与扫描（不在同一网段、也不该被扫），写在
+`~/.config/teachingrobot/server.json`，脚本每次跑完会报告可达性。
+
 ### 内网直连（当前调试形态）
 
 Mac 与 Jetson 在同一局域网时，地址填 `http://192.168.0.127:8090`；板端 avahi

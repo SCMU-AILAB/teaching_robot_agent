@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../core/config/device_discovery.dart';
 import '../../core/config/device_endpoint.dart';
 import '../../core/config/endpoint_store.dart';
 import '../../core/constants/app_radius.dart';
@@ -43,6 +44,9 @@ class _ClassroomPageState extends State<ClassroomPage> {
   /// 当前生效的设备地址，供设置对话框回显与比较。
   String _baseUrl = '';
 
+  /// 正在扫描局域网：连接徽标与观察区都按「连接中」处理，不提前报红。
+  bool _discovering = false;
+
   final TextEditingController _target = TextEditingController();
   final TextEditingController _message = TextEditingController();
   final GlobalKey _messageInputKey = GlobalKey();
@@ -55,25 +59,76 @@ class _ClassroomPageState extends State<ClassroomPage> {
     super.initState();
     if (widget.controller != null) {
       _controller = widget.controller!;
+      unawaited(_controller.initialize());
     } else {
       _ownsController = true;
       _baseUrl = resolveDeviceBaseUrl();
       _controller = _buildController(_baseUrl);
-      unawaited(_restoreEndpoint());
+      unawaited(_bootstrap());
     }
-    unawaited(_controller.initialize());
   }
+
+  /// 观察区/徽标共用的连接视图：扫描期间按「连接中」展示，避免闪一下红色。
+  DeviceConnection get _connectionView =>
+      _discovering ? DeviceConnection.connecting : _controller.connection;
 
   ClassroomController _buildController(String baseUrl) =>
       ClassroomController(DeviceClassroomService(baseUrl: baseUrl));
 
-  /// 读取上次保存的地址；与当前不同则整体换一次数据源。
-  Future<void> _restoreEndpoint() async {
+  /// 启动流程：读上次地址 → 连一次 → 连不上就扫局域网。
+  ///
+  /// 换内网后 IP 变了也不用改任何配置：首屏连不上即自动发现并写回配置。
+  Future<void> _bootstrap() async {
     final String? saved = await EndpointStore.load();
-    if (!mounted || saved == null) return;
-    final String resolved = resolveDeviceBaseUrl(saved: saved);
-    if (resolved == _baseUrl) return;
-    _switchEndpoint(resolved);
+    if (!mounted) return;
+    String base = _baseUrl;
+    bool switched = false;
+    if (saved != null) {
+      final String resolved = resolveDeviceBaseUrl(saved: saved);
+      if (resolved != base) {
+        base = resolved;
+        _switchEndpoint(resolved); // 内部会拉首屏快照
+        switched = true;
+      }
+    }
+    if (!switched) unawaited(_controller.initialize());
+    unawaited(_autoDiscover(base));
+  }
+
+  /// 首屏连不上时才扫描，避免每次启动都白等几秒。
+  Future<void> _autoDiscover(String base) async {
+    if (!mounted || !_ownsController) return;
+    final DeviceProbe? probe = await probeDevice(
+      base,
+      timeout: const Duration(milliseconds: 1500),
+    );
+    if (!mounted || probe != null) return; // 已连上，不扫
+    await _discoverDevice();
+  }
+
+  /// 扫局域网写回配置；失败保持未连接，由控制器给出提示。
+  Future<void> _discoverDevice() async {
+    if (_discovering || !mounted) return;
+    setState(() => _discovering = true);
+    DeviceProbe? found;
+    try {
+      found = await discoverDevice();
+    } finally {
+      if (mounted) setState(() => _discovering = false);
+    }
+    if (!mounted) return;
+    if (found == null) {
+      // 没找到：让控制器给出「未连接服务器」，不假装连上。
+      unawaited(_controller.reconnect());
+      return;
+    }
+    if (found.baseUrl == _baseUrl) {
+      unawaited(_controller.reconnect());
+      return;
+    }
+    await EndpointStore.save(found.baseUrl);
+    if (!mounted) return;
+    _switchEndpoint(found.baseUrl);
   }
 
   /// 换地址：新建控制器并让它自己拉快照，旧控制器延后回收。
@@ -166,7 +221,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
           Icon(
             Symbols.circle_rounded,
             size: 7,
-            color: switch (_controller.connection) {
+            color: switch (_connectionView) {
               DeviceConnection.connecting => const Color(0xff94a3a0),
               DeviceConnection.connected => const Color(0xff147d64),
               DeviceConnection.disconnected => const Color(0xffb6403a),
@@ -174,11 +229,13 @@ class _ClassroomPageState extends State<ClassroomPage> {
           ),
           const SizedBox(width: 7),
           Text(
-            switch (_controller.connection) {
-              DeviceConnection.connecting => '正在连接设备…',
-              DeviceConnection.connected => '设备连接正常',
-              DeviceConnection.disconnected => '未连接服务器',
-            },
+            _discovering
+                ? '正在查找设备…'
+                : switch (_controller.connection) {
+                    DeviceConnection.connecting => '正在连接设备…',
+                    DeviceConnection.connected => '设备连接正常',
+                    DeviceConnection.disconnected => '未连接服务器',
+                  },
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 8),
@@ -189,10 +246,14 @@ class _ClassroomPageState extends State<ClassroomPage> {
               icon: const Icon(Symbols.dns_rounded, size: 20),
             ),
           IconButton(
-            tooltip: _controller.connected ? '刷新设备状态' : '重新连接',
-            onPressed: _controller.busy
+            tooltip: _controller.connected ? '刷新设备状态' : '重新扫描设备',
+            onPressed: _controller.busy || _discovering
                 ? null
-                : () => unawaited(_controller.reconnect()),
+                : () => unawaited(
+                    _controller.connected
+                        ? _controller.reconnect()
+                        : _discoverDevice(),
+                  ),
             icon: Icon(
               _controller.connected
                   ? Symbols.sync_rounded
@@ -379,7 +440,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
             );
             final Widget observation = ObservationPanel(
               state: state,
-              connection: _controller.connection,
+              connection: _connectionView,
               streamUrl: _controller.cameraStreamUrl(fps: 2),
               snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 640),
               onRefresh: state.taskStatus == 'running' && _controller.connected
