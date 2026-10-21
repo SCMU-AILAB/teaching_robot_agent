@@ -102,6 +102,12 @@ enum DemoScenario {
   requestFailure,
 }
 
+/// 页面可见的设备连接状态。
+///
+/// [connecting] 表示首屏连接结果尚未回来：此时既不能显示「连接正常」，
+/// 也不该判成「未连接」，否则页面会在启动阶段报错误状态。
+enum DeviceConnection { connecting, connected, disconnected }
+
 /// 用于模拟数据源与页面之间的明确失败。
 class ClassroomFailure implements Exception {
   const ClassroomFailure(this.message);

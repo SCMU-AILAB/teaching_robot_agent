@@ -8,12 +8,13 @@ import 'camera_view.dart';
 
 /// 展示设备摄像头实时画面与真实观察结果。
 ///
-/// 画面来自 Jetson 设备端 MJPEG 流；未连接服务器时整块替换为未连接占位，
-/// 观察文本一并显示真实状态，不用任何本地示例图或示例文案。
+/// 画面来自 Jetson 设备端 MJPEG 流；连接结果未回来时显示「正在连接设备」，
+/// 连不上时整块替换为未连接占位，观察文本一并显示真实状态，不用任何
+/// 本地示例图或示例文案。
 class ObservationPanel extends StatelessWidget {
   const ObservationPanel({
     required this.state,
-    required this.connected,
+    required this.connection,
     this.streamUrl,
     this.snapshotUrl,
     this.onRefresh,
@@ -23,7 +24,7 @@ class ObservationPanel extends StatelessWidget {
   final SessionModel state;
 
   /// 设备端连接状态：决定画面、观察文本与刷新入口是否可用。
-  final bool connected;
+  final DeviceConnection connection;
 
   /// 摄像头 MJPEG 地址（合同 GET /api/v1/camera/stream）。
   final Uri? streamUrl;
@@ -32,6 +33,8 @@ class ObservationPanel extends StatelessWidget {
   final Uri? snapshotUrl;
 
   final VoidCallback? onRefresh;
+
+  bool get _live => connection == DeviceConnection.connected;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -42,10 +45,7 @@ class ObservationPanel extends StatelessWidget {
           const Icon(Symbols.videocam_rounded, size: 21),
           const SizedBox(width: 9),
           Text('观察视野', style: Theme.of(context).textTheme.titleMedium),
-          if (connected) ...[
-            const SizedBox(width: 10),
-            _liveChip(),
-          ],
+          if (_live) ...[const SizedBox(width: 10), _liveChip()],
           const Spacer(),
           IconButton(
             onPressed: onRefresh,
@@ -59,13 +59,18 @@ class ObservationPanel extends StatelessWidget {
         aspectRatio: 16 / 10,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppRadius.media),
-          child: connected
-              ? CameraView(
-                  streamUrl: streamUrl,
-                  snapshotUrl: snapshotUrl,
-                  unavailable: const CameraUnavailable(),
-                )
-              : const CameraUnavailable(),
+          child: switch (connection) {
+            DeviceConnection.connected => CameraView(
+              streamUrl: streamUrl,
+              snapshotUrl: snapshotUrl,
+              unavailable: const CameraUnavailable(),
+            ),
+            DeviceConnection.connecting => const CameraUnavailable(
+              title: '正在连接设备…',
+              detail: '首帧到达后自动开始播放',
+            ),
+            DeviceConnection.disconnected => const CameraUnavailable(),
+          },
         ),
       ),
       const SizedBox(height: 18),
@@ -73,12 +78,12 @@ class ObservationPanel extends StatelessWidget {
         children: [
           const Text('场景观察', style: TextStyle(fontWeight: FontWeight.w600)),
           const Spacer(),
-          if (!connected)
+          if (connection == DeviceConnection.disconnected)
             const Text(
               '未连接服务器',
               style: TextStyle(fontSize: 12, color: Color(0xffb6403a)),
             )
-          else if (state.observed)
+          else if (_live && state.observed)
             Text(
               state.stale ? '观察已过期' : '设备观察',
               style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
@@ -87,7 +92,11 @@ class ObservationPanel extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Text(
-        connected ? state.observation : '未连接服务器，暂无观察结果。',
+        switch (connection) {
+          DeviceConnection.connecting => '正在获取设备数据，请稍候…',
+          DeviceConnection.connected => state.observation,
+          DeviceConnection.disconnected => '未连接服务器，暂无观察结果。',
+        },
         style: const TextStyle(height: 1.8),
       ),
     ],

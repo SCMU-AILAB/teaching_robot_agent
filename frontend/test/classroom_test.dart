@@ -536,6 +536,35 @@ void main() {
     service.dispose();
   });
 
+  testWidgets('首屏连接结果回来前显示连接中，不误报连接正常', (WidgetTester tester) async {
+    final DelayedSnapshotService service = DelayedSnapshotService();
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    service.pending = Completer<SessionModel>();
+    final Future<bool> request = controller.initialize();
+    await tester.pump();
+    // 快照未回：既不是 connected 也不是 disconnected。
+    expect(controller.connection, DeviceConnection.connecting);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ClassroomPage(controller: controller)),
+    );
+    await tester.pump();
+    // 头部与画面占位都处于连接中，不出现「连接正常」或「未连接」。
+    expect(find.text('正在连接设备…'), findsWidgets);
+    expect(find.text('正在获取设备数据，请稍候…'), findsOneWidget);
+    expect(find.text('设备连接正常'), findsNothing);
+    expect(find.text('未连接服务器'), findsNothing);
+
+    service.pending!.completeError(const ClassroomFailure('设备不可达'));
+    expect(await request, isFalse);
+    await tester.pump();
+    expect(controller.connection, DeviceConnection.disconnected);
+    expect(find.text('未连接服务器'), findsWidgets);
+    await tester.pumpWidget(const SizedBox());
+    service.dispose();
+  });
+
   testWidgets('未连接服务器时画面与观察显示未连接，不出现示例内容', (
     WidgetTester tester,
   ) async {

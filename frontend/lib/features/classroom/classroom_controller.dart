@@ -22,6 +22,12 @@ class ClassroomController extends ChangeNotifier {
   late final StreamSubscription<bool> _connectionSubscription;
   SessionModel state = const SessionModel();
   bool connected = true;
+
+  /// 首屏连接是否仍在建立。
+  ///
+  /// 真值 `connected` 只有在收到一次连接级结果（快照成功/失败、SSE 建流、
+  /// 断线事件）后才可信；在此之前页面显示「正在连接设备」，不得宣称正常。
+  bool connecting = true;
   bool busy = false;
   String? error;
 
@@ -52,6 +58,7 @@ class ClassroomController extends ChangeNotifier {
   }
 
   void _onConnection(bool value) {
+    connecting = false;
     connected = value;
     if (value) {
       _clearConnectionError();
@@ -156,6 +163,8 @@ class ClassroomController extends ChangeNotifier {
       _fail('操作失败，请重试。', source);
       return false;
     } finally {
+      // 连接级命令收口（成功或失败）都算拿到了连接真值。
+      if (source == 'connection') connecting = false;
       busy = false;
       _notify();
     }
@@ -188,6 +197,13 @@ class ClassroomController extends ChangeNotifier {
     }
     return _run(() => _service.createTask(trimmed), source: 'task');
   }
+
+  /// 页面可见连接状态，连接结果未回来前为 [DeviceConnection.connecting]。
+  DeviceConnection get connection => connecting
+      ? DeviceConnection.connecting
+      : connected
+      ? DeviceConnection.connected
+      : DeviceConnection.disconnected;
 
   /// 摄像头 MJPEG 地址，供观察面板直接装载；数据源不支持时为空。
   Uri? cameraStreamUrl({int fps = 10}) => _service.cameraStreamUrl(fps: fps);

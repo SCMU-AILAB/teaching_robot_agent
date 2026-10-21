@@ -53,35 +53,44 @@ class CameraView extends StatelessWidget {
   }
 }
 
-/// 未连接服务器（或无画面）时的占位：与实时画面同一尺寸与圆角。
+/// 无画面时的占位：与实时画面同一尺寸与圆角。
+///
+/// [title]/[detail] 由调用方按连接阶段覆盖，默认是「未连接服务器」。
 class CameraUnavailable extends StatelessWidget {
-  const CameraUnavailable({super.key});
+  const CameraUnavailable({
+    this.title = '未连接服务器',
+    this.detail = '检查设备服务地址与网络后重试',
+    super.key,
+  });
+
+  final String title;
+  final String detail;
 
   @override
-  Widget build(BuildContext context) => const ColoredBox(
-    color: Color(0xffe8eded),
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xffe8eded),
     child: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          const Icon(
             Symbols.cloud_off_rounded,
             size: 38,
             color: Color(0xff93a29c),
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           Text(
-            '未连接服务器',
-            style: TextStyle(
+            title,
+            style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
               color: Color(0xff55635e),
             ),
           ),
-          SizedBox(height: 5),
+          const SizedBox(height: 5),
           Text(
-            '检查设备服务地址与网络后重试',
-            style: TextStyle(fontSize: 12, color: Color(0xff73817b)),
+            detail,
+            style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
           ),
         ],
       ),

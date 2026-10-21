@@ -117,13 +117,19 @@ class _ClassroomPageState extends State<ClassroomPage> {
           Icon(
             Symbols.circle_rounded,
             size: 7,
-            color: _controller.connected
-                ? const Color(0xff147d64)
-                : const Color(0xffb6403a),
+            color: switch (_controller.connection) {
+              DeviceConnection.connecting => const Color(0xff94a3a0),
+              DeviceConnection.connected => const Color(0xff147d64),
+              DeviceConnection.disconnected => const Color(0xffb6403a),
+            },
           ),
           const SizedBox(width: 7),
           Text(
-            _controller.connected ? '设备连接正常' : '未连接服务器',
+            switch (_controller.connection) {
+              DeviceConnection.connecting => '正在连接设备…',
+              DeviceConnection.connected => '设备连接正常',
+              DeviceConnection.disconnected => '未连接服务器',
+            },
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 8),
@@ -318,7 +324,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
             );
             final Widget observation = ObservationPanel(
               state: state,
-              connected: _controller.connected,
+              connection: _controller.connection,
               streamUrl: _controller.cameraStreamUrl(),
               snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 960),
               onRefresh: state.taskStatus == 'running' && _controller.connected
