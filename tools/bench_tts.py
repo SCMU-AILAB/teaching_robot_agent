@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 import wave
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -184,14 +184,58 @@ def build_sherpa(model_directory: str) -> Synthesizer:
     return synthesize
 
 
+class _PiperChunk(Protocol):
+    """Piper 合成的一块音频."""
+
+    @property
+    def audio_int16_bytes(self) -> bytes:
+        """十六位 PCM 字节."""
+        ...
+
+
+class _PiperConfig(Protocol):
+    """Piper 音色配置中用到的字段."""
+
+    @property
+    def sample_rate(self) -> int:
+        """音色采样率."""
+        ...
+
+
+class _PiperVoice(Protocol):
+    """本工具使用的 PiperVoice 接口."""
+
+    @property
+    def config(self) -> _PiperConfig:
+        """音色配置."""
+        ...
+
+    def synthesize(self, text: str, /) -> Iterable[_PiperChunk]:
+        """逐块合成文本."""
+        ...
+
+
+class _PiperVoiceClass(Protocol):
+    """PiperVoice 类的加载入口."""
+
+    def load(self, model_path: str, /) -> _PiperVoice:
+        """加载音色模型."""
+        ...
+
+
+def _load_piper_voice(path: Path) -> _PiperVoice:
+    """延迟导入可选依赖 piper-tts（speech-server 依赖组），与 providers 中的做法一致."""
+    module = import_module("piper")
+    voice_class = cast(_PiperVoiceClass, vars(module)["PiperVoice"])
+    return voice_class.load(str(path))
+
+
 def build_piper(model_path: str) -> Synthesizer:
     """构造 Piper 进程内常驻合成器."""
     path = Path(nonempty_string(model_path, "piper_model"))
     if not path.is_file():
         raise ValueError(f"Piper 模型不存在：{path}")
-    from piper import PiperVoice
-
-    voice = PiperVoice.load(str(path))
+    voice = _load_piper_voice(path)
     # Piper 中文音色通常为 22050 Hz，禁止按 16000 硬编码换算.
     sample_rate = int(voice.config.sample_rate)
 
