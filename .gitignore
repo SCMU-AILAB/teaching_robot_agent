@@ -18,3 +18,8 @@ Thumbs.db
 
 # 本地下载的模型权重，不提交仓库
 models/
+
+# 小车原固件备份仅本地保存；Rust 编译缓存与固件镜像不入库
+firmware/backup/
+target/
+firmware/**/*.bin
