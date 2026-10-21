@@ -33,6 +33,17 @@ Mac App 右上角有「设备地址」按钮（`dns` 图标），填 `http://<�
 4. 页面同源（页面由设备端托管时命中）
 5. 本机 `http://127.0.0.1:8090`
 
+### 内网直连（当前调试形态）
+
+Mac 与 Jetson 在同一局域网时，地址填 `http://192.168.0.127:8090`；板端 avahi
+在跑，`http://qwq.local:8090` 同样可用（换 IP 后不用改配置）。实测：
+
+| 接口 | 耗时 | 说明 |
+|---|---|---|
+| `GET /system` | 13–15 ms | 连接指示与摄像头状态 |
+| `GET /tasks/{id}/session` | 14 ms | 聚合快照 |
+| `GET /camera/snapshot?max_width=640` | 19 ms / 56 KB | 2 fps 约 0.9 Mbps |
+
 ## macOS 桌面版与 DMG
 
 ```bash
