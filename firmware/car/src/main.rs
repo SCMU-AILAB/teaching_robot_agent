@@ -1,84 +1,134 @@
 // firmware/car/src/main.rs
-//! 开发链路验证程序：PE10 LED 以 1 Hz 闪烁，三个串口轮流打印问候.
+//! 麦克纳姆底盘阶段 1 固件：串口命令驱动四路电机开环运动，上报编码器遥测.
 #![no_std]
 #![no_main]
 
-use core::fmt::Write as _;
+mod board;
 
+use car_core::kinematics::WheelMap;
+use car_core::line::{LineAssembler, LineEvent};
+use car_core::motion::MotionState;
+use car_core::protocol::{
+    Command, FrameBuf, ParseError, encode_ack, encode_boot, encode_error, encode_telemetry,
+    parse_frame,
+};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_stm32::usart::{Config as UartConfig, UartTx};
-use embassy_time::Timer;
+use embassy_stm32::usart::BufferedUartRx;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
+use embassy_time::{Duration, Instant, Ticker};
+use embedded_io_async::{Read, Write};
 use panic_halt as _;
 
-/// 固定容量的格式化缓冲区，避免引入堆分配.
-struct LineBuf {
-    data: [u8; 64],
-    len: usize,
+/// 固件版本，随开机帧上报.
+const FIRMWARE_VERSION: u16 = 1;
+/// 控制周期 10 ms；每 5 个周期上报一次遥测（20 Hz），每 50 个周期翻转 LED.
+const CONTROL_PERIOD_MS: u64 = 10;
+const TELEMETRY_EVERY: u32 = 5;
+const LED_EVERY: u32 = 50;
+/// 轮位到电机的映射，标定前使用占位值.
+const WHEEL_MAP: WheelMap = WheelMap::IDENTITY;
+
+/// 从某个串口收到的一行解析结果.
+struct Incoming {
+    port: u8,
+    result: Result<Command, ParseError>,
 }
 
-impl LineBuf {
-    const fn new() -> Self {
-        Self {
-            data: [0; 64],
-            len: 0,
-        }
-    }
+static INCOMING: Channel<CriticalSectionRawMutex, Incoming, 8> = Channel::new();
 
-    fn as_bytes(&self) -> &[u8] {
-        &self.data[..self.len]
-    }
-}
-
-impl core::fmt::Write for LineBuf {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let end = self.len + bytes.len();
-        if end > self.data.len() {
-            return Err(core::fmt::Error);
+/// 读取串口字节，组装成行并解析，结果交给控制循环.
+#[embassy_executor::task(pool_size = 2)]
+async fn rx_task(port: u8, mut rx: BufferedUartRx<'static>) {
+    let mut assembler = LineAssembler::new();
+    let mut chunk = [0_u8; 32];
+    loop {
+        // 读取错误（如帧错误、噪声）只丢弃本次数据，不终止任务
+        let Ok(n) = rx.read(&mut chunk).await else {
+            continue;
+        };
+        for &byte in &chunk[..n] {
+            let result = match assembler.push(byte) {
+                Some(LineEvent::Line(line)) => parse_frame(line),
+                Some(LineEvent::Overflow) => {
+                    Err(ParseError::Frame(car_core::protocol::ErrorReason::TooLong))
+                }
+                None => continue,
+            };
+            INCOMING.send(Incoming { port, result }).await;
         }
-        self.data[self.len..end].copy_from_slice(bytes);
-        self.len = end;
-        Ok(())
     }
 }
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
-    // 默认使用内部 16 MHz 时钟；外部晶振频率确认前不改时钟树
-    let p = embassy_stm32::init(Default::default());
+async fn main(spawner: Spawner) {
+    let (mut hw, rx2, rx3) = board::init();
 
-    // ========== Step1: PE10 为 LED；PA8 接有源蜂鸣器，保持低电平静音 ==========
-    let mut pe10 = Output::new(p.PE10, Level::Low, Speed::Low);
-    let _buzzer = Output::new(p.PA8, Level::Low, Speed::Low);
+    // ========== Step1: 两个候选通信口都发送开机帧，并启动接收任务 ==========
+    let mut frame = FrameBuf::new();
+    for (port, tx) in [(2_u8, &mut hw.tx2), (3, &mut hw.tx3)] {
+        if encode_boot(&mut frame, FIRMWARE_VERSION, port).is_ok() {
+            let _ = tx.write_all(frame.as_bytes()).await;
+        }
+    }
+    hw.log("car-fw boot, waiting for commands on USART2/USART3\r\n");
+    spawner.spawn(rx_task(2, rx2).expect("rx_task 池容量为 2"));
+    spawner.spawn(rx_task(3, rx3).expect("rx_task 池容量为 2"));
 
-    // ========== Step2: 三个串口只发不收，参数与原固件一致：115200 8N1 ==========
-    let config = UartConfig::default();
-    let mut usart1 = UartTx::new_blocking(p.USART1, p.PA9, config).unwrap();
-    let mut usart2 = UartTx::new_blocking(p.USART2, p.PD5, config).unwrap();
-    let mut usart3 = UartTx::new_blocking(p.USART3, p.PD8, config).unwrap();
-
+    // ========== Step2: 10 ms 控制循环：命令、看门狗、斜率、PWM、编码器、遥测 ==========
+    let mut motion = MotionState::new(WHEEL_MAP);
+    // 第一条有效帧所在的端口成为通信口，此后忽略另一口，避免无线模块干扰
+    let mut locked: Option<u8> = None;
+    let mut ticker = Ticker::every(Duration::from_millis(CONTROL_PERIOD_MS));
     let mut tick: u32 = 0;
     loop {
-        // PE10 每 500 ms 翻转，即 1 Hz 闪烁
-        if tick.is_multiple_of(2) {
-            pe10.toggle();
-        }
-        if tick.is_multiple_of(4) {
-            let seconds = tick / 4;
-            for (name, port) in [
-                ("USART1", &mut usart1),
-                ("USART2", &mut usart2),
-                ("USART3", &mut usart3),
-            ] {
-                let mut line = LineBuf::new();
-                // 单行长度远小于缓冲区，格式化失败时跳过本次输出
-                if write!(line, "hello from {name} t={seconds}s\r\n").is_ok() {
-                    let _ = port.blocking_write(line.as_bytes());
+        let now_ms = Instant::now().as_millis() as u32;
+        while let Ok(Incoming { port, result }) = INCOMING.try_receive() {
+            if locked.is_none() && result.is_ok() {
+                locked = Some(port);
+                hw.log(if port == 2 {
+                    "command port locked: USART2\r\n"
+                } else {
+                    "command port locked: USART3\r\n"
+                });
+            }
+            if locked != Some(port) {
+                continue;
+            }
+            let encoded = match result {
+                Ok(command) => {
+                    motion.apply(&command, now_ms);
+                    encode_ack(&mut frame, command.seq(), 0)
                 }
+                Err(ParseError::Reject { seq, code }) => encode_ack(&mut frame, seq, code as u8),
+                Err(ParseError::Frame(reason)) => encode_error(&mut frame, reason as u8),
+            };
+            if encoded.is_ok() {
+                let _ = hw.tx(port).write_all(frame.as_bytes()).await;
             }
         }
+
+        let duties = motion.tick(now_ms);
+        hw.motors.set(duties);
+        let encoders = hw.encoders.update();
+
+        if tick.is_multiple_of(TELEMETRY_EVERY)
+            && let Some(port) = locked
+            && encode_telemetry(
+                &mut frame,
+                now_ms,
+                motion.run_state() as u8,
+                encoders,
+                duties,
+            )
+            .is_ok()
+        {
+            let _ = hw.tx(port).write_all(frame.as_bytes()).await;
+        }
+        if tick.is_multiple_of(LED_EVERY) {
+            hw.led.toggle();
+        }
         tick = tick.wrapping_add(1);
-        Timer::after_millis(250).await;
+        ticker.next().await;
     }
 }
