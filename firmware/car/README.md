@@ -2,7 +2,29 @@
 
 目标板：MINDA-01 四路电机驱动板，STM32F407VET6。框架：embassy-stm32 0.6 + embassy-executor 0.10。
 
-当前只是开发链路验证程序：PE10 LED 以 1 Hz 闪烁，PA8 蜂鸣器保持静音；USART1、USART2、USART3 每秒各打印一行 `hello from USARTx t=Ns`（115200 8N1）。电机控制、编码器、通信协议和看门狗尚未实现，需另行设计审核。
+阶段 1 固件：串口文本协议驱动麦克纳姆轮开环运动（前后、左右平移、旋转），300 ms 看门狗停车，20 Hz 上报编码器与占空比。设计与协议见 `docs/superpowers/specs/2026-10-21-car-base-phase1-design.md`，纯逻辑在 `firmware/car-core`。
+
+- 驱动方式：慢衰减（一路全开、另一路反相 PWM），占空比上限 40%，每 10 ms 最多变化 2%。
+- 通信口：USART1、USART2、USART3 均可，第一条有效命令所在口被锁定。PE10 LED 以 1 Hz 闪烁表示运行，PA8 蜂鸣器静音。
+
+## 遥控与标定
+
+在自己的终端运行（需要交互式键盘，不能经 Claude Code 的 `!` 执行）：
+
+```bash
+uv run --extra car python -m app.car_teleop /dev/cu.wchusbserial5C670410421          # 键盘遥控
+uv run --extra car python -m app.car_teleop /dev/cu.wchusbserial5C670410421 --motor 1 --duty 1000 --seconds 2
+```
+
+## 实测记录（2026-10-21，电池 12.5 V，轮子架空）
+
+| 项目 | 结果 |
+| --- | --- |
+| 轮位映射 | 左前 M4、右前 M1、左后 M3、右后 M2，正转均向前 |
+| 快衰减起转门槛 | 约 50%（已弃用） |
+| 慢衰减起转 | 15% 即可转动，转速近似线性 |
+| 前进、左平移、逆时针旋转 | 四轮转向与运动学一致 |
+| 落地测试、拔线看门狗停车 | 待测 |
 
 ## 环境
 

@@ -3,9 +3,10 @@
 //!
 //! 引脚由原固件反汇编和模拟执行得到，见 docs/superpowers/specs/2026-10-21-car-base-phase1-design.md。
 
+use embassy_stm32::bind_interrupts;
 use embassy_stm32::gpio::{Level, Output, OutputType, Pull, Speed};
 use embassy_stm32::peripherals::{
-    TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11, USART2, USART3,
+    TIM1, TIM2, TIM3, TIM4, TIM5, TIM9, TIM10, TIM11, USART1, USART2, USART3,
 };
 use embassy_stm32::time::Hertz;
 use embassy_stm32::timer::low_level::CountingMode;
@@ -14,12 +15,11 @@ use embassy_stm32::timer::simple_pwm::{PwmPin, SimplePwm};
 use embassy_stm32::timer::{Channel, GeneralInstance4Channel};
 use embassy_stm32::usart::{
     BufferedInterruptHandler, BufferedUart, BufferedUartRx, BufferedUartTx, Config as UartConfig,
-    UartTx,
 };
-use embassy_stm32::{bind_interrupts, mode::Blocking};
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
+    USART1 => BufferedInterruptHandler<USART1>;
     USART2 => BufferedInterruptHandler<USART2>;
     USART3 => BufferedInterruptHandler<USART3>;
 });
@@ -41,13 +41,15 @@ fn write_channel<T: GeneralInstance4Channel>(
         .set_duty_cycle_fraction(permille.min(PERMILLE), PERMILLE);
 }
 
-/// 把带符号占空比拆成正转、反转两路：正值只驱动正转引脚，负值只驱动反转引脚.
+/// 把带符号占空比拆成正转、反转两路（慢衰减）：一路保持全开，另一路输出反相 PWM.
+///
+/// 关断期间两端同为高电平，电机短接制动，电流衰减慢，低占空比下扭矩更大。
 fn split_duty(duty: i16) -> (u32, u32) {
-    let magnitude = u32::from(duty.unsigned_abs());
-    if duty >= 0 {
-        (magnitude, 0)
-    } else {
-        (0, magnitude)
+    let magnitude = u32::from(duty.unsigned_abs()).min(PERMILLE);
+    match duty {
+        0 => (0, 0),
+        d if d > 0 => (PERMILLE, PERMILLE - magnitude),
+        _ => (PERMILLE - magnitude, PERMILLE),
     }
 }
 
@@ -111,30 +113,33 @@ pub struct Board {
     pub motors: Motors,
     pub encoders: Encoders,
     pub led: Output<'static>,
+    pub tx1: BufferedUartTx<'static>,
     pub tx2: BufferedUartTx<'static>,
     pub tx3: BufferedUartTx<'static>,
-    log: UartTx<'static, Blocking>,
     _buzzer: Output<'static>,
 }
 
 impl Board {
-    /// 返回指定通信口的发送端；端口号只有 2 和 3.
+    /// 返回指定通信口的发送端；端口号为 1、2、3.
     pub fn tx(&mut self, port: u8) -> &mut BufferedUartTx<'static> {
-        if port == 2 {
-            &mut self.tx2
-        } else {
-            &mut self.tx3
+        match port {
+            1 => &mut self.tx1,
+            2 => &mut self.tx2,
+            _ => &mut self.tx3,
         }
     }
 
-    /// 经 USART1（板上 UART1 口）输出调试文本.
+    /// 经 USART1（板上 UART1 口）输出调试文本；缓冲区满时阻塞等待.
     pub fn log(&mut self, text: &str) {
-        let _ = self.log.blocking_write(text.as_bytes());
+        let _ = embedded_io::Write::write_all(&mut self.tx1, text.as_bytes());
     }
 }
 
-/// 配置 168 MHz 时钟并初始化全部外设；另行返回 USART2、USART3 的接收端，供接收任务独占.
-pub fn init() -> (Board, BufferedUartRx<'static>, BufferedUartRx<'static>) {
+/// USART1、USART2、USART3 的接收端，供接收任务独占.
+pub type Receivers = [BufferedUartRx<'static>; 3];
+
+/// 配置 168 MHz 时钟并初始化全部外设；另行返回三个串口的接收端.
+pub fn init() -> (Board, Receivers) {
     use embassy_stm32::rcc::{
         AHBPrescaler, APBPrescaler, Pll, PllMul, PllPDiv, PllPreDiv, PllQDiv, PllSource, Sysclk,
     };
@@ -222,9 +227,20 @@ pub fn init() -> (Board, BufferedUartRx<'static>, BufferedUartRx<'static>) {
     let m4 = Qei::new(p.TIM3, p.PB4, p.PB5, qei);
     let last = [m1.count(), m2.count(), m3.count(), m4.count()];
 
-    // ========== Step4: 串口：USART1 调试日志，USART2/USART3 为候选通信口 ==========
+    // ========== Step4: 串口：三个口都是候选通信口，USART1 同时输出调试日志 ==========
     let uart = UartConfig::default();
-    let log = UartTx::new_blocking(p.USART1, p.PA9, uart).expect("USART1 默认配置有效");
+    static TX1: StaticCell<[u8; 512]> = StaticCell::new();
+    static RX1: StaticCell<[u8; 256]> = StaticCell::new();
+    let usart1 = BufferedUart::new(
+        p.USART1,
+        p.PA10,
+        p.PA9,
+        TX1.init([0; 512]),
+        RX1.init([0; 256]),
+        Irqs,
+        uart,
+    )
+    .expect("USART1 默认配置有效");
     static TX2: StaticCell<[u8; 256]> = StaticCell::new();
     static RX2: StaticCell<[u8; 256]> = StaticCell::new();
     static TX3: StaticCell<[u8; 256]> = StaticCell::new();
@@ -249,6 +265,7 @@ pub fn init() -> (Board, BufferedUartRx<'static>, BufferedUartRx<'static>) {
         uart,
     )
     .expect("USART3 默认配置有效");
+    let (tx1, rx1) = usart1.split();
     let (tx2, rx2) = usart2.split();
     let (tx3, rx3) = usart3.split();
 
@@ -268,10 +285,10 @@ pub fn init() -> (Board, BufferedUartRx<'static>, BufferedUartRx<'static>) {
             total: [0; 4],
         },
         led,
+        tx1,
         tx2,
         tx3,
-        log,
         _buzzer: buzzer,
     };
-    (board, rx2, rx3)
+    (board, [rx1, rx2, rx3])
 }

@@ -26,8 +26,9 @@ const FIRMWARE_VERSION: u16 = 1;
 const CONTROL_PERIOD_MS: u64 = 10;
 const TELEMETRY_EVERY: u32 = 5;
 const LED_EVERY: u32 = 50;
-/// 轮位到电机的映射，标定前使用占位值.
-const WHEEL_MAP: WheelMap = WheelMap::IDENTITY;
+/// 轮位（左前、右前、左后、右后）到电机的映射，2026-10-21 架空实测：
+/// 左前 M4、右前 M1、左后 M3、右后 M2，四个电机正转时轮子均向前转.
+const WHEEL_MAP: WheelMap = WheelMap::new([3, 0, 2, 1], [1, 1, 1, 1]);
 
 /// 从某个串口收到的一行解析结果.
 struct Incoming {
@@ -38,7 +39,7 @@ struct Incoming {
 static INCOMING: Channel<CriticalSectionRawMutex, Incoming, 8> = Channel::new();
 
 /// 读取串口字节，组装成行并解析，结果交给控制循环.
-#[embassy_executor::task(pool_size = 2)]
+#[embassy_executor::task(pool_size = 3)]
 async fn rx_task(port: u8, mut rx: BufferedUartRx<'static>) {
     let mut assembler = LineAssembler::new();
     let mut chunk = [0_u8; 32];
@@ -62,18 +63,19 @@ async fn rx_task(port: u8, mut rx: BufferedUartRx<'static>) {
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let (mut hw, rx2, rx3) = board::init();
+    let (mut hw, receivers) = board::init();
 
-    // ========== Step1: 两个候选通信口都发送开机帧，并启动接收任务 ==========
+    // ========== Step1: 三个候选通信口都发送开机帧，并启动接收任务 ==========
     let mut frame = FrameBuf::new();
-    for (port, tx) in [(2_u8, &mut hw.tx2), (3, &mut hw.tx3)] {
+    for (port, tx) in [(1_u8, &mut hw.tx1), (2, &mut hw.tx2), (3, &mut hw.tx3)] {
         if encode_boot(&mut frame, FIRMWARE_VERSION, port).is_ok() {
             let _ = tx.write_all(frame.as_bytes()).await;
         }
     }
-    hw.log("car-fw boot, waiting for commands on USART2/USART3\r\n");
-    spawner.spawn(rx_task(2, rx2).expect("rx_task 池容量为 2"));
-    spawner.spawn(rx_task(3, rx3).expect("rx_task 池容量为 2"));
+    hw.log("car-fw boot, waiting for commands on USART1/USART2/USART3\r\n");
+    for (port, rx) in (1_u8..).zip(receivers) {
+        spawner.spawn(rx_task(port, rx).expect("rx_task 池容量为 3"));
+    }
 
     // ========== Step2: 10 ms 控制循环：命令、看门狗、斜率、PWM、编码器、遥测 ==========
     let mut motion = MotionState::new(WHEEL_MAP);
@@ -86,10 +88,10 @@ async fn main(spawner: Spawner) {
         while let Ok(Incoming { port, result }) = INCOMING.try_receive() {
             if locked.is_none() && result.is_ok() {
                 locked = Some(port);
-                hw.log(if port == 2 {
-                    "command port locked: USART2\r\n"
-                } else {
-                    "command port locked: USART3\r\n"
+                hw.log(match port {
+                    1 => "command port locked: USART1\r\n",
+                    2 => "command port locked: USART2\r\n",
+                    _ => "command port locked: USART3\r\n",
                 });
             }
             if locked != Some(port) {

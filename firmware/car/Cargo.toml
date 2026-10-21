@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 embassy-stm32 = { version = "0.6.0", features = ["stm32f407ve", "time-driver-tim12", "memory-x"] }
 embassy-sync = "0.8.0"
+embedded-io = "0.7.1"
 embedded-io-async = "0.7.0"
 static_cell = "2"
 car-core = { path = "../car-core" }
