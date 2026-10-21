@@ -415,9 +415,31 @@ class _ClassroomPageState extends State<ClassroomPage> {
         ),
         // 录音相关错误贴近录音控件，不占用页面顶部。
         _inlineError('record'),
+        // 设备端给的说明（识别失败、合成失败、设备占用）原样展示：
+        // 真实语音链路里这些原因只出现在这里，吞掉就变成「没反应」。
+        if (state.note.isNotEmpty) _deviceNote(state.note),
       ],
     );
   }
+
+  /// 设备说明行：比错误框轻，不打断操作，但一定可见。
+  Widget _deviceNote(String note) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Symbols.info_rounded, size: 14, color: Color(0xff73817b)),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            note,
+            key: const Key('device-note'),
+            style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
+          ),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(

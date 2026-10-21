@@ -137,6 +137,47 @@ void main() {
     );
   });
 
+  test('播放失败原因进入设备说明，播报恢复后自动清掉', () async {
+    int calls = 0;
+    final MockClient client = MockClient((http.Request request) async {
+      if (request.url.path == '/api/v1/system') {
+        return jsonResp(
+          envelope(<String, dynamic>{'instance_id': 'dev-1', 'active_task_id': 1}),
+        );
+      }
+      if (request.url.path != '/api/v1/tasks/1/session') {
+        return jsonResp(envelope(null));
+      }
+      calls++;
+      final Map<String, dynamic> body = sessionBody();
+      body['playback'] = calls == 1
+          ? <String, dynamic>{
+              'playback_id': 'p-1',
+              'status': 'failed',
+              'started_at': 1.0,
+              'ended_at': 2.0,
+              'error': <String, dynamic>{
+                'code': 50003,
+                'message': '扬声器被其他进程占用',
+              },
+            }
+          : <String, dynamic>{
+              'playback_id': 'p-2',
+              'status': 'playing',
+              'started_at': 3.0,
+              'ended_at': null,
+              'error': null,
+            };
+      return jsonResp(envelope(body));
+    });
+    final DeviceClassroomService service = build(client);
+    addTearDown(service.dispose);
+    expect((await service.snapshot()).note, '扬声器被其他进程占用');
+    final SessionModel recovered = await service.snapshot();
+    expect(recovered.playback, 'playing');
+    expect(recovered.note, '');
+  });
+
   test('createTask 按合同提交去重编号与目标', () async {
     http.Request? captured;
     final MockClient client = MockClient((http.Request request) async {

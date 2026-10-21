@@ -23,6 +23,10 @@ class DeviceClassroomService implements ClassroomService {
   final String _baseUrl;
 
   static const Duration _requestTimeout = Duration(seconds: 10);
+
+  /// 语音链路专用超时：服务器识别约 6 s、生成与合成再叠加几秒，
+  /// 板端首次调用还要加载模型，10 s 会假超时。
+  static const Duration _speechTimeout = Duration(seconds: 30);
   static const Duration _streamRetryDelay = Duration(seconds: 3);
 
   final StreamController<SessionModel> _events = StreamController.broadcast();
@@ -123,8 +127,9 @@ class DeviceClassroomService implements ClassroomService {
   Future<dynamic> _sendJson(
     String method,
     String path,
-    Map<String, dynamic> body,
-  ) async {
+    Map<String, dynamic> body, {
+    Duration? timeout,
+  }) async {
     try {
       final Future<http.Response> call = switch (method) {
         'POST' => _client.post(
@@ -143,7 +148,7 @@ class DeviceClassroomService implements ClassroomService {
         ),
         _ => throw ArgumentError('不支持的请求方法：$method'),
       };
-      return _decode(await call.timeout(_requestTimeout));
+      return _decode(await call.timeout(timeout ?? _requestTimeout));
     } on TimeoutException {
       throw const ClassroomFailure('请求设备超时。');
     } on http.ClientException {
@@ -244,6 +249,7 @@ class DeviceClassroomService implements ClassroomService {
     final dynamic playback = session['playback'];
     if (playback is Map<String, dynamic>) {
       _playback = playback['status']?.toString() ?? _playback;
+      _applyPlaybackNote(_playback, playback['error']);
     }
 
     _rebuildMessages(session);
@@ -316,6 +322,30 @@ class DeviceClassroomService implements ClassroomService {
     }
   }
 
+  /// 把设备端 error 归一成一句可展示的话。
+  ///
+  /// 合同里 `playback.error` 的类型尚未定稿（string | object 待审核），
+  /// 两种形态都接，避免因为字段形态变化把失败原因丢掉。
+  void _noteFromError(dynamic error) {
+    if (error is String && error.isNotEmpty) {
+      _note = error;
+      return;
+    }
+    if (error is Map<String, dynamic> && error['message'] != null) {
+      _note = error['message'].toString();
+    }
+  }
+
+  /// 播放阶段决定是否更新设备说明：开始播放说明上一轮失败已翻篇，
+  /// failed/stopped 才需要把原因留在页面上。
+  void _applyPlaybackNote(String status, dynamic error) {
+    if (status == 'playing' || status == 'completed') {
+      _note = '';
+      return;
+    }
+    if (status == 'failed' || status == 'stopped') _noteFromError(error);
+  }
+
   void _applyRecording(dynamic recording) {
     if (recording is! Map<String, dynamic>) {
       _recording = 'idle';
@@ -325,11 +355,10 @@ class DeviceClassroomService implements ClassroomService {
     }
     _recordingId = recording['recording_id']?.toString() ?? _recordingId;
     _recording = recording['status']?.toString() ?? _recording;
+    // 新一轮录音开始即清空上一条失败说明，否则旧提示会一直挂着。
+    if (_recording == 'recording') _note = '';
     _recordingStartedAt = (recording['started_at'] as num?)?.toDouble();
-    final dynamic error = recording['error'];
-    if (error is Map<String, dynamic> && error['message'] != null) {
-      _note = error['message'].toString();
-    }
+    _noteFromError(recording['error']);
     if (_recording == 'recording') {
       _startRecordTick();
     } else {
@@ -525,6 +554,7 @@ class DeviceClassroomService implements ClassroomService {
         }
       case 'playback.updated':
         _playback = payload?['status']?.toString() ?? _playback;
+        _applyPlaybackNote(_playback, payload?['error']);
       case 'camera.status':
         final dynamic error = payload?['error'];
         if (error is Map<String, dynamic> && error['message'] != null) {
@@ -579,12 +609,19 @@ class DeviceClassroomService implements ClassroomService {
     String? questionId,
   }) async {
     final int taskId = _requireTask();
-    await _sendJson('POST', 'tasks/$taskId/inputs', <String, dynamic>{
-      'client_request_id': _clientRequestId('input'),
-      'kind': kind,
-      'text': text,
-      'question_id': questionId,
-    });
+    // 清掉上一条设备说明，避免旧失败提示挂在新一轮提问旁边。
+    _note = '';
+    await _sendJson(
+      'POST',
+      'tasks/$taskId/inputs',
+      <String, dynamic>{
+        'client_request_id': _clientRequestId('input'),
+        'kind': kind,
+        'text': text,
+        'question_id': questionId,
+      },
+      timeout: _speechTimeout,
+    );
   }
 
   @override
@@ -594,6 +631,7 @@ class DeviceClassroomService implements ClassroomService {
     double maxDurationS = 15,
   }) async {
     final int taskId = _requireTask();
+    _note = '';
     final dynamic data = await _sendJson(
       'POST',
       'tasks/$taskId/recordings',
@@ -622,6 +660,7 @@ class DeviceClassroomService implements ClassroomService {
       'PATCH',
       'tasks/$taskId/recordings/$recordingId',
       <String, dynamic>{'status': 'transcribing'},
+      timeout: _speechTimeout,
     );
     _applyRecording(data);
     _emit();

@@ -242,6 +242,38 @@ void main() {
     service.dispose();
   });
 
+  testWidgets('录音失败时把设备说明显示出来，不让失败静默', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1366, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+      recordTick: const Duration(seconds: 1),
+      maxRecordingSeconds: 30,
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ClassroomPage(controller: controller)),
+    );
+    await tester.pump();
+    await tester.enterText(find.byKey(const Key('task-target')), '认识桌面物体');
+    await tester.tap(find.byKey(const Key('task-toggle')));
+    await advance(tester);
+    // 静音场景：转写结束但没有有效语音，设备端会给一句说明。
+    controller.selectScenario(DemoScenario.silence);
+    await tester.ensureVisible(find.byKey(const Key('record-button')));
+    await tester.tap(find.byKey(const Key('record-button')));
+    await advance(tester, 3);
+    await tester.tap(find.byKey(const Key('record-button')));
+    await advance(tester, 6);
+    expect(find.byKey(const Key('device-note')), findsOneWidget);
+    expect(find.text('未识别到有效语音，请重新录音。'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    service.dispose();
+  });
+
   testWidgets('录音计时数字逐位滚动', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1366, 1000);
     tester.view.devicePixelRatio = 1;
