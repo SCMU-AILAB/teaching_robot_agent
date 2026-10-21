@@ -583,7 +583,7 @@ void main() {
     expect(find.text('未连接服务器'), findsWidgets);
     expect(find.text('未连接服务器，暂无观察结果。'), findsOneWidget);
     expect(find.text('设备连接正常'), findsNothing);
-    expect(find.text('实时画面'), findsNothing);
+    expect(find.text('设备摄像头'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     service.dispose();
