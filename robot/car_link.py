@@ -81,7 +81,7 @@ def ping(seq: int) -> bytes:
 
 @dataclass(frozen=True)
 class Ack:
-    """命令应答；code 0 成功，2 越界，3 未知命令，4 字段数量错误."""
+    """命令应答；code 0 成功，2 越界，3 未知命令，4 字段数量错误，5 故障锁定."""
 
     seq: int
     code: int
@@ -96,7 +96,10 @@ class ErrorFrame:
 
 @dataclass(frozen=True)
 class Telemetry:
-    """20 Hz 遥测：开机毫秒、运动状态、编码器累计计数、实际占空千分比."""
+    """20 Hz 遥测：开机毫秒、运动状态、编码器累计计数、实际占空千分比.
+
+    state：0 停止，1 运动，2 看门狗停车，3 堵转或编码器故障（发送停止解除）。
+    """
 
     ms: int
     state: int

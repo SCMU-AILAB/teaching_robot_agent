@@ -3,20 +3,17 @@
 
 use crate::protocol::PERMILLE_MAX;
 
-/// 阶段 1 占空比上限（千分比），即最大 40% 占空比.
-pub const DUTY_LIMIT: i16 = 400;
-
-/// 把归一化速度换算为四轮占空千分比，顺序为左前、右前、左后、右后.
+/// 把归一化速度换算为四轮目标转速千分比，顺序为左前、右前、左后、右后.
 ///
-/// 任一轮超过 ±1000 时四轮等比缩放以保持方向，再乘以 [`DUTY_LIMIT`]。
+/// 任一轮超过 ±1000 时四轮等比缩放以保持方向。
 #[must_use]
 pub fn mix_mecanum(vx: i16, vy: i16, wz: i16) -> [i16; 4] {
     let (vx, vy, wz) = (i32::from(vx), i32::from(vy), i32::from(wz));
     let wheels = [vx - vy - wz, vx + vy + wz, vx + vy - wz, vx - vy + wz];
     let peak = wheels.iter().map(|w| w.abs()).max().unwrap_or(0);
     let scale = peak.max(PERMILLE_MAX);
-    // 结果绝对值不超过 DUTY_LIMIT，转换不会截断
-    wheels.map(|w| (w * i32::from(DUTY_LIMIT) / scale) as i16)
+    // 结果绝对值不超过 1000，转换不会截断
+    wheels.map(|w| (w * PERMILLE_MAX / scale) as i16)
 }
 
 /// 轮位（左前、右前、左后、右后）到电机序号（0..=3）与方向符号的映射.
@@ -39,7 +36,7 @@ impl WheelMap {
         }
     }
 
-    /// 把四轮占空比换算为电机 M1..M4 的占空比.
+    /// 把四轮数值换算为电机 M1..M4 的数值.
     #[must_use]
     pub fn to_motors(&self, wheels: [i16; 4]) -> [i16; 4] {
         let mut motors = [0; 4];

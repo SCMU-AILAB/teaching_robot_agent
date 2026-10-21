@@ -7,11 +7,12 @@ mod board;
 
 use car_core::kinematics::WheelMap;
 use car_core::line::{LineAssembler, LineEvent};
-use car_core::motion::MotionState;
+use car_core::motion::{MotionState, RunState};
 use car_core::protocol::{
     Command, FrameBuf, ParseError, encode_ack, encode_boot, encode_error, encode_telemetry,
     parse_frame,
 };
+use car_core::speed::SpeedLoop;
 use embassy_executor::Spawner;
 use embassy_stm32::usart::BufferedUartRx;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -79,6 +80,8 @@ async fn main(spawner: Spawner) {
 
     // ========== Step2: 10 ms 控制循环：命令、看门狗、斜率、PWM、编码器、遥测 ==========
     let mut motion = MotionState::new(WHEEL_MAP);
+    let mut speed_loop = SpeedLoop::new();
+    let mut previous = hw.encoders.update();
     // 第一条有效帧所在的端口成为通信口，此后忽略另一口，避免无线模块干扰
     let mut locked: Option<u8> = None;
     let mut ticker = Ticker::every(Duration::from_millis(CONTROL_PERIOD_MS));
@@ -99,8 +102,12 @@ async fn main(spawner: Spawner) {
             }
             let encoded = match result {
                 Ok(command) => {
-                    motion.apply(&command, now_ms);
-                    encode_ack(&mut frame, command.seq(), 0)
+                    let code = motion.apply(&command, now_ms);
+                    if matches!(command, Command::Stop { .. }) {
+                        // 停止同时清空积分并解除闭环故障
+                        speed_loop.reset();
+                    }
+                    encode_ack(&mut frame, command.seq(), code)
                 }
                 Err(ParseError::Reject { seq, code }) => encode_ack(&mut frame, seq, code as u8),
                 Err(ParseError::Frame(reason)) => encode_error(&mut frame, reason as u8),
@@ -110,9 +117,17 @@ async fn main(spawner: Spawner) {
             }
         }
 
-        let duties = motion.tick(now_ms);
-        hw.motors.set(duties);
+        // ========== Step3: 目标转速经 PI 闭环得到占空比；闭环故障时锁定停车 ==========
         let encoders = hw.encoders.update();
+        let deltas: [i32; 4] = core::array::from_fn(|i| encoders[i].wrapping_sub(previous[i]));
+        previous = encoders;
+        let targets = motion.tick(now_ms);
+        let duties = speed_loop.update(targets, deltas);
+        if speed_loop.fault() && motion.run_state() != RunState::Fault {
+            motion.set_fault();
+            hw.log("speed loop fault: stall or encoder failure, send $S to clear\r\n");
+        }
+        hw.motors.set(duties);
 
         if tick.is_multiple_of(TELEMETRY_EVERY)
             && let Some(port) = locked

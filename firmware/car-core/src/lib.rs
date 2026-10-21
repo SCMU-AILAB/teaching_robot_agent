@@ -7,3 +7,4 @@ pub mod kinematics;
 pub mod line;
 pub mod motion;
 pub mod protocol;
+pub mod speed;

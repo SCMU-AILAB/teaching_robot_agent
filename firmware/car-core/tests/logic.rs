@@ -1,9 +1,9 @@
 // firmware/car-core/tests/logic.rs
 //! 行组装、麦克纳姆运动学与运动状态机测试.
 
-use car_core::kinematics::{DUTY_LIMIT, WheelMap, mix_mecanum};
+use car_core::kinematics::{WheelMap, mix_mecanum};
 use car_core::line::{LineAssembler, LineEvent};
-use car_core::motion::{MotionState, RunState, SLEW_PER_TICK, WATCHDOG_MS};
+use car_core::motion::{ACK_FAULT, MotionState, RunState, SLEW_PER_TICK, WATCHDOG_MS};
 use car_core::protocol::Command;
 
 /// 逐字节喂入，收集完整行与超长事件.
@@ -41,7 +41,7 @@ fn line_assembler_reports_overflow_once_then_waits_for_dollar() {
 
 #[test]
 fn mecanum_pure_motions_follow_sign_pattern() {
-    let l = DUTY_LIMIT;
+    let l = 1000;
     // 顺序：左前、右前、左后、右后
     assert_eq!(mix_mecanum(1000, 0, 0), [l, l, l, l]);
     assert_eq!(mix_mecanum(0, 1000, 0), [-l, l, l, -l]);
@@ -51,12 +51,12 @@ fn mecanum_pure_motions_follow_sign_pattern() {
 
 #[test]
 fn mecanum_scales_uniformly_when_saturated() {
-    // 左前=0，右前=2000，左后=0，右后=0 缩放至 1000 后再乘上限
-    let wheels = mix_mecanum(1000, 1000, 0);
-    assert_eq!(wheels, [0, DUTY_LIMIT, DUTY_LIMIT, 0]);
-    let wheels = mix_mecanum(1000, 500, 500);
+    // 原始：左前 0、右前 2000、左后 2000、右后 0，缩放比例 1/2
+    assert_eq!(mix_mecanum(1000, 1000, 0), [0, 1000, 1000, 0]);
     // 原始：0、2000、1000、1000，缩放比例 1/2
-    assert_eq!(wheels, [0, DUTY_LIMIT, DUTY_LIMIT / 2, DUTY_LIMIT / 2]);
+    assert_eq!(mix_mecanum(1000, 500, 500), [0, 1000, 500, 500]);
+    // 未超限时不缩放
+    assert_eq!(mix_mecanum(300, 200, 100), [0, 600, 400, 200]);
 }
 
 #[test]
@@ -64,6 +64,16 @@ fn wheel_map_routes_and_flips_motors() {
     // 左前→M2 反向，右前→M1，左后→M4，右后→M3 反向
     let map = WheelMap::new([1, 0, 3, 2], [-1, 1, 1, -1]);
     assert_eq!(map.to_motors([10, 20, 30, 40]), [20, -10, -40, 30]);
+}
+
+/// 每个周期重发同一命令（模拟主机持续发送），返回最后一次输出.
+fn drive(state: &mut MotionState, command: &Command, ticks: u32) -> [i16; 4] {
+    let mut out = [0; 4];
+    for i in 0..ticks {
+        let _ = state.apply(command, i * 10);
+        out = state.tick(i * 10);
+    }
+    out
 }
 
 /// 运行若干个 10 ms 控制周期，返回最后一次输出.
@@ -89,7 +99,13 @@ fn velocity_ramps_up_with_slew_limit() {
         0,
     );
     assert_eq!(state.tick(0), [SLEW_PER_TICK; 4]);
-    assert_eq!(run(&mut state, 10, 30), [DUTY_LIMIT; 4]);
+    let command = Command::Velocity {
+        seq: 2,
+        vx: 1000,
+        vy: 0,
+        wz: 0,
+    };
+    assert_eq!(drive(&mut state, &command, 60), [1000; 4]);
     assert_eq!(state.run_state(), RunState::Running);
 }
 
@@ -154,7 +170,12 @@ fn motor_command_drives_single_motor_with_limit() {
         },
         0,
     );
-    assert_eq!(run(&mut state, 0, 30), [0, 0, -DUTY_LIMIT, 0]);
+    let command = Command::Motor {
+        seq: 2,
+        motor: 3,
+        duty: -1000,
+    };
+    assert_eq!(drive(&mut state, &command, 60), [0, 0, -1000, 0]);
 }
 
 #[test]
@@ -174,4 +195,29 @@ fn watchdog_handles_clock_wraparound() {
     assert_eq!(state.run_state(), RunState::Running);
     let _ = state.tick(start.wrapping_add(WATCHDOG_MS + 1));
     assert_eq!(state.run_state(), RunState::WatchdogStopped);
+}
+
+#[test]
+fn fault_locks_motion_until_stop() {
+    let mut state = MotionState::new(WheelMap::IDENTITY);
+    let velocity = Command::Velocity {
+        seq: 1,
+        vx: 500,
+        vy: 0,
+        wz: 0,
+    };
+    assert_eq!(state.apply(&velocity, 0), 0);
+    let _ = run(&mut state, 0, 10);
+    state.set_fault();
+    assert_eq!(state.run_state(), RunState::Fault);
+    assert_eq!(state.output(), [0; 4]);
+    // 故障期间运动命令被拒绝且不产生输出
+    assert_eq!(state.apply(&velocity, 100), ACK_FAULT);
+    assert_eq!(state.tick(110), [0; 4]);
+    assert_eq!(state.apply(&Command::Ping { seq: 2 }, 120), 0);
+    // 停止命令解除故障
+    assert_eq!(state.apply(&Command::Stop { seq: 3 }, 130), 0);
+    assert_eq!(state.run_state(), RunState::Stopped);
+    assert_eq!(state.apply(&velocity, 140), 0);
+    assert_eq!(state.run_state(), RunState::Running);
 }
