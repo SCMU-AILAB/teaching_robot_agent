@@ -61,16 +61,14 @@ class _SnapshotCameraViewState extends State<_SnapshotCameraView> {
   Widget build(BuildContext context) {
     final Uri? base = widget.snapshotUrl;
     if (base == null) return widget.unavailable;
-    // 每次换帧加时间戳，绕过缓存拿到最新一帧。
-    final Uri frame = base.replace(
-      queryParameters: <String, String>{
-        ...base.queryParameters,
-        'max_width': '960',
-        'frame': '$_nonce',
-      },
-    );
+    // 每次换帧加时间戳，绕过缓存拿到最新一帧；宽度沿用调用方给的值。
+    final Map<String, String> query = <String, String>{
+      ...base.queryParameters,
+      'frame': '$_nonce',
+    };
+    query.putIfAbsent('max_width', () => '800');
     return Image.network(
-      frame.toString(),
+      base.replace(queryParameters: query).toString(),
       fit: BoxFit.cover,
       gaplessPlayback: true,
       filterQuality: FilterQuality.low,

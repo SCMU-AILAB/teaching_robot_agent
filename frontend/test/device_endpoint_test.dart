@@ -24,12 +24,32 @@ void main() {
     );
   });
 
-  test('非法 api 参数被忽略，仍按同源处理', () {
+  test('运行时保存的公网地址优先级最高', () {
     expect(
       resolveDeviceBaseUrl(
-        base: Uri.parse('http://192.168.0.127:8000/?api=javascript:alert(1)'),
+        base: Uri.parse('http://192.168.0.127:8000/?api=http://10.0.0.5:8090'),
+        saved: ' https://robot.example.com:8443 ',
+      ),
+      'https://robot.example.com:8443',
+    );
+  });
+
+  test('保存的地址非法时忽略，继续按页面地址解析', () {
+    expect(
+      resolveDeviceBaseUrl(
+        base: Uri.parse('http://192.168.0.127:8000/'),
+        saved: 'robot.example.com:8443',
       ),
       'http://192.168.0.127:8000',
     );
+  });
+
+  test('设置框校验：协议、主机、参数', () {
+    expect(validateDeviceBaseUrl(''), isNotNull);
+    expect(validateDeviceBaseUrl('192.168.0.127:8090'), isNotNull);
+    expect(validateDeviceBaseUrl('ftp://1.2.3.4:8090'), isNotNull);
+    expect(validateDeviceBaseUrl('http://1.2.3.4:8090/?a=1'), isNotNull);
+    expect(validateDeviceBaseUrl('http://1.2.3.4:8090'), isNull);
+    expect(validateDeviceBaseUrl('https://robot.example.com'), isNull);
   });
 }

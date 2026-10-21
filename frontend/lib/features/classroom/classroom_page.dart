@@ -5,13 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../core/config/device_endpoint.dart';
+import '../../core/config/endpoint_store.dart';
 import '../../core/constants/app_radius.dart';
 import 'classroom_controller.dart';
-import 'classroom_service.dart';
 import 'device_classroom_service.dart';
 import 'session_model.dart';
 import 'widgets/activity_panel.dart';
 import 'widgets/conversation_panel.dart';
+import 'widgets/endpoint_dialog.dart';
 import 'widgets/field_error_box.dart';
 import 'widgets/observation_panel.dart';
 import 'widgets/record_toggle_button.dart';
@@ -22,12 +23,9 @@ import 'widgets/task_toggle_button.dart';
 
 /// 数据源装配：页面只接 Jetson 设备端真实数据，不再有模拟数据源。
 ///
-/// 服务地址由 [resolveDeviceBaseUrl] 解析（构建期注入 → 页面同源 → 本机
-/// 端口），连不上时页面显示「未连接服务器」，不退回任何示例内容。
-ClassroomService _createService() =>
-    DeviceClassroomService(baseUrl: resolveDeviceBaseUrl());
-
-/// 自适应课堂操作页面，数据、画面与状态全部来自设备端。
+/// 服务地址在运行时解析（[resolveDeviceBaseUrl]）：设置里保存的地址优先，
+/// 其次是构建期注入、页面同源、本机端口。Mac 端通过公网 IP 连 Jetson 时，
+/// 在页面右上角的「设备地址」里填写即可，不需要重新构建。
 class ClassroomPage extends StatefulWidget {
   const ClassroomPage({this.controller, super.key});
   final ClassroomController? controller;
@@ -37,7 +35,14 @@ class ClassroomPage extends StatefulWidget {
 }
 
 class _ClassroomPageState extends State<ClassroomPage> {
-  late final ClassroomController _controller;
+  late ClassroomController _controller;
+
+  /// 只在页面自建控制器时可换地址；测试注入的控制器不参与重建。
+  bool _ownsController = false;
+
+  /// 当前生效的设备地址，供设置对话框回显与比较。
+  String _baseUrl = '';
+
   final TextEditingController _target = TextEditingController();
   final TextEditingController _message = TextEditingController();
   final GlobalKey _messageInputKey = GlobalKey();
@@ -48,8 +53,52 @@ class _ClassroomPageState extends State<ClassroomPage> {
   @override
   void initState() {
     super.initState();
-    _controller = widget.controller ?? ClassroomController(_createService());
+    if (widget.controller != null) {
+      _controller = widget.controller!;
+    } else {
+      _ownsController = true;
+      _baseUrl = resolveDeviceBaseUrl();
+      _controller = _buildController(_baseUrl);
+      unawaited(_restoreEndpoint());
+    }
     unawaited(_controller.initialize());
+  }
+
+  ClassroomController _buildController(String baseUrl) =>
+      ClassroomController(DeviceClassroomService(baseUrl: baseUrl));
+
+  /// 读取上次保存的地址；与当前不同则整体换一次数据源。
+  Future<void> _restoreEndpoint() async {
+    final String? saved = await EndpointStore.load();
+    if (!mounted || saved == null) return;
+    final String resolved = resolveDeviceBaseUrl(saved: saved);
+    if (resolved == _baseUrl) return;
+    _switchEndpoint(resolved);
+  }
+
+  /// 换地址：新建控制器并让它自己拉快照，旧控制器延后回收。
+  void _switchEndpoint(String baseUrl) {
+    final ClassroomController previous = _controller;
+    final ClassroomController next = _buildController(baseUrl);
+    setState(() {
+      _baseUrl = baseUrl;
+      _controller = next;
+    });
+    unawaited(next.initialize());
+    // 等这一帧重建完再释放旧控制器，避免 AnimatedBuilder 还挂在已销毁的
+    // ChangeNotifier 上。
+    WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+  }
+
+  Future<void> _openEndpointSettings() async {
+    final String? address = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => EndpointDialog(current: _baseUrl),
+    );
+    if (address == null || !mounted || address == _baseUrl) return;
+    await EndpointStore.save(address);
+    if (!mounted) return;
+    _switchEndpoint(address);
   }
 
   @override
@@ -57,7 +106,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
     _sendMorphing.dispose();
     _target.dispose();
     _message.dispose();
-    if (widget.controller == null) _controller.dispose();
+    if (_ownsController) _controller.dispose();
     super.dispose();
   }
 
@@ -133,6 +182,12 @@ class _ClassroomPageState extends State<ClassroomPage> {
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 8),
+          if (_ownsController)
+            IconButton(
+              tooltip: '设备地址 · $_baseUrl',
+              onPressed: () => unawaited(_openEndpointSettings()),
+              icon: const Icon(Symbols.dns_rounded, size: 20),
+            ),
           IconButton(
             tooltip: _controller.connected ? '刷新设备状态' : '重新连接',
             onPressed: _controller.busy
@@ -325,8 +380,8 @@ class _ClassroomPageState extends State<ClassroomPage> {
             final Widget observation = ObservationPanel(
               state: state,
               connection: _controller.connection,
-              streamUrl: _controller.cameraStreamUrl(),
-              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 960),
+              streamUrl: _controller.cameraStreamUrl(fps: 3),
+              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 800),
               onRefresh: state.taskStatus == 'running' && _controller.connected
                   ? () => unawaited(_controller.refresh())
                   : null,

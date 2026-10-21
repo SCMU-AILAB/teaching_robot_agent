@@ -18,7 +18,7 @@ class CameraView extends StatelessWidget {
   const CameraView({
     required this.streamUrl,
     this.snapshotUrl,
-    this.fps = 10,
+    this.fps = 3,
     this.borderRadius = AppRadius.media,
     this.unavailable = const CameraUnavailable(),
     super.key,
@@ -30,7 +30,10 @@ class CameraView extends StatelessWidget {
   /// 单帧地址（合同 GET /api/v1/camera/snapshot），非 Web 平台轮询使用。
   final Uri? snapshotUrl;
 
-  /// 推流帧率，同时作为非 Web 平台的轮询上限。
+  /// 画面帧率，同时作为非 Web 平台的轮询频率。
+  ///
+  /// 默认 3 fps：桌面端每帧都是一次 `camera/snapshot` 请求，公网链路上
+  /// 10 fps × ~120KB 会吃掉约 10 Mbps，3 fps 足够看清观察画面。
   final int fps;
 
   /// 画面圆角：Web 平台视图不受 ClipRRect 裁剪，需下沉到元素样式。
