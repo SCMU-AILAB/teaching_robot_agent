@@ -18,3 +18,6 @@ Thumbs.db
 
 # 本地下载的模型权重，不提交仓库
 models/
+
+# 小车原厂/原有固件备份，仅本地保存
+firmware/backup/
