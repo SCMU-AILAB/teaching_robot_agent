@@ -13,6 +13,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 小车底盘串口；仅 app.car_teleop 与 robot.car_link.open_serial 需要。
+car = ["pyserial>=3.5"]
 speech-client = ["sounddevice>=0.5.6"]
 # faster-whisper 1.2.1 仍使用 PyAV 在 19 中移除的 metadata_errors 参数。
 speech = [
@@ -52,4 +54,6 @@ convention = "google"
 dev = [
     "basedpyright>=1.40.1",
     "ruff>=0.16.9",
+    "pyserial>=3.5",
+    "types-pyserial>=3.5",
 ]
