@@ -8,7 +8,7 @@ import sys
 from uuid import uuid4
 
 from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
-from app.perception import build_live_perception, build_simulated_perception
+from app.perception import build_perception
 from app.robot_application import RobotApplication
 from domain.models import TaskStatus
 from providers.local_model import build_local_model
@@ -28,16 +28,7 @@ async def run_console() -> None:
         audio = build_simulated_audio(evidence)
     elif audio_mode == "real":
         audio = build_real_audio(evidence)
-    mode = os.environ.get("ROBOT_PERCEPTION", "simulated")
-    if mode not in {"simulated", "live"}:
-        raise ValueError("ROBOT_PERCEPTION must be simulated or live")
-    if mode == "simulated":
-        perception = build_simulated_perception(evidence)
-    else:
-        perception = build_live_perception(evidence)
-    if perception.camera is not None:
-        await perception.camera.connect()
-
+    perception = build_perception(evidence)
     app = RobotApplication(
         robot,
         perception.service,
@@ -106,6 +97,9 @@ async def run_console() -> None:
 
     loop.add_reader(sys.stdin, read_line)
     try:
+        if perception.camera is not None:
+            # 在 try 内连接：之后任何失败都经 app.close() 关闭感知服务并释放相机
+            await perception.camera.connect()
         await app.start()
         print(
             "家庭学习陪伴与安全教育机器人：模型为真实本地模型，"

@@ -35,6 +35,16 @@ def build_simulated_perception(evidence: EvidenceStore) -> PerceptionAdapters:
     )
 
 
+def build_perception(evidence: EvidenceStore) -> PerceptionAdapters:
+    """按 ROBOT_PERCEPTION 选择模拟或真实感知，未知值直接报错."""
+    mode = os.environ.get("ROBOT_PERCEPTION", "simulated")
+    if mode == "simulated":
+        return build_simulated_perception(evidence)
+    if mode == "live":
+        return build_live_perception(evidence)
+    raise ValueError("ROBOT_PERCEPTION must be simulated or live")
+
+
 def build_live_perception(evidence: EvidenceStore) -> PerceptionAdapters:
     """按环境装配真实相机和本地 VLM，缺配置直接报错."""
     name = nonempty_string(os.environ.get("PERCEPTION_CAMERA"), "PERCEPTION_CAMERA")
