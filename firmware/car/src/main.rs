@@ -1,5 +1,5 @@
 // firmware/car/src/main.rs
-//! 开发链路验证程序：两个候选 LED 引脚以不同频率闪烁，三个串口轮流打印问候.
+//! 开发链路验证程序：PE10 LED 以 1 Hz 闪烁，三个串口轮流打印问候.
 #![no_std]
 #![no_main]
 
@@ -48,9 +48,9 @@ async fn main(_spawner: Spawner) {
     // 默认使用内部 16 MHz 时钟；外部晶振频率确认前不改时钟树
     let p = embassy_stm32::init(Default::default());
 
-    // ========== Step1: 原固件中初始化为推挽输出的两个引脚，其一应为 LED ==========
+    // ========== Step1: PE10 为 LED；PA8 接有源蜂鸣器，保持低电平静音 ==========
     let mut pe10 = Output::new(p.PE10, Level::Low, Speed::Low);
-    let mut pa8 = Output::new(p.PA8, Level::Low, Speed::Low);
+    let _buzzer = Output::new(p.PA8, Level::Low, Speed::Low);
 
     // ========== Step2: 三个串口只发不收，参数与原固件一致：115200 8N1 ==========
     let config = UartConfig::default();
@@ -60,8 +60,7 @@ async fn main(_spawner: Spawner) {
 
     let mut tick: u32 = 0;
     loop {
-        // PA8 每 250 ms 翻转（2 Hz 闪烁），PE10 每 500 ms 翻转（1 Hz 闪烁），便于肉眼区分
-        pa8.toggle();
+        // PE10 每 500 ms 翻转，即 1 Hz 闪烁
         if tick.is_multiple_of(2) {
             pe10.toggle();
         }

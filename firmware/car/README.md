@@ -2,7 +2,7 @@
 
 目标板：MINDA-01 四路电机驱动板，STM32F407VET6。框架：embassy-stm32 0.6 + embassy-executor 0.10。
 
-当前只是开发链路验证程序：PE10 以 1 Hz 闪烁、PA8 以 2 Hz 闪烁；USART1、USART2、USART3 每秒各打印一行 `hello from USARTx t=Ns`（115200 8N1）。电机控制、编码器、通信协议和看门狗尚未实现，需另行设计审核。
+当前只是开发链路验证程序：PE10 LED 以 1 Hz 闪烁，PA8 蜂鸣器保持静音；USART1、USART2、USART3 每秒各打印一行 `hello from USARTx t=Ns`（115200 8N1）。电机控制、编码器、通信协议和看门狗尚未实现，需另行设计审核。
 
 ## 环境
 
@@ -45,4 +45,5 @@ stm32flash -b 115200 -i 'dtr&rts,-rts:-dtr&rts,-rts' -w car-fw.bin -v -S 0x08000
 | USART3 | PD8 TX / PD9 RX |
 | I2C2（QMI8658 IMU） | PB10 SCL / PB11 SDA |
 | TIM3（编码器之一） | PB4 / PB5 |
-| 推挽输出 | PE10、PA8（其一为 LED） |
+| LED | PE10 |
+| 有源蜂鸣器（高电平响） | PA8 |
