@@ -380,8 +380,8 @@ class _ClassroomPageState extends State<ClassroomPage> {
             final Widget observation = ObservationPanel(
               state: state,
               connection: _controller.connection,
-              streamUrl: _controller.cameraStreamUrl(fps: 3),
-              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 800),
+              streamUrl: _controller.cameraStreamUrl(fps: 2),
+              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 640),
               onRefresh: state.taskStatus == 'running' && _controller.connected
                   ? () => unawaited(_controller.refresh())
                   : null,
