@@ -2,7 +2,7 @@
 
 实现进度：共享 Python 模型已在 `domain/services.py`；感知与语音 Protocol 已在 `perception/interfaces.py`、`speech/interfaces.py`；核心本地门面位于 `app/team_gateway.py`。这些接口可直接导入，示例 `python -m app.team_demo`。以下 HTTP 映射及完整生命周期仍属于设计目标；实际内部 ObservationResult 使用 frame+analysis 组合及不可变元组，播放终态统一为 PlaybackState。当前 EvidenceStore 为有容量上限、无自动过期的内存实现，容量不足明确拒绝写入。TeamGateway 输入已支持 question_id；离线 TeachingFlow 消费输入并调用教学评价。LangChain 工具和 Ollama 视觉适配已实现，装配及当前边界见 [本地模型接入](LOCAL_MODELS.md)。
 
-审核人：项目负责人本人。本文提供队友编码所需的 Python 接口签名、数据含义和装配规则；属于草案，不代表实现已存在。网络接口以 [API_CONTRACT.md](../API_CONTRACT.md) 为准。
+审核人：项目负责人本人。本文提供队友编码所需的 Python 接口签名、数据含义和装配规则；属于草案，不代表实现已存在。网络接口、底盘串口协议与外部服务约定以根目录 [API_CONTRACT.md](../API_CONTRACT.md) v1.0 为准；本文只约束进程内 Python 调用。
 
 ## 赛题主流程更新
 
@@ -22,7 +22,7 @@
 
 ## 2. 核心提供的数据与证据服务
 
-HTTP 字段与语义见 API_CONTRACT 的共享响应结构；内部模型尚待实现。文件路径只允许出现在后端内部。
+HTTP 字段与语义见 API_CONTRACT 第 2 节数据结构；内部模型尚待实现。文件路径只允许出现在后端内部。
 
 ### EvidenceStore（核心实现）
 
