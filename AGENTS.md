@@ -152,3 +152,10 @@
 - **评测**：服务器上 72 段合成中文语音（6 种音色 × 12 句）。Whisper base 字错率 49.7%、small 34.6%、medium 31.8%（出现重复幻觉）、large-v3-turbo 13.1%（需 GPU）；SenseVoice-small 18.6%，自然音色 1%，CPU 每段约 0.13 秒。给 Whisper 加领域提示词会输出提示原文或无关文本，已弃用。
 - **实现**：`ResidentASRProvider` 改为通用生命周期层（加载一次、串行推理、取消/超时/关闭等待推理结束），引擎可替换：`providers/asr/sensevoice_engine.py`（sherpa-onnx，默认）与 `WhisperEngine`；`SPEECH_ASR_ENGINE` 选择。`speech` 依赖新增 `sherpa-onnx==1.13.8` 与 `sherpa-onnx-core==1.13.8`（前者 wheel 元数据缺少对 core 的依赖声明，需显式锁定）。
 - **验证**：新增 `tests/test_sensevoice_engine.py` 7 项；Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过。M2 本机真实模型：加载约 0.85 秒，“你好，桌子上的热水壶能碰吗？”“那插座呢？”识别正确，各约 0.02–0.06 秒。尚未用真人录音验收。
+
+## 2026-10-23：接口统一规范与最小化（API_CONTRACT v1.0）
+
+- 按项目负责人指示，根目录 `API_CONTRACT.md` 改为仓库全部对外接口的唯一依据（v1.0 生效），前端按此实现；取代 v0.1 草案与 `feature/speech-output-lifecycle` 上的 v0.2 草案，合并该分支时以 main 版本为准。
+- HTTP 接口由 19 个减为 10 个：`system`、任务创建/快照/停止或完成、文字消息、录音开始/结束、事件流、摄像头快照、证据内容。事件类型由 10 种减为 6 种：用户输入与机器人回答合并为 `message.updated`；播报即 `speak` 动作；观察由机器人发起，结果经 `observation.created` 推送；设备状态并入 `system`；去掉 MJPEG 流与课程答题接口。
+- 同一文档补充底盘串口协议（以 `firmware/car-core/tests` 向量为一致性依据）、Ollama 与 GPT-SoVITS 调用约定、部署形态（Jetson 运行后端与设备，3080 运行模型与合成）。
+- `frontend/lib/core/constants/api_paths.dart` 填入全部路径常量；README、前端 README、模块协作合同同步引用。HTTP/SSE 服务端尚未实现。
