@@ -159,3 +159,15 @@
 - HTTP 接口由 19 个减为 10 个：`system`、任务创建/快照/停止或完成、文字消息、录音开始/结束、事件流、摄像头快照、证据内容。事件类型由 10 种减为 6 种：用户输入与机器人回答合并为 `message.updated`；播报即 `speak` 动作；观察由机器人发起，结果经 `observation.created` 推送；设备状态并入 `system`；去掉 MJPEG 流与课程答题接口。
 - 同一文档补充底盘串口协议（以 `firmware/car-core/tests` 向量为一致性依据）、Ollama 与 GPT-SoVITS 调用约定、部署形态（Jetson 运行后端与设备，3080 运行模型与合成）。
 - `frontend/lib/core/constants/api_paths.dart` 填入全部路径常量；README、前端 README、模块协作合同同步引用。HTTP/SSE 服务端尚未实现。
+
+## 2026-10-23：HTTP/SSE 服务端实现（API_CONTRACT v1.0.1）
+
+- **框架**：FastAPI + uvicorn（新增依赖 `fastapi`、`uvicorn`）。路由层 `api/http.py` 只做解析与包装；`RequestValidationError`、未知路由与未处理异常统一转换为 `{code,message,data}`，不返回堆栈。调试页面 `/api/v1/docs`。
+- **服务层** `api/service.py` `RobotApiService`：同时一个活动任务；创建类请求按“路径 + client_request_id”去重（并发重复请求共享同一结果，失败不保留，保留 4096 条）；唯一输入消费者调用 `RobotHost.handle`，用户消息依次为 accepted → processing → answered/rejected/cancelled；模型服务连不上记为 rejected/50002。播报动作开始时即生成 assistant 消息并填 `speech_action_id`，回答返回后补全。停止经后台作业执行，HTTP 断开不撤销。
+- **事件** `api/events.py`：每任务递增序号、保留 1000 条、游标重放与登记之间无 await；慢订阅者、实例变化、游标过期或超前得到不占序号、无 id 的 `stream.reset`；15 秒注释心跳。快照与游标在同一同步段生成。
+- **核心改动**：`TeamGateway` 新增 `get_task`、`add_terminal_listener`、`add_observation_listener`（回调失败只记日志）。语音、Runtime、宿主未改。
+- **证据与摄像头**：证据接口只公开观察事件中出现过的画面，录音不对外。`api/preview.py` `CameraPreview` 在有人轮询时以 5 fps 常驻采集，预热丢弃 3 帧，空闲 10 秒停采；预览帧读取后立即释放证据。
+- **入口** `app/robot_server.py`：沿用控制台的环境变量装配，`ROBOT_API_HOST` 默认 `127.0.0.1`，`ROBOT_API_PORT` 默认 8000。
+- **测试**：新增 `tests/test_http_api.py` 15 项（系统状态、去重与单活动任务、统一错误码、消息与忙碌拒绝、事件重放与重置、停止 202/200、推理中停止、模型不可达 50002、确认完成、观察与证据释放、无语音 50002、录音转消息并播报、放弃录音、摄像头快照、事件日志）。
+- **验证**：Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过；本机以模拟设备 + 模拟语音实际启动 uvicorn，用 curl 走通系统状态、建任务、发消息、事件流重放、停止、`/docs` 与摄像头 50002。
+- **未验证**：Jetson 真机部署、真实摄像头预览帧率与 CPU 占用、真实 Ollama 与 GPT-SoVITS 下的完整链路、Flutter 前端联调。合同 v1.0.1 只补充实现说明与歧义澄清，待负责人确认。
