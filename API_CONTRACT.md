@@ -22,16 +22,20 @@
 | 3080 服务器 | Ollama（决策模型 `AGENT_MODEL`、视觉模型 `VLM_MODEL`）、GPT-SoVITS 合成 |
 | 前端（Mac 桌面端或浏览器） | 只配置 Jetson 的 base URL，不直接访问服务器 |
 
+### 后端启动
+
+`uv run python -m app.robot_server`（FastAPI + uvicorn）。监听地址 `ROBOT_API_HOST`（默认 `127.0.0.1`，局域网部署显式设为 Jetson 的局域网地址或 `0.0.0.0`）、端口 `ROBOT_API_PORT`（默认 `8000`）；设备、感知、语音与模型沿用 `ROBOT_ADAPTER`、`ROBOT_PERCEPTION`、`ROBOT_AUDIO` 等配置。调试页面 `/api/v1/docs` 由代码生成，字段与错误码以本文为准。
+
 ## 1. 通用规则
 
 - 基础路径 `/api/v1`。base URL 由运行时配置提供，前端不得硬编码主机地址。
 - 首版部署于受控局域网，不做身份认证；不得把 HTTP API 暴露到公网。
 - 编码 UTF-8；JSON 字段 snake_case。`task_id`、`action_id` 为正整数，其余编号为服务生成的不透明字符串。
 - 时间为 Unix 秒（浮点数），时长为秒，坐标为米，朝向为弧度；拒绝 NaN 与 Infinity。
-- 可空字段显式返回 `null`，空列表返回 `[]`；请求中出现未定义字段返回 40001。
+- 可空字段显式返回 `null`，空列表返回 `[]`；JSON 请求体中出现未定义字段返回 40001。查询参数只校验本文列出的参数，其余忽略（便于浏览器追加防缓存参数）。
 - 统一响应：`{"code":0,"message":"success","data":...}`；失败为 `{"code":<错误码>,"message":<中文说明>,"data":null}`，HTTP 状态码与错误码对应。二进制与 SSE 响应为仅有的例外，见各接口说明；它们的失败仍返回统一 JSON。
 - 创建类 POST 必须携带 `client_request_id`（非空，最多 128 字符）。同一进程内按“路径 + 编号”去重：请求体相同则返回原结果，不同则返回 40009。网络重试必须沿用原编号，避免同一句话被执行两次。
-- 首版同时只有一个活动任务；资源只存于内存。每次后端启动生成新的 `instance_id`，前端发现变化后丢弃旧状态，不重放旧命令。
+- 首版同时只有一个活动任务；资源只存于内存，最多保留最近 256 个任务，超出后最早的已结束任务返回 40401。每次后端启动生成新的 `instance_id`，前端发现变化后丢弃旧状态，不重放旧命令。
 - 停止不经过模型：取消任务直接作用于执行层，接受取消不代表设备已停，停止结果以任务终态为准。
 
 ### 错误码
@@ -61,7 +65,7 @@
 | robot | object | `connected:bool`、`moving:bool`、`x:float`、`y:float`、`yaw:float`、`updated_at:float` |
 | camera | object | `available:bool`、`last_frame_at:float/null`、`error:string/null`；`available=false` 时 `error` 必须非空 |
 | audio | object | `available:bool`、`recording:bool`、`playing:bool` |
-| services | object | `agent`、`vlm`、`asr`、`tts` 各为 `ready`、`unavailable` 或 `not_configured` |
+| services | object | `agent`、`vlm`、`asr`、`tts` 各为 `ready`、`unavailable` 或 `not_configured`；首版只反映装配配置（`ready` 表示已配置），不主动探测，调用失败体现在对应消息或录音的 error（模型服务连不上为 50002） |
 
 ### TaskResponse
 
@@ -115,7 +119,7 @@ status：`queued`、`running`、`verifying`、`cancelling`、`succeeded`、`fail
 
 `recording_id:string`、`task_id:int`、`status:string`、`started_at:float`、`ended_at:float|null`、`transcript:string|null`、`message_id:string|null`、`error:ResourceError|null`。
 
-status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。识别出非空文本时由后端自动生成一条 `source=speech` 的用户消息并填入 `message_id`；没有识别到语音时为 `completed`、`transcript=""`、`message_id=null`。前端不得再次提交转写文本。
+status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。到达 `max_duration_s` 时自动进入 `transcribing`。识别出非空文本时由后端自动生成一条 `source=speech` 的用户消息并填入 `message_id`；没有识别到语音时为 `completed`、`transcript=""`、`message_id=null`。前端不得再次提交转写文本。
 
 ### ResourceError
 
@@ -214,7 +218,7 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 
 用途：SSE 推送任务变化，见第 4 节。
 
-请求：`Last-Event-ID` 请求头，或不支持自定义请求头时使用查询参数 `after`，取值为快照中的 `event_cursor`；两者同时存在以请求头为准。
+请求：`Last-Event-ID` 请求头，或不支持自定义请求头时使用查询参数 `after`，取值为快照中的 `event_cursor`；两者同时存在以请求头为准。两者都没有或格式错误返回 40001。
 
 响应 200：`text/event-stream`。建流前的错误码：40001、40401。
 
@@ -232,9 +236,9 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 
 ### GET /api/v1/evidence/{evidence_id}
 
-用途：读取观察画面等已登记媒体。
+用途：读取观察画面。
 
-响应 200：二进制内容，`Content-Type` 为登记时的媒体类型。只按编号解析，不接受任何路径参数。
+响应 200：二进制内容，`Content-Type` 为登记时的媒体类型。只按编号解析，不接受任何路径参数。只返回经 `ObservationResponse.frame_evidence_id` 公开过的画面；录音等其他媒体不对外，按 40401 处理。
 
 错误码：40001、40401。
 
@@ -259,6 +263,7 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 | stream.reset | `{reason:string}` | 游标失效、进程重启或订阅者过慢；客户端重新读取快照后再建流 |
 
 - `sequence` 按任务递增；payload 是完整的最新记录，客户端按编号覆盖，忽略不大于已应用 sequence 的事件。
+- `stream.reset` 不占用序号、不带 `id:` 行（浏览器 EventSource 因此保留最后应用的游标）；客户端收到后不做序号比较，直接重新读取快照再建流。reason 取 `instance_changed`、`cursor_expired`、`cursor_invalid`、`subscriber_slow`、`server_closed`、`task_evicted`。
 - 后端保留每个任务最近 1000 条事件，重放游标之后的事件并无缝衔接实时推送。
 - 每 15 秒发送一次 SSE 注释作为心跳。
 
@@ -315,4 +320,5 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 
 - 2026-10-01：v0.1 草案。
 - 2026-10-20：v0.2 草案（设备状态、摄像头预览、会话快照），未批准。
-- 2026-10-23：v1.0 生效。按项目负责人指示统一规范并最小化仓库接口，合并 v0.1/v0.2，补充底盘串口协议、外部服务约定与部署形态。HTTP 服务端尚未实现。
+- 2026-10-23：v1.0 生效。按项目负责人指示统一规范并最小化仓库接口，合并 v0.1/v0.2，补充底盘串口协议、外部服务约定与部署形态。
+- 2026-10-23：v1.0.1，HTTP/SSE 服务端实现（`api/`、`app/robot_server.py`）。只补充实现说明与歧义澄清，接口与字段无增删：后端启动方式；未定义查询参数忽略；缺少事件游标返回 40001；`stream.reset` 不占序号、不带 id 及 reason 取值；证据接口只公开观察画面；services 只反映配置；任务记录保留上限；录音到时自动进入识别。
