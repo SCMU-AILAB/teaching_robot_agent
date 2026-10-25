@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from domain.validation import nonempty_string
 from robot.base import RobotAdapter
+from robot.car_adapter import CarAdapter, car_config_from_env
 from robot.simulated import SimulatedAdapter
 
 
@@ -15,6 +16,8 @@ class RobotAdapterFactory:
         """保存构造器；厂商连接参数由构造器闭包注入."""
         self._builders: dict[str, Callable[[], RobotAdapter]] = {
             "simulated": SimulatedAdapter,
+            # 麦克纳姆底盘：构造时只读取 CAR_* 配置，连接由 Runtime 启动时执行。
+            "car": lambda: CarAdapter(car_config_from_env()),
         }
 
     def register(self, name: str, builder: Callable[[], RobotAdapter]) -> None:
