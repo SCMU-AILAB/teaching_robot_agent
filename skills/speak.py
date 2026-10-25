@@ -10,6 +10,7 @@ from domain.validation import nonempty_string, string_key_dict
 from robot.base import RobotAdapter
 from skills.base import RobotSkill
 from speech.output import SpeechOutputService
+from speech.text import speakable_text
 
 
 class SpeakSkill(RobotSkill):
@@ -42,7 +43,9 @@ class SpeakSkill(RobotSkill):
     ) -> SkillResult:
         """合成与播放由同一 Runtime 执行期限覆盖，保存实际播放证据."""
         self.validate(args)
-        text = nonempty_string(args.get("text"), "text")
+        text = speakable_text(nonempty_string(args.get("text"), "text"))
+        if not text:
+            raise ValueError("Speech text has nothing readable after cleanup")
         voice = args.get("voice_id")
         voice_id = nonempty_string(voice, "voice_id") if voice is not None else None
         playback_id = uuid4().hex
@@ -59,6 +62,7 @@ class SpeakSkill(RobotSkill):
                 "started_at": state.started_at,
                 "ended_at": state.ended_at,
                 "simulated": self._simulated,
+                "spoken_text": text,
             },
         )
 
