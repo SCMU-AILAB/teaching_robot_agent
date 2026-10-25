@@ -76,7 +76,7 @@ uv run python -m app.classroom_demo
 - [设备适配接口](docs/ROBOT_ADAPTER.md)：拿到主办方 SDK 后实现 RobotAdapter。
 - [本地模型配置及调研](docs/LOCAL_MODELS.md)：Qwen 默认、宇树 VLM 对照、服务器联调结果。
 - [模块协作合同](docs/MODULE_CONTRACT.md)：共享媒体、感知、语音接口及证据存储。
-- [接口文档 v1.0](API_CONTRACT.md)：仓库全部对外接口（HTTP API、底盘串口协议、外部推理服务）的唯一依据，前端按此实现；HTTP/SSE 服务端尚未实现。
+- [接口文档 v1.0](API_CONTRACT.md)：仓库全部对外接口（HTTP API、底盘串口协议、外部推理服务）的唯一依据，前端按此实现；后端由 `uv run python -m app.robot_server` 启动，调试页面 `/api/v1/docs`。
 - [编码规范](docs/CODING_SPEC.md)：代码由负责人审核；当前按用户指示直接在 main 修改。
 
 ```bash
