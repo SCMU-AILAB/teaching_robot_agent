@@ -159,3 +159,11 @@
 - HTTP 接口由 19 个减为 10 个：`system`、任务创建/快照/停止或完成、文字消息、录音开始/结束、事件流、摄像头快照、证据内容。事件类型由 10 种减为 6 种：用户输入与机器人回答合并为 `message.updated`；播报即 `speak` 动作；观察由机器人发起，结果经 `observation.created` 推送；设备状态并入 `system`；去掉 MJPEG 流与课程答题接口。
 - 同一文档补充底盘串口协议（以 `firmware/car-core/tests` 向量为一致性依据）、Ollama 与 GPT-SoVITS 调用约定、部署形态（Jetson 运行后端与设备，3080 运行模型与合成）。
 - `frontend/lib/core/constants/api_paths.dart` 填入全部路径常量；README、前端 README、模块协作合同同步引用。HTTP/SSE 服务端尚未实现。
+
+## 2026-10-25：麦克纳姆底盘接入 Python（CarAdapter）
+
+- **实现**：`robot/car_adapter.py` `CarAdapter(RobotAdapter)`，固件不改。后台线程读取 20 Hz 遥测，主机按编码器增量积分麦克纳姆里程计；`move_relative`/`turn_relative` 每帧遥测发送一次 `$V`，按剩余量减速并修正侧向/航向偏差，到位后停车并以连续两帧无编码器增量确认静止；堵转、命令被拒、遥测中断、超时均报错，失败与取消先立即发 `$S`。`RobotAdapterFactory` 注册 `car`（读取 `CAR_*` 环境变量，构造时不打开串口）。
+- **标定**：`CAR_COUNTS_PER_METER`、`CAR_COUNTS_PER_RADIAN` 缺失时不声明能力、不开放运动技能；新增 `app/car_calibrate.py` 实测换算。
+- **验收容差**：`RobotAdapter` 新增 `position_tolerance_m`、`yaw_tolerance_rad`（默认 0.001，模拟器行为不变），`MoveRelativeSkill.verify` 改用设备容差；底盘默认 0.02 米 / 0.035 弧度。
+- **测试**：`tests/car_firmware_fixture.py` 固件协议替身，`tests/test_car_adapter.py` 10 项（连接锁定端口、未标定不开放技能、转向后前进到位、经 Runtime 执行技能成功、运动中取消确认停车、故障中止与解除、遥测中断、i32 回绕、环境配置与工厂、标定轮组合）。Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过。
+- **未验证**：真车（本次小车未连接）。里程计常数未标定；里程计看不到打滑，落地横移偏移问题仍在；低速逼近时 PI 起转能否稳定停在 2 厘米内需实测；拔线看门狗停车仍待测。

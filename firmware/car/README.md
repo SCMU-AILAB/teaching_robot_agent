@@ -16,6 +16,17 @@ uv run --extra car python -m app.car_teleop /dev/cu.wchusbserial5C670410421     
 uv run --extra car python -m app.car_teleop /dev/cu.wchusbserial5C670410421 --motor 1 --duty 1000 --seconds 2
 ```
 
+## 接入 Python 主程序
+
+`ROBOT_ADAPTER=car` 使用 `robot/car_adapter.py`（说明见 `docs/ROBOT_ADAPTER.md`），需要 `uv sync --extra car`、`CAR_SERIAL_PORT` 及两项里程计标定。标定在自己的终端执行，小车会真实移动：
+
+```bash
+uv run --extra car python -m app.car_calibrate PORT forward --permille 300 --seconds 2   # 量实际前进米数
+uv run --extra car python -m app.car_calibrate PORT turn --permille 300 --seconds 2      # 量实际转过的度数
+```
+
+工具按输入的实测值打印 `export CAR_COUNTS_PER_METER=…` / `CAR_COUNTS_PER_RADIAN=…`。
+
 ## 实测记录（2026-10-21，电池 12.5 V，轮子架空）
 
 | 项目 | 结果 |
