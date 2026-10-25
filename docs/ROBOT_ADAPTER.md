@@ -1,6 +1,6 @@
 # 机器人适配框架
 
-在主办方设备未知时，上层只依赖 `RobotAdapter`。目前仅有模拟实现，没有绑定宇树或其他厂商 SDK；设备选择不会自动退回模拟器。
+在主办方设备未知时，上层只依赖 `RobotAdapter`。目前有模拟实现与自制麦克纳姆底盘 `CarAdapter`（`ROBOT_ADAPTER=car`），没有绑定宇树或其他厂商 SDK；设备选择不会自动退回模拟器。
 
 ## 调用关系
 
@@ -47,6 +47,18 @@ Agent / 人工控制 / 通用任务流程
 - Runtime 提交时检查能力，执行前再次检查；不支持的能力不创建动作。转向角度当前限制为正负 π，角速度上限为 1 rad/s。
 - 协程取消必须向上传播。阻塞 SDK 需要隔离，但取消线程等待不代表设备停止；适配器必须实现独立 stop 通路及可靠的状态反馈。普通 stop 不是硬件急停的替代品。
 - 相对移动、转向和未来导航提交均使场景缓存失效；运动期间观察标为 stale。真实感知服务仍须处理停止后的采集与缓存更新。
+
+## 麦克纳姆底盘 CarAdapter
+
+`robot/car_adapter.py` 经串口协议（`API_CONTRACT.md` 第 5.1 节）驱动 STM32 阶段 1 固件，固件不改：
+
+- **连接**：打开串口前 DTR/RTS 置低；发送 `$S` 锁定通信口并解除故障，2 秒内收不到遥测即失败。后台线程读取 20 Hz 遥测，超过 0.5 秒没有遥测报告未连接。
+- **里程计**：主机按轮位（左前 M4、右前 M1、左后 M3、右后 M2）把编码器增量代入麦克纳姆正运动学，取半步航向积分位姿，处理 i32 回绕。它看不到打滑，声明的 LOCALIZATION 只是编码器里程计。
+- **标定**：`CAR_COUNTS_PER_METER`（前进 1 米时四轮平均计数）与 `CAR_COUNTS_PER_RADIAN`（逆时针 1 弧度时 (-左前+右前-左后+右后)/4）必填，可选 `CAR_COUNTS_PER_METER_LATERAL`。未标定时不声明任何能力，`build_robot_skills` 不注册运动技能。用 `uv run --extra car python -m app.car_calibrate PORT forward|turn|lateral` 实测，小车会真实移动。
+- **运动**：`move_relative` / `turn_relative` 每帧遥测发送一次 `$V`（刷新 300 ms 看门狗），按剩余量减速，移动时修正侧向与航向偏差、转向时保持位置；到位后停车并以连续两帧四轮无增量确认静止。速度千分比 = 每秒计数 / 4，单轴上限 `CAR_MAX_PERMILLE`（默认 600）。
+- **失败**：固件报告堵转/编码器故障（state 3）、命令被拒（应答码非 0）、运动中 0.3 秒无遥测或超过期限（估算耗时 × 2 + 3 秒）都报错；失败与取消先立即发 `$S`，再由 Runtime 清理阶段的 `stop()` 确认静止，确认不了则报错并锁定执行层。
+- **验收容差**：`RobotAdapter.position_tolerance_m` / `yaw_tolerance_rad`（模拟器 1 毫米 / 0.001 弧度），底盘默认 2 厘米 / 0.035 弧度（约 2°），可由 `CAR_POSITION_TOLERANCE_M`、`CAR_YAW_TOLERANCE_RAD` 调整。`MoveRelativeSkill.verify` 按设备容差判定。
+- **测试**：`tests/car_firmware_fixture.py` 按固件协议行为实现串口替身（CRC 校验、应答、遥测、斜率、看门狗、故障锁定），`tests/test_car_adapter.py` 覆盖连接、未标定、移动与转向到位、经 Runtime 执行技能、运动中取消、故障、遥测中断与计数回绕。
 
 ## 当前验证范围
 
