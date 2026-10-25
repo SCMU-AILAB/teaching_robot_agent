@@ -20,7 +20,7 @@
 
 ## 当前目录与规范分层的对应关系
 
-当前项目是独立的 Python 动作基础层，尚未实现 FastAPI 或 Flutter。保留已约定的领域模块，按以下关系落实职责分层，未将目录整体迁移为 PDF 示例中的 `backend/core/`：
+当前项目是独立的 Python 动作基础层，对外 HTTP API 由 `api/`（FastAPI）实现，Flutter 前端在 `frontend/`。保留已约定的领域模块，按以下关系落实职责分层，未将目录整体迁移为 PDF 示例中的 `backend/core/`：
 
 | 规范中的层 | 当前目录 |
 | --- | --- |

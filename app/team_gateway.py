@@ -4,7 +4,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
@@ -84,7 +84,19 @@ class TeamGateway:
         self._observations: dict[int, ObservationResult] = {}
         # 每个任务引用过的观察帧证据，任务终态后释放未被其他任务引用的部分。
         self._task_evidence: dict[int, set[str]] = {}
+        self._observation_listeners: list[Callable[[ObservationResult], None]] = []
         self._coordinator.add_terminal_listener(self._release_task_evidence)
+
+    def add_terminal_listener(self, listener: Callable[[int], None]) -> None:
+        """装配阶段注册任务终态回调；回调必须同步且不阻塞."""
+        self._coordinator.add_terminal_listener(listener)
+
+    def add_observation_listener(
+        self, listener: Callable[[ObservationResult], None]
+    ) -> None:
+        """装配阶段注册观察登记回调，供对外事件推送；回调必须同步且不阻塞."""
+        if listener not in self._observation_listeners:
+            self._observation_listeners.append(listener)
 
     def register_task_resource(self, resource: TaskResource) -> None:
         """应用装配附属资源，使统一任务停止等待资源确认."""
@@ -143,6 +155,10 @@ class TeamGateway:
         task = self._coordinator.get_task(task_id)
         if task.status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
             raise ValueError("Task no longer accepts input")
+
+    def get_task(self, task_id: int) -> TaskState:
+        """同步读取任务记录副本，编号不存在时抛出 KeyError."""
+        return self._coordinator.get_task(task_id)
 
     async def get_snapshot(self, task_id: int) -> TaskSnapshot:
         """读取用于本地展示的快照，不表示 HTTP 事件游标快照."""
@@ -299,4 +315,11 @@ class TeamGateway:
             result, stale=result.stale or moving or generation != self._scene_generation
         )
         self._observations[request.task_id] = result
+        for listener in self._observation_listeners:
+            try:
+                listener(result)
+            except Exception:
+                logger.exception(
+                    "[TeamGateway.observe] 观察回调失败 task_id=%s", request.task_id
+                )
         return result

@@ -6,7 +6,7 @@
 
 ## 赛题主流程更新
 
-默认入口现在是 RobotApplication → RobotHost → EmbodiedAgent，不要求教学会话。感知通过 PerceptionService 注入，ASR 最终转写仍进入 TeamGateway.submit_transcript；课程模式独立选择。HTTP/SSE 实现状态未变。详见 [赛题框架](COMPETITION_ARCHITECTURE.md)。
+默认入口现在是 RobotApplication → RobotHost → EmbodiedAgent，不要求教学会话。感知通过 PerceptionService 注入，ASR 最终转写仍进入 TeamGateway.submit_transcript；课程模式独立选择。HTTP/SSE 由 `api/`（RobotApiService 映射核心资源与事件，FastAPI 路由）与入口 `app/robot_server.py` 实现，只经 TeamGateway 的公开方法与观察、终态回调读取核心状态。详见 [赛题框架](COMPETITION_ARCHITECTURE.md)。
 
 ## 1. 接口归属
 
