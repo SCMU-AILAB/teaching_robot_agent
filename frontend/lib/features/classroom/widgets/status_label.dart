@@ -26,6 +26,7 @@ class StatusLabel extends StatelessWidget {
     'not_started': '准备开始',
     'explaining': '讲解中',
     'awaiting_answer': '等待回答',
+    'awaiting_input': '等待提问',
     'feedback': '反馈中',
   };
 
@@ -38,6 +39,7 @@ class StatusLabel extends StatelessWidget {
       'recording',
       'explaining',
       'awaiting_answer',
+      'awaiting_input',
     ].contains(status);
     final Color color = failed
         ? const Color(0xffb6403a)

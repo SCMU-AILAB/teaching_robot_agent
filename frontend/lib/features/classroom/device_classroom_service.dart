@@ -4,16 +4,18 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../core/constants/api_paths.dart';
 import 'classroom_service.dart';
 import 'session_model.dart';
 
-/// Jetson 设备端真实数据源：按 API_CONTRACT.md 与 /api/v1 通信。
+/// 机器人后端真实数据源，按根目录 API_CONTRACT.md v1.0 通信。
 ///
-/// 覆盖合同的聚合快照（GET /tasks/{id}/session）、SSE 事件流
-/// （GET /tasks/{id}/events，Last-Event-ID 断点续传）、任务/输入/录音/
-/// 观察/取消通道。服务地址由配置注入，不写死；统一响应错误包装为
-/// [ClassroomFailure]。界面序列号在适配器内自增，合同 sequence 仅用于
-/// SSE 重放去重（忽略已应用或更旧的事件）。
+/// 任务快照（GET /tasks/{id}）给出完整状态与事件游标，SSE 事件流
+/// （GET /tasks/{id}/events，Last-Event-ID 断点续传）推送增量；命令走
+/// 任务、消息、录音三个通道。v1.0 没有课堂阶段、观察请求与 MJPEG：
+/// 观察由机器人在回答时发起，播报状态取自最近一个 speak 动作，摄像头
+/// 画面轮询单帧快照。统一响应的非 0 code 包装为 [ClassroomFailure]。
+/// 界面序列号在适配器内自增，合同 sequence 只用于事件去重。
 class DeviceClassroomService implements ClassroomService {
   DeviceClassroomService({required String baseUrl, http.Client? client})
     : _client = client ?? http.Client(),
@@ -23,11 +25,11 @@ class DeviceClassroomService implements ClassroomService {
   final String _baseUrl;
 
   static const Duration _requestTimeout = Duration(seconds: 10);
-
-  /// 语音链路专用超时：服务器识别约 6 s、生成与合成再叠加几秒，
-  /// 板端首次调用还要加载模型，10 s 会假超时。
-  static const Duration _speechTimeout = Duration(seconds: 30);
   static const Duration _streamRetryDelay = Duration(seconds: 3);
+
+  /// 两次重置间隔短于此值视为连续重置，需要退避。
+  static const Duration _resetWindow = Duration(seconds: 10);
+  static const String _idleObservation = '机器人回答涉及现场物体时会先观察桌面。';
 
   final StreamController<SessionModel> _events = StreamController.broadcast();
   final StreamController<bool> _connections = StreamController.broadcast();
@@ -35,30 +37,33 @@ class DeviceClassroomService implements ClassroomService {
   /// 界面序列号：每次向页面发状态严格自增，配合控制器去重。
   int _emitSeq = 0;
 
-  /// 合同事件序列号：SSE 重放去重，忽略已应用或更旧的事件。
+  /// 合同事件序号：忽略已应用或更旧的事件。
   int _appliedSeq = -1;
 
   String _instanceId = 'device';
   int? _taskId;
-  String? _recordingId;
   String? _cursor;
   String _target = '';
   String _taskStatus = 'idle';
-  String _stage = 'not_started';
-  String? _pendingQuestionId;
+  String? _recordingId;
   String _recording = 'idle';
-  String _playback = 'idle';
-  String _observation = '等待课堂开始后观察桌面。';
+  double? _recordingStartedAt;
+  int _recordingSeconds = 0;
+  String _observation = _idleObservation;
   bool _observed = false;
   bool _stale = false;
   String _note = '';
-  double? _recordingStartedAt;
-  int _recordingSeconds = 0;
-  int _messageSeq = 0;
-  final Map<String, int> _messageIds = <String, int>{};
-  List<ClassMessage> _messages = const [];
-  final Map<int, ClassAction> _actions = <int, ClassAction>{};
 
+  /// 合同消息编号到界面消息编号；助手回答可能先以播报文本出现、随后补全。
+  final Map<String, int> _messageIds = <String, int>{};
+  final Map<int, ClassMessage> _messages = <int, ClassMessage>{};
+  int _messageSeq = 0;
+
+  /// 尚未处理完（accepted/processing）的用户消息。
+  final Set<String> _pendingInputs = <String>{};
+  final Map<int, Map<String, dynamic>> _actions = <int, Map<String, dynamic>>{};
+
+  DateTime? _lastReset;
   StreamSubscription<String>? _sseSub;
   Timer? _retryTimer;
   Timer? _recordTimer;
@@ -74,14 +79,10 @@ class DeviceClassroomService implements ClassroomService {
   // ========== 请求封装 ==========
 
   Uri _uri(String path, [Map<String, String>? query]) {
-    final String suffix = query == null || query.isEmpty
-        ? ''
-        : '?${query.entries.map(
-            (MapEntry<String, String> e) =>
-                '${Uri.encodeQueryComponent(e.key)}='
-                '${Uri.encodeQueryComponent(e.value)}',
-          ).join('&')}';
-    return Uri.parse('$_baseUrl/api/v1/$path$suffix');
+    final Uri base = Uri.parse('$_baseUrl$path');
+    return query == null || query.isEmpty
+        ? base
+        : base.replace(queryParameters: query);
   }
 
   /// 每个创建请求带去重编号（合同 client_request_id，≤128 字符）。
@@ -103,52 +104,35 @@ class DeviceClassroomService implements ClassroomService {
     }
     final int code = (body['code'] as num?)?.toInt() ?? -1;
     if (code != 0) {
-      final String message =
-          body['message']?.toString() ?? '设备返回错误（code $code）';
-      throw ClassroomFailure(message);
+      throw ClassroomFailure(
+        body['message']?.toString() ?? '设备返回错误（code $code）',
+      );
     }
     return body['data'];
   }
 
-  Future<dynamic> _get(String path, {Map<String, String>? query}) async {
-    try {
-      final http.Response response = await _client
-          .get(_uri(path, query))
-          .timeout(_requestTimeout);
-      return _decode(response);
-    } on TimeoutException {
-      throw const ClassroomFailure('请求设备超时。');
-    } on http.ClientException {
-      // 网络不可达、连接被拒、跨源被拦都落到这里：明确指向地址或网络问题。
-      throw const ClassroomFailure('无法连接设备服务，请确认设备在线且地址正确。');
-    }
-  }
+  Future<dynamic> _get(String path, {Map<String, String>? query}) =>
+      _guard(_client.get(_uri(path, query)));
 
   Future<dynamic> _sendJson(
     String method,
     String path,
-    Map<String, dynamic> body, {
-    Duration? timeout,
-  }) async {
+    Map<String, dynamic> body,
+  ) {
+    const Map<String, String> headers = <String, String>{
+      'Content-Type': 'application/json; charset=utf-8',
+    };
+    final String encoded = jsonEncode(body);
+    return _guard(switch (method) {
+      'POST' => _client.post(_uri(path), headers: headers, body: encoded),
+      'PATCH' => _client.patch(_uri(path), headers: headers, body: encoded),
+      _ => throw ArgumentError('不支持的请求方法：$method'),
+    });
+  }
+
+  Future<dynamic> _guard(Future<http.Response> call) async {
     try {
-      final Future<http.Response> call = switch (method) {
-        'POST' => _client.post(
-          _uri(path),
-          headers: const <String, String>{
-            'Content-Type': 'application/json; charset=utf-8',
-          },
-          body: jsonEncode(body),
-        ),
-        'PATCH' => _client.patch(
-          _uri(path),
-          headers: const <String, String>{
-            'Content-Type': 'application/json; charset=utf-8',
-          },
-          body: jsonEncode(body),
-        ),
-        _ => throw ArgumentError('不支持的请求方法：$method'),
-      };
-      return _decode(await call.timeout(timeout ?? _requestTimeout));
+      return _decode(await call.timeout(_requestTimeout));
     } on TimeoutException {
       throw const ClassroomFailure('请求设备超时。');
     } on http.ClientException {
@@ -157,7 +141,7 @@ class DeviceClassroomService implements ClassroomService {
     }
   }
 
-  // ========== 快照与事件 ==========
+  // ========== 快照 ==========
 
   @override
   Future<SessionModel> snapshot() async {
@@ -174,204 +158,210 @@ class DeviceClassroomService implements ClassroomService {
     await _ensureStream();
   }
 
-  /// 拉 system + 聚合快照，整体替换任务态镜像（合同：快照与游标原子生成）。
+  /// 读取系统状态：有活动任务恢复它；否则保留刚结束的任务以显示其终态。
   Future<void> _reload() async {
-    final dynamic system = await _get('system');
+    final dynamic system = await _get(ApiPaths.system);
     int? taskId;
     if (system is Map<String, dynamic>) {
       _instanceId = system['instance_id']?.toString() ?? _instanceId;
       final dynamic active = system['active_task_id'];
       if (active is num) taskId = active.toInt();
     }
+    taskId ??= _taskId;
     if (taskId == null) {
       _resetTaskState();
       return;
     }
-    _taskId = taskId;
-    final dynamic session = await _get('tasks/$taskId/session');
-    if (session is Map<String, dynamic>) _applySession(session);
-  }
-
-  /// 无活动任务：清空任务态，保留实例标识。
-  void _resetTaskState() {
-    _taskId = null;
-    _recordingId = null;
-    _cursor = null;
-    _appliedSeq = -1;
-    _target = '';
-    _taskStatus = 'idle';
-    _stage = 'not_started';
-    _pendingQuestionId = null;
-    _recording = 'idle';
-    _playback = 'idle';
-    _observation = '等待课堂开始后观察桌面。';
-    _observed = false;
-    _stale = false;
-    _note = '';
-    _messages = const [];
-    _messageIds.clear();
-    _actions.clear();
-    _stopRecordTick();
-    _recordingStartedAt = null;
-    _closeStream();
-  }
-
-  void _applySession(Map<String, dynamic> session) {
-    _instanceId = session['instance_id']?.toString() ?? _instanceId;
-    final dynamic task = session['task'];
-    if (task is Map<String, dynamic>) {
-      _taskId = (task['task_id'] as num?)?.toInt() ?? _taskId;
-      _target = task['user_target']?.toString() ?? _target;
-      _taskStatus = task['status']?.toString() ?? _taskStatus;
-    }
-    final dynamic teaching = session['teaching'];
-    if (teaching is Map<String, dynamic>) {
-      _stage = teaching['stage']?.toString() ?? _stage;
-      final dynamic pending = teaching['pending_question'];
-      _pendingQuestionId = pending is Map<String, dynamic>
-          ? pending['question_id']?.toString()
-          : null;
-    }
-
-    _actions.clear();
-    final List<dynamic> actions = session['actions'] is List
-        ? session['actions'] as List<dynamic>
-        : const <dynamic>[];
-    for (final dynamic item in actions) {
-      if (item is Map<String, dynamic>) {
-        final int? id = (item['action_id'] as num?)?.toInt();
-        if (id != null) _actions[id] = _actionFrom(item);
+    try {
+      await _loadTask(taskId);
+    } on ClassroomFailure {
+      // 旧任务记录已被后端清理或服务已重启：回到无任务状态。
+      if (taskId == _taskId) {
+        _resetTaskState();
+        return;
       }
+      rethrow;
     }
+  }
 
-    _applyObservation(session['latest_observation']);
-    _applyRecording(session['recording']);
-    final dynamic playback = session['playback'];
-    if (playback is Map<String, dynamic>) {
-      _playback = playback['status']?.toString() ?? _playback;
-      _applyPlaybackNote(_playback, playback['error']);
+  Future<void> _loadTask(int taskId) async {
+    final dynamic data = await _get(ApiPaths.task(taskId));
+    if (data is! Map<String, dynamic>) {
+      throw const ClassroomFailure('任务快照格式不合法。');
     }
-
-    _rebuildMessages(session);
-    final String? cursor = session['event_cursor']?.toString();
+    _resetTaskState();
+    _taskId = taskId;
+    _instanceId = data['instance_id']?.toString() ?? _instanceId;
+    _applyTask(data['task']);
+    for (final dynamic item in _list(data['messages'])) {
+      _applyMessage(item);
+    }
+    for (final dynamic item in _list(data['actions'])) {
+      _applyAction(item);
+    }
+    _applyObservation(data['latest_observation']);
+    _applyRecording(data['active_recording']);
+    final String? cursor = data['event_cursor']?.toString();
     if (cursor != null) {
       _cursor = cursor;
       _appliedSeq = _seqOfCursor(cursor) ?? _appliedSeq;
     }
   }
 
-  /// 消息列表按 created_at 归并重建。
-  ///
-  /// 合同 v0.2 的 SessionSnapshotResponse 只含 assistant_messages；
-  /// 学生输入若在快照中出现（inputs，后续合同扩展）则一并归并。
-  void _rebuildMessages(Map<String, dynamic> session) {
-    final List<dynamic> assistant = session['assistant_messages'] is List
-        ? session['assistant_messages'] as List<dynamic>
-        : const <dynamic>[];
-    final List<dynamic> inputs = session['inputs'] is List
-        ? session['inputs'] as List<dynamic>
-        : const <dynamic>[];
-    final List<Map<String, dynamic>> items = <Map<String, dynamic>>[
-      for (final dynamic item in assistant)
-        if (item is Map<String, dynamic>) item,
-      for (final dynamic item in inputs)
-        if (item is Map<String, dynamic>) item,
-    ]..sort(
-      (Map<String, dynamic> a, Map<String, dynamic> b) =>
-          ((a['created_at'] as num?) ?? 0).toDouble().compareTo(
-            ((b['created_at'] as num?) ?? 0).toDouble(),
-          ),
-    );
+  static List<dynamic> _list(dynamic value) =>
+      value is List ? value : const <dynamic>[];
+
+  /// 无任务：清空任务态，保留实例标识。
+  void _resetTaskState() {
+    _closeStream();
+    _taskId = null;
+    _cursor = null;
+    _appliedSeq = -1;
+    _target = '';
+    _taskStatus = 'idle';
+    _recordingId = null;
+    _recording = 'idle';
+    _recordingStartedAt = null;
+    _stopRecordTick();
+    _observation = _idleObservation;
+    _observed = false;
+    _stale = false;
+    _note = '';
     _messageIds.clear();
-    _messages = const [];
+    _messages.clear();
     _messageSeq = 0;
-    for (final Map<String, dynamic> item in items) {
-      final String? key = (item['message_id'] ?? item['input_id'])?.toString();
-      if (key == null) continue;
-      final String role = item.containsKey('message_id')
-          ? 'assistant'
-          : 'student';
-      _appendMessage(key, role, item['text']?.toString() ?? '');
+    _pendingInputs.clear();
+    _actions.clear();
+  }
+
+  // ========== 资源映射 ==========
+
+  void _applyTask(dynamic task) {
+    if (task is! Map<String, dynamic>) return;
+    _taskId = (task['task_id'] as num?)?.toInt() ?? _taskId;
+    _target = task['user_target']?.toString() ?? _target;
+    _taskStatus = task['status']?.toString() ?? _taskStatus;
+  }
+
+  /// MessageResponse：user 映射为学生消息，assistant 为机器人回答。
+  ///
+  /// 被拒绝的用户消息补一条机器人说明，页面据此结束“等待回答”。
+  void _applyMessage(dynamic message) {
+    if (message is! Map<String, dynamic>) return;
+    final String? id = message['message_id']?.toString();
+    if (id == null) return;
+    final String role = message['role'] == 'user' ? 'student' : 'assistant';
+    _putMessage(id, role, message['text']?.toString() ?? '');
+    if (role != 'student') return;
+    final String status = message['status']?.toString() ?? '';
+    if (status == 'accepted' || status == 'processing') {
+      _pendingInputs.add(id);
+      return;
+    }
+    _pendingInputs.remove(id);
+    if (status == 'rejected') {
+      final dynamic error = message['error'];
+      final String reason = error is Map<String, dynamic>
+          ? error['message']?.toString() ?? '处理失败'
+          : '处理失败';
+      _note = reason;
+      _putMessage('$id:rejected', 'assistant', '这句没有处理成：$reason');
     }
   }
 
-  ClassAction _actionFrom(Map<String, dynamic> item) {
-    final dynamic raw = item['raw_request'];
-    final String label = raw is Map<String, dynamic>
-        ? raw['skill_name']?.toString() ?? '动作'
-        : '动作';
-    return ClassAction(
-      (item['action_id'] as num?)?.toInt() ?? 0,
-      label,
-      item['status']?.toString() ?? '',
-    );
+  /// 按合同编号新增或更新消息，界面编号保持首次出现的顺序。
+  void _putMessage(String key, String role, String text) {
+    final int? existing = _messageIds[key];
+    if (existing != null) {
+      _messages[existing] = ClassMessage(existing, role, text);
+      return;
+    }
+    _messageSeq += 1;
+    _messageIds[key] = _messageSeq;
+    _messages[_messageSeq] = ClassMessage(_messageSeq, role, text);
   }
 
+  void _applyAction(dynamic action) {
+    if (action is! Map<String, dynamic>) return;
+    final int? id = (action['action_id'] as num?)?.toInt();
+    if (id != null) _actions[id] = action;
+  }
+
+  /// 播报状态取自最近一个 speak 动作。
+  String get _playback {
+    final List<int> ids =
+        _actions.keys
+            .where((int id) => _actions[id]!['skill_name'] == 'speak')
+            .toList()
+          ..sort();
+    if (ids.isEmpty) return 'idle';
+    return switch (_actions[ids.last]!['status']?.toString()) {
+      'queued' => 'synthesizing',
+      'running' || 'verifying' => 'playing',
+      'succeeded' => 'completed',
+      'failed' || 'timed_out' => 'failed',
+      'cancelling' || 'cancelled' => 'stopped',
+      _ => 'idle',
+    };
+  }
+
+  /// ObservationResponse：摘要加物体方位作为观察说明。
   void _applyObservation(dynamic observation) {
     if (observation is! Map<String, dynamic>) return;
-    _observed = observation['status']?.toString() == 'succeeded';
+    final String summary = observation['summary']?.toString() ?? '';
+    final List<String> objects = <String>[
+      for (final dynamic item in _list(observation['objects']))
+        if (item is Map<String, dynamic>)
+          '${item['label']}（${item['position']}）',
+    ];
+    _observation = <String>[
+      if (summary.isNotEmpty) summary,
+      if (objects.isNotEmpty) '物体：${objects.join('、')}',
+    ].join('\n');
+    if (_observation.isEmpty) _observation = '画面中没有识别出明确物体。';
+    _observed = true;
     _stale = observation['stale'] == true;
-    final dynamic snapshot = observation['snapshot'];
-    if (snapshot is Map<String, dynamic>) {
-      final String? summary = snapshot['summary']?.toString();
-      if (summary != null && summary.isNotEmpty) _observation = summary;
-    }
-    final dynamic error = observation['error'];
-    if (error is Map<String, dynamic> && error['message'] != null) {
-      _note = error['message'].toString();
-    }
   }
 
-  /// 把设备端 error 归一成一句可展示的话。
-  ///
-  /// 合同里 `playback.error` 的类型尚未定稿（string | object 待审核），
-  /// 两种形态都接，避免因为字段形态变化把失败原因丢掉。
-  void _noteFromError(dynamic error) {
-    if (error is String && error.isNotEmpty) {
-      _note = error;
-      return;
-    }
-    if (error is Map<String, dynamic> && error['message'] != null) {
-      _note = error['message'].toString();
-    }
-  }
-
-  /// 播放阶段决定是否更新设备说明：开始播放说明上一轮失败已翻篇，
-  /// failed/stopped 才需要把原因留在页面上。
-  void _applyPlaybackNote(String status, dynamic error) {
-    if (status == 'playing' || status == 'completed') {
-      _note = '';
-      return;
-    }
-    if (status == 'failed' || status == 'stopped') _noteFromError(error);
-  }
-
+  /// RecordingResponse；没有进行中的录音时为 null。
   void _applyRecording(dynamic recording) {
     if (recording is! Map<String, dynamic>) {
-      _recording = 'idle';
+      if (_recording == 'recording' || _recording == 'transcribing') {
+        _recording = 'idle';
+      }
       _recordingStartedAt = null;
       _stopRecordTick();
       return;
     }
     _recordingId = recording['recording_id']?.toString() ?? _recordingId;
     _recording = recording['status']?.toString() ?? _recording;
-    // 新一轮录音开始即清空上一条失败说明，否则旧提示会一直挂着。
-    if (_recording == 'recording') _note = '';
     _recordingStartedAt = (recording['started_at'] as num?)?.toDouble();
-    _noteFromError(recording['error']);
-    if (_recording == 'recording') {
-      _startRecordTick();
-    } else {
-      _stopRecordTick();
+    switch (_recording) {
+      case 'recording':
+        // 新一轮录音开始即清空上一条说明，否则旧提示会一直挂着。
+        _note = '';
+        _startRecordTick();
+        return;
+      case 'failed':
+        final dynamic error = recording['error'];
+        _note = error is Map<String, dynamic>
+            ? error['message']?.toString() ?? '录音或识别失败。'
+            : '录音或识别失败。';
+      case 'completed':
+        if ((recording['transcript']?.toString() ?? '').trim().isEmpty) {
+          _note = '没有识别到语音，请重新录音或输入文字。';
+        }
     }
+    _stopRecordTick();
   }
 
-  /// 录音秒数按 started_at 本地推算（仅展示，不回写服务端）。
+  /// 录音秒数按 started_at 本地推算，仅用于展示。
   void _startRecordTick() {
     _recordTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
       final double? startedAt = _recordingStartedAt;
       if (_disposed || startedAt == null) return;
-      final int seconds = (_nowSeconds() - startedAt).floor().clamp(0, 60);
+      final double now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+      final int seconds = (now - startedAt).floor().clamp(0, 60);
       if (seconds == _recordingSeconds) return;
       _recordingSeconds = seconds;
       _emit();
@@ -384,38 +374,43 @@ class DeviceClassroomService implements ClassroomService {
     _recordingSeconds = 0;
   }
 
-  double _nowSeconds() => DateTime.now().millisecondsSinceEpoch / 1000.0;
-
-  void _appendMessage(String key, String role, String text) {
-    if (_messageIds.containsKey(key)) return;
-    _messageSeq += 1;
-    _messageIds[key] = _messageSeq;
-    _messages = <ClassMessage>[
-      ..._messages,
-      ClassMessage(_messageSeq, role, text),
-    ];
+  /// v1.0 没有课堂阶段：处理中显示讲解中，任务进行中等待提问。
+  String get _stage {
+    if (_pendingInputs.isNotEmpty) return 'explaining';
+    if (_taskStatus == 'running' || _taskStatus == 'pending') {
+      return 'awaiting_input';
+    }
+    return 'not_started';
   }
 
   SessionModel _build() {
     _emitSeq += 1;
+    final List<int> messageIds = _messages.keys.toList()..sort();
     final List<int> actionIds = _actions.keys.toList()..sort();
     return SessionModel(
       instanceId: _instanceId,
       sequence: _emitSeq,
       taskId: _taskId ?? 0,
       target: _target,
-      taskStatus: _taskStatus,
+      // 页面按 running 判断可交互；合同的 pending 是尚未提交动作的进行中任务。
+      taskStatus: _taskStatus == 'pending' ? 'running' : _taskStatus,
       stage: _stage,
       recording: _recording,
       playback: _playback,
       observation: _observation,
       observed: _observed,
       stale: _stale,
-      messages: _messages,
-      actions: <ClassAction>[for (final int id in actionIds) _actions[id]!],
+      messages: <ClassMessage>[for (final int id in messageIds) _messages[id]!],
+      actions: <ClassAction>[
+        for (final int id in actionIds)
+          ClassAction(
+            id,
+            _actions[id]!['skill_name']?.toString() ?? '动作',
+            _actions[id]!['status']?.toString() ?? '',
+          ),
+      ],
       recordingSeconds: _recordingSeconds,
       note: _note,
-      pendingQuestionId: _pendingQuestionId,
     );
   }
 
@@ -427,17 +422,20 @@ class DeviceClassroomService implements ClassroomService {
   // ========== SSE 事件流 ==========
 
   Future<void> _ensureStream() async {
-    if (_disposed || _sseSub != null || _taskId == null) return;
-    final int taskId = _taskId!;
+    final int? taskId = _taskId;
+    final String? cursor = _cursor;
+    // 合同要求带游标建流；没有快照游标时先不建流。
+    if (_disposed || _sseSub != null || taskId == null || cursor == null) {
+      return;
+    }
     try {
       final http.Request request = http.Request(
         'GET',
-        _uri('tasks/$taskId/events'),
-      );
-      if (_cursor != null) request.headers['Last-Event-ID'] = _cursor!;
+        _uri(ApiPaths.events(taskId)),
+      )..headers['Last-Event-ID'] = cursor;
       final http.StreamedResponse response = await _client.send(request);
       if (response.statusCode != 200) {
-        throw ClassroomFailure('事件流建立失败。');
+        throw const ClassroomFailure('事件流建立失败。');
       }
       _connections.add(true);
       String eventType = '';
@@ -458,9 +456,7 @@ class DeviceClassroomService implements ClassroomService {
               final String field = colon < 0 ? line : line.substring(0, colon);
               final String value = colon < 0
                   ? ''
-                  : line
-                        .substring(colon + 1)
-                        .replaceFirst(RegExp(r'^ '), '');
+                  : line.substring(colon + 1).replaceFirst(RegExp(r'^ '), '');
               switch (field) {
                 case 'event':
                   eventType = value;
@@ -506,74 +502,59 @@ class DeviceClassroomService implements ClassroomService {
       return;
     }
     if (decoded is! Map<String, dynamic>) return;
-    final dynamic rawBody = decoded['data'];
-    if (rawBody is! Map<String, dynamic>) return;
-    final int sequence = (rawBody['sequence'] as num?)?.toInt() ?? -1;
-    // 合同：忽略已应用或更旧的事件。
+    final dynamic body = decoded['data'];
+    if (body is! Map<String, dynamic>) return;
+    final String eventType = body['type']?.toString() ?? type;
+    if (eventType == 'stream.reset') {
+      _onStreamReset();
+      return;
+    }
+    final int sequence = (body['sequence'] as num?)?.toInt() ?? -1;
     if (sequence >= 0 && sequence <= _appliedSeq) return;
     if (sequence >= 0) _appliedSeq = sequence;
-    final String? instance = rawBody['instance_id']?.toString();
-    if (instance != null) _instanceId = instance;
-    final String eventType = rawBody['type']?.toString() ?? type;
-    final dynamic rawPayload = rawBody['payload'];
-    final Map<String, dynamic>? payload = rawPayload is Map<String, dynamic>
-        ? rawPayload
-        : null;
-
+    final dynamic payload = body['payload'];
     switch (eventType) {
       case 'task.updated':
-        if (payload != null) {
-          _target = payload['user_target']?.toString() ?? _target;
-          _taskStatus = payload['status']?.toString() ?? _taskStatus;
-          _taskId = (payload['task_id'] as num?)?.toInt() ?? _taskId;
-        }
-      case 'teaching.updated':
-        if (payload != null) {
-          _stage = payload['stage']?.toString() ?? _stage;
-          final dynamic pending = payload['pending_question'];
-          _pendingQuestionId = pending is Map<String, dynamic>
-              ? pending['question_id']?.toString()
-              : null;
-        }
+        _applyTask(payload);
+      case 'message.updated':
+        _applyMessage(payload);
       case 'action.updated':
-        if (payload != null) {
-          final int? id = (payload['action_id'] as num?)?.toInt();
-          if (id != null) _actions[id] = _actionFrom(payload);
-        }
-      case 'observation.updated':
+        _applyAction(payload);
+      case 'observation.created':
         _applyObservation(payload);
       case 'recording.updated':
         _applyRecording(payload);
-      case 'input.updated':
-        if (payload != null && payload['input_id'] != null) {
-          _appendMessage(
-            payload['input_id'].toString(),
-            'student',
-            payload['text']?.toString() ?? '',
-          );
-        }
-      case 'playback.updated':
-        _playback = payload?['status']?.toString() ?? _playback;
-        _applyPlaybackNote(_playback, payload?['error']);
-      case 'camera.status':
-        final dynamic error = payload?['error'];
-        if (error is Map<String, dynamic> && error['message'] != null) {
-          _note = error['message'].toString();
-        }
-      case 'assistant.message':
-        if (payload != null && payload['message_id'] != null) {
-          _appendMessage(
-            payload['message_id'].toString(),
-            'assistant',
-            payload['text']?.toString() ?? '',
-          );
-        }
-      case 'stream.reset':
-        _onStreamBroken();
-        unawaited(_reload().then((_) => _emit()).catchError((Object _) {}));
+      default:
         return;
     }
     _emit();
+  }
+
+  /// 订阅失效：重读快照后以新游标建流。
+  ///
+  /// 首次重置立即重连；短时间内连续重置（例如服务端持续判定游标无效）
+  /// 按断线间隔退避，避免快照与建流在事件循环里空转。
+  void _onStreamReset() {
+    _closeStream();
+    final DateTime now = DateTime.now();
+    final DateTime? previous = _lastReset;
+    _lastReset = now;
+    final Duration delay =
+        previous != null && now.difference(previous) < _resetWindow
+        ? _streamRetryDelay
+        : Duration.zero;
+    unawaited(
+      _reload()
+          .then((_) {
+            _emit();
+            if (_disposed || _taskId == null) return;
+            _retryTimer?.cancel();
+            _retryTimer = Timer(delay, () => unawaited(_ensureStream()));
+          })
+          .catchError((Object _) {
+            _onStreamBroken();
+          }),
+    );
   }
 
   /// 游标格式 `<instance_id>:<sequence>`，取末段数字。
@@ -585,23 +566,29 @@ class DeviceClassroomService implements ClassroomService {
 
   // ========== 命令通道 ==========
 
+  /// [topicId] 为课堂演示保留，v1.0 不接受该字段，忽略。
   @override
   Future<void> createTask(String target, {String? topicId}) async {
-    final dynamic data = await _sendJson('POST', 'tasks', <String, dynamic>{
-      'client_request_id': _clientRequestId('task'),
-      'user_target': target,
-      'topic_id': ?topicId,
-    });
-    if (data is Map<String, dynamic>) {
-      _taskId = (data['task_id'] as num?)?.toInt() ?? _taskId;
-      _target = data['user_target']?.toString() ?? target;
-      _taskStatus = data['status']?.toString() ?? 'running';
-      _stage = 'not_started';
-    }
+    final dynamic data = await _sendJson(
+      'POST',
+      ApiPaths.tasks,
+      <String, dynamic>{
+        'client_request_id': _clientRequestId('task'),
+        'user_target': target,
+      },
+    );
+    final int? taskId = data is Map<String, dynamic>
+        ? (data['task_id'] as num?)?.toInt()
+        : null;
+    if (taskId == null) throw const ClassroomFailure('创建任务的响应不合法。');
+    // 建流需要快照游标；读取快照后再订阅，不会漏掉创建之后的事件。
+    _closeStream();
+    await _loadTask(taskId);
     _emit();
     await _ensureStream();
   }
 
+  /// v1.0 只有文字消息；[kind] 与 [questionId] 为课堂演示保留，忽略。
   @override
   Future<void> submitText(
     String text, {
@@ -611,17 +598,16 @@ class DeviceClassroomService implements ClassroomService {
     final int taskId = _requireTask();
     // 清掉上一条设备说明，避免旧失败提示挂在新一轮提问旁边。
     _note = '';
-    await _sendJson(
+    final dynamic data = await _sendJson(
       'POST',
-      'tasks/$taskId/inputs',
+      ApiPaths.messages(taskId),
       <String, dynamic>{
-        'client_request_id': _clientRequestId('input'),
-        'kind': kind,
+        'client_request_id': _clientRequestId('message'),
         'text': text,
-        'question_id': questionId,
       },
-      timeout: _speechTimeout,
     );
+    _applyMessage(data);
+    _emit();
   }
 
   @override
@@ -632,20 +618,12 @@ class DeviceClassroomService implements ClassroomService {
   }) async {
     final int taskId = _requireTask();
     _note = '';
-    final dynamic data = await _sendJson(
-      'POST',
-      'tasks/$taskId/recordings',
-      <String, dynamic>{
-        'client_request_id': _clientRequestId('rec'),
-        'kind': kind,
-        'question_id': questionId,
-        'max_duration_s': maxDurationS,
-      },
-    );
-    if (data is Map<String, dynamic>) {
-      _recordingId = data['recording_id']?.toString();
-      _applyRecording(data);
-    }
+    final dynamic data =
+        await _sendJson('POST', ApiPaths.recordings(taskId), <String, dynamic>{
+          'client_request_id': _clientRequestId('recording'),
+          'max_duration_s': maxDurationS,
+        });
+    _applyRecording(data);
     _emit();
   }
 
@@ -653,14 +631,13 @@ class DeviceClassroomService implements ClassroomService {
   Future<void> finishRecording() async {
     final int taskId = _requireTask();
     final String? recordingId = _recordingId;
-    if (recordingId == null) {
-      throw ClassroomFailure('没有进行中的录音。');
+    if (recordingId == null || _recording != 'recording') {
+      throw const ClassroomFailure('没有进行中的录音。');
     }
     final dynamic data = await _sendJson(
       'PATCH',
-      'tasks/$taskId/recordings/$recordingId',
+      ApiPaths.recording(taskId, recordingId),
       <String, dynamic>{'status': 'transcribing'},
-      timeout: _speechTimeout,
     );
     _applyRecording(data);
     _emit();
@@ -671,35 +648,30 @@ class DeviceClassroomService implements ClassroomService {
     final int taskId = _requireTask();
     final dynamic data = await _sendJson(
       'PATCH',
-      'tasks/$taskId',
+      ApiPaths.task(taskId),
       <String, dynamic>{'status': 'cancelling'},
     );
-    if (data is Map<String, dynamic>) {
-      _taskStatus = data['status']?.toString() ?? _taskStatus;
-    }
+    _applyTask(data);
     _emit();
   }
 
+  /// v1.0 的观察由机器人发起：以一句提问请机器人重新看一看。
   @override
-  Future<void> refreshObservation({
-    String question = '请描述画面中的物体及其相对位置。',
-  }) async {
-    final int taskId = _requireTask();
-    await _sendJson('POST', 'tasks/$taskId/observations', <String, dynamic>{
-      'client_request_id': _clientRequestId('obs'),
-      'question': question,
-    });
-  }
+  Future<void> refreshObservation({String question = '请看看现在桌上有什么。'}) =>
+      submitText(question);
 
   int _requireTask() {
     final int? taskId = _taskId;
-    if (taskId == null) throw ClassroomFailure('尚未创建教学任务。');
+    if (taskId == null ||
+        (_taskStatus != 'running' && _taskStatus != 'pending')) {
+      throw const ClassroomFailure('请先开始任务。');
+    }
     return taskId;
   }
 
   @override
   void setScenario(DemoScenario scenario) {
-    // 真实数据源无演示场景；保持空实现以满足页面统一接口。
+    // 真实数据源没有演示场景；保持空实现以满足页面统一接口。
   }
 
   @override
@@ -711,13 +683,13 @@ class DeviceClassroomService implements ClassroomService {
 
   @override
   Uri? cameraSnapshotUrl({int? maxWidth}) => _uri(
-    'camera/snapshot',
+    ApiPaths.cameraSnapshot,
     maxWidth != null ? <String, String>{'max_width': '$maxWidth'} : null,
   );
 
+  /// v1.0 没有 MJPEG 流，画面由页面轮询单帧快照。
   @override
-  Uri? cameraStreamUrl({int fps = 10}) =>
-      _uri('camera/stream', <String, String>{'fps': '$fps'});
+  Uri? cameraStreamUrl({int fps = 10}) => null;
 
   @override
   void dispose() {

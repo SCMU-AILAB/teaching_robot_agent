@@ -1,25 +1,24 @@
 // frontend/lib/features/classroom/classroom_service.dart
 import 'session_model.dart';
 
-/// 页面内部的数据源边界；字段语义对齐 API_CONTRACT.md 的 HTTP 合同。
+/// 页面内部的数据源边界；网络语义以根目录 API_CONTRACT.md v1.0 为准。
 ///
-/// 实现有两路：MockClassroomService（本地演示）与 DeviceClassroomService
-/// （Jetson 设备端 /api/v1）。带 kind/question_id 的提交与合同的输入/录音
-/// 通道一一对应；地址类能力返回 null 表示该数据源不支持。
+/// 实现有两路：MockClassroomService（测试替身）与 DeviceClassroomService
+/// （机器人后端 /api/v1）。kind/question_id 为课堂演示保留，v1.0 不使用；
+/// 地址类能力返回 null 表示该数据源不支持。
 abstract interface class ClassroomService {
   Stream<SessionModel> get events;
   Stream<bool> get connections;
 
-  /// 初始化或断线重连时的聚合快照（合同 GET /tasks/{id}/session）。
+  /// 初始化或断线重连时的任务快照（合同 GET /tasks/{id}）。
   Future<SessionModel> snapshot();
 
   /// 创建教学任务（合同 POST /tasks）；topicId 省略由核心选择主题。
   Future<void> createTask(String target, {String? topicId});
 
-  /// 提交学生输入（合同 POST /tasks/{id}/inputs）。
+  /// 提交文字（合同 POST /tasks/{id}/messages）。
   ///
-  /// [kind] 为 question 或 answer；answer 必须携带 [questionId] 匹配当前
-  /// 待答问题。语音转写最终文本由服务端提交，前端不得再转发。
+  /// 语音转写最终文本由服务端登记为消息，前端不得再转发。
   Future<void> submitText(
     String text, {
     String kind = 'question',
@@ -28,7 +27,7 @@ abstract interface class ClassroomService {
 
   /// 开始录音（合同 POST /tasks/{id}/recordings）。
   ///
-  /// [kind]/[questionId] 与文字输入同语义；[maxDurationS] 到时自动结束。
+  /// [maxDurationS] 到时自动结束。
   Future<void> startRecording({
     String kind = 'question',
     String? questionId,
@@ -41,10 +40,8 @@ abstract interface class ClassroomService {
   /// 停止任务（合同 PATCH /tasks/{id}，status=cancelling）。
   Future<void> stopTask();
 
-  /// 请求一次场景观察（合同 POST /tasks/{id}/observations）。
-  Future<void> refreshObservation({
-    String question = '请描述画面中的物体及其相对位置。',
-  });
+  /// 请机器人重新观察；v1.0 的观察由机器人发起，实现为一句提问。
+  Future<void> refreshObservation({String question = '请描述画面中的物体及其相对位置。'});
 
   /// 断线后重新拉取快照并恢复事件流。
   Future<void> reconnect();
@@ -60,6 +57,6 @@ abstract interface class ClassroomService {
   /// 摄像头快照地址（合同 GET /api/v1/camera/snapshot）；不支持返回 null。
   Uri? cameraSnapshotUrl({int? maxWidth});
 
-  /// 摄像头 MJPEG 流地址（合同 GET /api/v1/camera/stream）；不支持返回 null。
+  /// 摄像头 MJPEG 流地址；v1.0 没有该接口，真实数据源返回 null 并改为轮询快照。
   Uri? cameraStreamUrl({int fps = 10});
 }

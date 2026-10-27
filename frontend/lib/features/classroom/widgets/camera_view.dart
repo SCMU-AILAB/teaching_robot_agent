@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../../core/constants/app_radius.dart';
+import 'camera_snapshot_view.dart';
 import 'camera_view_io.dart'
     if (dart.library.js_interop) 'camera_view_web.dart'
     as platform;
@@ -12,8 +13,9 @@ import 'camera_view_io.dart'
 /// Web 端把 MJPEG 流交给浏览器 `<img>` 原生解码（CPU 占用低、延迟最小），
 /// 其余平台无法解码 multipart 流，改为按帧轮询单帧快照。
 ///
-/// [streamUrl] 为空表示当前数据源没有摄像头（例如纯内存测试替身），
-/// 直接显示 [CameraUnavailable]，不做任何网络请求。
+/// 数据源没有 MJPEG 流（API_CONTRACT v1.0）时，各平台都轮询单帧快照；
+/// 两个地址都为空表示没有摄像头（例如纯内存测试替身），直接显示
+/// [CameraUnavailable]，不做任何网络请求。
 class CameraView extends StatelessWidget {
   const CameraView({
     required this.streamUrl,
@@ -24,7 +26,7 @@ class CameraView extends StatelessWidget {
     super.key,
   });
 
-  /// MJPEG 地址（合同 GET /api/v1/camera/stream）。
+  /// MJPEG 地址；v1.0 没有该接口，为空时轮询单帧快照。
   final Uri? streamUrl;
 
   /// 单帧地址（合同 GET /api/v1/camera/snapshot），非 Web 平台轮询使用。
@@ -45,7 +47,16 @@ class CameraView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Uri? stream = streamUrl;
-    if (stream == null) return unavailable;
+    if (stream == null) {
+      final Uri? snapshot = snapshotUrl;
+      if (snapshot == null) return unavailable;
+      return SnapshotCameraView(
+        snapshotUrl: snapshot,
+        fps: fps,
+        borderRadius: borderRadius,
+        unavailable: unavailable,
+      );
+    }
     return platform.buildCameraView(
       streamUrl: stream,
       snapshotUrl: snapshotUrl,

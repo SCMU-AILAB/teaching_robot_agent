@@ -26,7 +26,7 @@ class ObservationPanel extends StatelessWidget {
   /// 设备端连接状态：决定画面、观察文本与刷新入口是否可用。
   final DeviceConnection connection;
 
-  /// 摄像头 MJPEG 地址（合同 GET /api/v1/camera/stream）。
+  /// 摄像头 MJPEG 地址；v1.0 没有该接口，为空时轮询单帧快照。
   final Uri? streamUrl;
 
   /// 摄像头单帧地址（合同 GET /api/v1/camera/snapshot）。
@@ -95,14 +95,11 @@ class ObservationPanel extends StatelessWidget {
         ],
       ),
       const SizedBox(height: 8),
-      Text(
-        switch (connection) {
-          DeviceConnection.connecting => '正在获取设备数据，请稍候…',
-          DeviceConnection.connected => state.observation,
-          DeviceConnection.disconnected => '未连接服务器，暂无观察结果。',
-        },
-        style: const TextStyle(height: 1.8),
-      ),
+      Text(switch (connection) {
+        DeviceConnection.connecting => '正在获取设备数据，请稍候…',
+        DeviceConnection.connected => state.observation,
+        DeviceConnection.disconnected => '未连接服务器，暂无观察结果。',
+      }, style: const TextStyle(height: 1.8)),
     ],
   );
 
@@ -121,10 +118,7 @@ class ObservationPanel extends StatelessWidget {
       children: [
         Icon(Symbols.videocam_rounded, size: 12, color: Color(0xff147d64)),
         SizedBox(width: 5),
-        Text(
-          '设备摄像头',
-          style: TextStyle(fontSize: 11, color: Color(0xff147d64)),
-        ),
+        Text('设备摄像头', style: TextStyle(fontSize: 11, color: Color(0xff147d64))),
       ],
     ),
   );
