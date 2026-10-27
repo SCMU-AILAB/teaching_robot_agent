@@ -109,8 +109,10 @@ class MoveRelativeSkill(RobotSkill):
             return False
         return abs(
             math.remainder(state.position.yaw - target_yaw, math.tau)
-        ) <= 0.001 and all(
-            math.isclose(actual, target, rel_tol=0.0, abs_tol=0.001)
+        ) <= robot.yaw_tolerance_rad and all(
+            math.isclose(
+                actual, target, rel_tol=0.0, abs_tol=robot.position_tolerance_m
+            )
             for actual, target in (
                 (state.position.x, target_x),
                 (state.position.y, target_y),

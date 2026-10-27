@@ -4,8 +4,9 @@
 Jetson 算力板的设备端服务，推理与语音合成仍在服务器侧。Web 构建保留给远程看板
 和板端本机调试。
 
-页面只接设备端真实数据：任务、对话、观察、录音/播报状态来自 `GET /api/v1/...`
-与 SSE 事件流，观察视野是 Jetson 摄像头的画面。没有本地示例对话、示例场景图片，
+页面只接机器人后端的真实数据，接口以根目录 `API_CONTRACT.md` v1.0 为准：任务、
+对话、动作、观察、录音来自 `GET /api/v1/tasks/{id}` 快照与 SSE 事件流，播报状态
+取自最近一个 `speak` 动作，观察视野是 Jetson 摄像头的画面。没有本地示例对话、示例场景图片，
 也没有模拟数据源兜底——连不上设备时显示「未连接服务器」。
 
 ## 运行与检查
@@ -14,7 +15,13 @@ Jetson 算力板的设备端服务，推理与语音合成仍在服务器侧。W
 cd frontend
 flutter pub get
 flutter analyze
-flutter test                       # 66 项
+flutter test                       # 85 项
+```
+
+后端（Jetson）按前端默认端口启动，局域网访问需显式监听所有地址：
+
+```bash
+ROBOT_API_HOST=0.0.0.0 ROBOT_API_PORT=8090 uv run python -m app.robot_server
 ```
 
 ## 设备地址：运行时设置，不用重新构建
@@ -66,8 +73,10 @@ Mac 与 Jetson 在同一局域网时，地址填 `http://192.168.0.127:8090`；�
 | 接口 | 耗时 | 说明 |
 |---|---|---|
 | `GET /system` | 13–15 ms | 连接指示与摄像头状态 |
-| `GET /tasks/{id}/session` | 14 ms | 聚合快照 |
+| `GET /tasks/{id}` | 14 ms | 任务快照 |
 | `GET /camera/snapshot?max_width=640` | 19 ms / 56 KB | 2 fps 约 0.9 Mbps |
+
+以上数据测于 10 月的板端联调服务，迁到 v1.0 后端后待复测。
 
 ## macOS 桌面版与 DMG
 
@@ -93,12 +102,11 @@ hdiutil create -volname "教学机器人" -srcfolder /tmp/dmg-stage \
 
 ## 公网访问的前提与风险
 
-设备端 `spike/device_api.py` 是联调服务，**没有鉴权、`Access-Control-Allow-Origin: *`**，
-能建/停任务、读对话、拉摄像头画面。所以：
+后端 `app.robot_server` **没有鉴权**，能建/停任务、读对话、拉摄像头画面。所以：
 
 - 优先用隧道组网（WireGuard / Tailscale / SSH 端口转发），不要直接映射 8090；
 - 必须公网直连时：只放行固定来源 IP、改非默认端口、外加 TLS 反向代理；
-- 要真正做到可公开访问，得先给 API 加 token（合同 + `device_api` + 前端一起改）。
+- 要真正做到可公开访问，得先给 API 加 token（合同 + 后端 + 前端一起改）。
 
 画面带宽：桌面端每秒拉 `camera/snapshot` 若干次，当前默认 **3 fps / 800px 宽**
 （约 1–2 Mbps）。觉得模糊可以把 `classroom_page.dart` 里的 `maxWidth` 调回 960，
@@ -111,15 +119,16 @@ flutter build web --dart-define=DEVICE_API_BASE=http://<设备IP>:8090
 # 把 build/web 交给任意静态服务器；不想写死地址就用页面参数 ?api=...
 ```
 
-Web 端把 `GET /api/v1/camera/stream`（MJPEG）交给浏览器 `<img>` 原生解码；
-桌面端无法解码 multipart，改为按帧轮询 `camera/snapshot`（这就是帧率的来源）。
+v1.0 没有 MJPEG 流，各平台都按帧轮询 `camera/snapshot`（这就是帧率的来源）。
+后端没有跨源响应头，Web 版页面须与后端同源托管；桌面版不受此限制。
 
 ## 已实现
 
 - 连接三态：正在连接设备… / 设备连接正常 / 未连接服务器；服务器通但摄像头没
   画面时单独显示「摄像头未就绪」，不误报成未连接。
-- 创建课堂目标、文字提问、语音录音入口；对话按 SSE 增量追加并去重。
-- 观察结果、教学阶段、动作记录、合成与播放状态分开展示，字段全部来自快照。
+- 创建任务、文字提问、语音录音入口；对话按 SSE 增量追加并去重，机器人回答先以
+  播报文本出现、随后补全，不重复追加；被拒绝的消息显示机器人说明与原因。
+- 观察结果、动作记录、播报状态分开展示，字段全部来自快照与事件。
 - 停止请求先进入 cancelling，收到设备确认后才进入 cancelled。
 - 断线提示、手动重连、`stream.reset` 触发快照重放、配置持久化。
 - 桌面与手机布局；页面销毁时关闭订阅、定时器与 HTTP 连接。
@@ -129,9 +138,13 @@ Web 端把 `GET /api/v1/camera/stream`（MJPEG）交给浏览器 `<img>` 原生�
 `features/classroom/` 存放页面、控制器、模型与数据源适配器；`widgets/` 只负责
 展示。页面不发网络请求，统一走 `ClassroomService`。
 
-`DeviceClassroomService` 是合同 `API_CONTRACT.md` v0.2 草案的前端实现：聚合快照
-+ SSE（`Last-Event-ID` 断点续传）+ 命令通道，统一响应 `{code,message,data}`，
-非 0 code 包装为 `ClassroomFailure`。合同仍为草案，端点或字段变更须先改合同。
+`DeviceClassroomService` 是 `API_CONTRACT.md` v1.0 的前端实现：任务快照 + SSE
+（`Last-Event-ID` 断点续传，`stream.reset` 后重读快照，连续重置按断线间隔退避）
++ 任务/消息/录音命令通道，统一响应 `{code,message,data}`，非 0 code 包装为
+`ClassroomFailure`。v1.0 没有课堂阶段、观察请求和 MJPEG：阶段由消息处理状态推导，
+“刷新观察”以一句提问请机器人重新观察。
+
+`core/constants/api_paths.dart` 按根目录 API_CONTRACT.md v1.0 定义全部网络路径，前端只能使用其中的端点；新增或修改路径必须先改接口文档并经项目负责人确认。只由数据源适配器连接事件接口，禁止新增 Runtime.next_event() 消费者。
 
 `MockClassroomService` 只作为测试替身存在（`test/` 使用），页面不再引用。
 
@@ -144,7 +157,7 @@ Web 端把 `GET /api/v1/camera/stream`（MJPEG）交给浏览器 `<img>` 原生�
 
 ## 尚未完成
 
-- 录音与播报仍是设备端状态展示，真实采音与 TTS 播放由语音层（`speech/`）落地后联调。
-- 教学回答在设备端仍是模拟内容（响应里标记 `simulated`），待 Teaching Agent 接入。
+- 尚未与 Jetson 上的 v1.0 后端实机联调；本地已用模拟设备后端走通创建、提问、事件流与停止。
+- 页面没有“确认完成”（`PATCH status=completed`）入口，任务只能停止。
 - 公网链路没有 TLS 与鉴权，见上文「公网访问的前提与风险」。
 - Web 平台视图是真实 DOM 节点，Flutter 控件无法叠在其上，画面角标放在标题行。

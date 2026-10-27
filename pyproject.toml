@@ -5,14 +5,18 @@ description = "教学机器人基础层：模拟设备、Skill 与异步动作 R
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.120",
     "langchain-core>=1.6.6",
     "langchain-ollama>=1.1.0",
     "opencv-python-headless>=5.0.0.93",
     "pillow>=12.3.0",
     "pydantic>=2.13.5",
+    "uvicorn>=0.37",
 ]
 
 [project.optional-dependencies]
+# 小车底盘串口；仅 app.car_teleop 与 robot.car_link.open_serial 需要。
+car = ["pyserial>=3.5"]
 speech-client = ["sounddevice>=0.5.6"]
 # faster-whisper 1.2.1 仍使用 PyAV 在 19 中移除的 metadata_errors 参数。
 speech = [
@@ -52,4 +56,6 @@ convention = "google"
 dev = [
     "basedpyright>=1.40.1",
     "ruff>=0.16.9",
+    "pyserial>=3.5",
+    "types-pyserial>=3.5",
 ]

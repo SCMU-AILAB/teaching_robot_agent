@@ -17,4 +17,10 @@ Thumbs.db
 .zed/
 
 # 本地下载的模型权重，不提交仓库
-models/
+# 只忽略根目录的模型文件；不带 / 会把前端等处名为 models 的源码目录一起忽略。
+/models/
+
+# 小车原厂/原有固件备份，仅本地保存；Rust 编译缓存与固件镜像不入库
+firmware/backup/
+target/
+firmware/**/*.bin

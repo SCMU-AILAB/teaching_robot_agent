@@ -1,0 +1,25 @@
+# firmware/car/Cargo.toml
+[package]
+name = "car-fw"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+embassy-stm32 = { version = "0.6.0", features = ["stm32f407ve", "time-driver-tim12", "memory-x"] }
+embassy-sync = "0.8.0"
+embedded-io = "0.7.1"
+embedded-io-async = "0.7.0"
+static_cell = "2"
+car-core = { path = "../car-core" }
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = "0.5.1"
+cortex-m = { version = "0.7.9", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.7"
+panic-halt = "1.0.0"
+
+[profile.release]
+debug = true
+lto = true
+opt-level = "s"
+codegen-units = 1
