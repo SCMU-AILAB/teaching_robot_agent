@@ -79,8 +79,9 @@ class RobotHost:
 
         Raises:
             ValueError: 未启动、输入冲突、任务停止或失败输入被重放。
-            RuntimeError: 模型重复动作或超出续接上限。
-            Exception: 模型或工具失败；宿主先取消任务动作再向外传播。
+            RuntimeError: 模型重复动作。
+            Exception: 模型或工具失败；宿主先停止本条输入提交的动作再向外传播，
+                任务保留，设备停止无法确认时才结束任务。
         """
         async with self._lock:
             # ========== Step1: 去重在副作用之前完成，失败输入不自动重放 ==========
@@ -102,16 +103,26 @@ class RobotHost:
                 del self._seen[oldest]
                 _ = self._replies.pop(oldest, None)
             self._seen[item.input_id] = item
+            before = {
+                record.action_id
+                for record in (await self._gateway.get_snapshot(item.task_id)).actions
+            }
             worker = asyncio.create_task(self._handle(item), name="robot-input")
             self._workers[item.task_id] = worker
             try:
                 reply = await worker
                 self._replies[item.input_id] = reply
                 return reply
+            except Exception:
+                # 模型或工具失败只作废本条输入：停止它提交的动作，任务继续接受下一句。
+                if item.task_id in self._stopped or not await self._abandon_turn(
+                    item.task_id, before
+                ):
+                    await self._stop_task(item.task_id)
+                raise
             except BaseException:
-                # 输入处理被取消也不能遗留已接受的机器人动作。
-                self._stopped.add(item.task_id)
-                _ = await self._gateway.cancel_task(item.task_id)
+                # 停止任务或宿主关闭取消了处理，也不能遗留已接受的机器人动作。
+                await self._stop_task(item.task_id)
                 raise
             finally:
                 _ = self._workers.pop(item.task_id, None)
@@ -147,6 +158,45 @@ class RobotHost:
             _ = await self.cancel(task_id)
         if workers:
             _ = await asyncio.gather(*workers, return_exceptions=True)
+
+    async def _stop_task(self, task_id: int) -> None:
+        """结束整个任务：用户停止、宿主关闭或设备停止无法确认时使用."""
+        self._stopped.add(task_id)
+        _ = await self._gateway.cancel_task(task_id)
+
+    async def _abandon_turn(self, task_id: int, before: set[int]) -> bool:
+        """作废本条输入：取消并等待它提交的动作，清空策略的本轮状态.
+
+        Args:
+            task_id: 任务编号.
+            before: 本条输入开始前任务已有的动作编号.
+
+        Returns:
+            任务仍可继续交互时为 True；执行层因停止确认失败而锁定时为 False.
+        """
+        snapshot = await self._gateway.get_snapshot(task_id)
+        started = [
+            record.action_id
+            for record in snapshot.actions
+            if record.action_id not in before
+        ]
+        for action_id in started:
+            _ = await self._gateway.cancel_action(task_id, action_id)
+        for action_id in started:
+            _ = await self._gateway.wait_for_action(task_id, action_id)
+        agent = self._agents.get(task_id)
+        if agent is not None:
+            agent.abandon_turn()
+        snapshot = await self._gateway.get_snapshot(task_id)
+        return snapshot.blocked_reason is None and snapshot.task.status in {
+            TaskStatus.PENDING,
+            TaskStatus.RUNNING,
+        }
+
+    async def _end_turn(self, task_id: int) -> None:
+        """动作链未正常结束：作废本轮；设备停止无法确认时结束任务."""
+        if not await self._abandon_turn(task_id, set()):
+            await self._stop_task(task_id)
 
     async def _require_active(self, task_id: int) -> None:
         """阻止停止之后的新交互及迟到模型输出."""
@@ -199,11 +249,14 @@ class RobotHost:
                     )
                     await self._require_active(item.task_id)
                     if spoken.status != ActionStatus.SUCCEEDED:
-                        self._stopped.add(item.task_id)
-                        _ = await self._gateway.cancel_task(item.task_id)
+                        # 播报失败不影响文字回答；只有扬声器停止无法确认才结束任务。
+                        if (
+                            await self._gateway.get_snapshot(item.task_id)
+                        ).blocked_reason is not None:
+                            await self._stop_task(item.task_id)
                         return await self._reply(
                             item.task_id,
-                            turn.text + "\n播报未完成，文字回答已保留。",
+                            turn.text + "（语音播报未完成，文字回答已保留。）",
                             tuple(actions),
                         )
                 # 模型文字不是目标达成证据；任务保留，允许澄清和宿主显式验收。
@@ -214,19 +267,17 @@ class RobotHost:
             result = await self._gateway.wait_for_action(item.task_id, action_id)
             await self._require_active(item.task_id)
             if result.status != ActionStatus.SUCCEEDED:
-                self._stopped.add(item.task_id)
-                _ = await self._gateway.cancel_task(item.task_id)
+                await self._end_turn(item.task_id)
                 return await self._reply(
                     item.task_id,
-                    f"动作未成功，状态为 {result.status.value}，已结束本次任务。",
+                    f"动作未成功（{result.status.value}），已停下，可以换个说法再试。",
                     tuple(actions),
                 )
             if len(actions) == self._max_actions:
-                self._stopped.add(item.task_id)
-                _ = await self._gateway.cancel_task(item.task_id)
+                await self._end_turn(item.task_id)
                 return await self._reply(
                     item.task_id,
-                    "已达到连续动作上限，本次任务已停止；不代表整体目标已完成。",
+                    "已连续执行多个动作，先停在这里；不代表整体目标已完成。",
                     tuple(actions),
                 )
             # 不重发原输入，避免模型把相同移动指令再次当作新命令。
