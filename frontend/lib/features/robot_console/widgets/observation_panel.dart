@@ -38,7 +38,11 @@ class ConsoleObservationPanel extends StatelessWidget {
     child: const Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.warning_amber_outlined, size: 16, color: ConsoleColors.warning),
+        Icon(
+          Icons.warning_amber_outlined,
+          size: 16,
+          color: ConsoleColors.warning,
+        ),
         SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -123,10 +127,7 @@ class ConsoleObservationPanel extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
-          '示例场景资源，与本轮观察结果无直接对应关系',
-          style: ConsoleText.caption,
-        ),
+        const Text('示例场景资源，与本轮观察结果无直接对应关系', style: ConsoleText.caption),
         const SizedBox(height: ConsoleSpace.itemGap),
       ]);
     }

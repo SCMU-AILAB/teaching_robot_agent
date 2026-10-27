@@ -59,7 +59,9 @@ void main() {
     });
 
     testWidgets('处理中不能验收，回答链结束后可以验收', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       // 处理链未结束，验收必须被拒绝。
@@ -73,7 +75,9 @@ void main() {
     });
 
     testWidgets('停止先 cancelling 后 cancelled，未终态动作转为取消', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('左转一下');
       await controller.submitText('左转一下');
       // 推进一拍让动作进入 queued。
@@ -98,7 +102,9 @@ void main() {
     });
 
     testWidgets('消息顺序正确且追问属于同一任务', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       await advance(tester, 5);
@@ -119,11 +125,15 @@ void main() {
     });
 
     testWidgets('处理中再次提交被拒绝', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       expect(await controller.submitText('还没好'), isFalse);
       expect(controller.error, '请等待当前处理结束。');
+      // 走完回答链，测试结束时不遗留模拟定时器。
+      await advance(tester, 6);
     });
   });
 
@@ -147,8 +157,7 @@ void main() {
       expect(
         controller.state.messages.any(
           (message) =>
-              message.role == 'user' &&
-              message.text == '帮我看看桌上有什么，注意安全。',
+              message.role == 'user' && message.text == '帮我看看桌上有什么，注意安全。',
         ),
         isTrue,
       );
@@ -209,8 +218,7 @@ void main() {
       expect(
         controller.state.messages.any(
           (message) =>
-              message.role == 'user' &&
-              message.text == '帮我看看桌上有什么，注意安全。',
+              message.role == 'user' && message.text == '帮我看看桌上有什么，注意安全。',
         ),
         isTrue,
       );
@@ -227,6 +235,8 @@ void main() {
       expect(controller.state.playbackStatus, 'playing');
       expect(await controller.record(), isFalse);
       expect(controller.error, '音频设备正在使用或任务处理中，请稍后。');
+      // 走完回答链，测试结束时不遗留模拟定时器。
+      await advance(tester, 6);
     });
   });
 
@@ -264,8 +274,7 @@ void main() {
       expect(
         controller.state.messages.any(
           (message) =>
-              message.role == 'assistant' &&
-              message.text.contains('资料库没有相关条目'),
+              message.role == 'assistant' && message.text.contains('资料库没有相关条目'),
         ),
         isTrue,
       );
@@ -302,6 +311,8 @@ void main() {
       await controller.submitText('你好');
       expect(await controller.refresh(), isFalse);
       expect(controller.error, '请等待当前处理结束。');
+      // 走完回答链，测试结束时不遗留模拟定时器。
+      await advance(tester, 6);
     });
   });
 
@@ -312,10 +323,9 @@ void main() {
       );
       await controller.createTask('左转一下');
       await controller.submitText('左转一下');
-      final RobotAction actionOfState() =>
-          controller.state.actions.singleWhere(
-            (action) => action.skillName == 'turn_relative',
-          );
+      RobotAction actionOfState() => controller.state.actions.singleWhere(
+        (action) => action.skillName == 'turn_relative',
+      );
       await tester.pump(const Duration(milliseconds: 100));
       expect(actionOfState().status, 'queued');
       await tester.pump(const Duration(milliseconds: 100));
@@ -350,9 +360,7 @@ void main() {
       expect(controller.state.note, '语音合成失败，回答文字已保留。');
       // 回答文字保留为 assistant 消息。
       expect(
-        controller.state.messages.any(
-          (message) => message.role == 'assistant',
-        ),
+        controller.state.messages.any((message) => message.role == 'assistant'),
         isTrue,
       );
       // 处理已结束，允许验收。
@@ -441,17 +449,10 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 100));
       for (final key in keys) {
-        expect(
-          find.byKey(Key(key)),
-          findsOneWidget,
-          reason: '宽屏布局缺少区域 $key',
-        );
+        expect(find.byKey(Key(key)), findsOneWidget, reason: '宽屏布局缺少区域 $key');
       }
       // 宽屏进入三栏：发送消息验证交互可用。
-      await tester.enterText(
-        find.byKey(const Key('target_input')),
-        '看看桌上有什么',
-      );
+      await tester.enterText(find.byKey(const Key('target_input')), '看看桌上有什么');
       await tester.tap(find.byKey(const Key('create_button')));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('机器人任务已就绪。'), findsOneWidget);
@@ -460,11 +461,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(500, 900));
       await tester.pump();
       for (final key in keys) {
-        expect(
-          find.byKey(Key(key)),
-          findsOneWidget,
-          reason: '窄屏布局缺少区域 $key',
-        );
+        expect(find.byKey(Key(key)), findsOneWidget, reason: '窄屏布局缺少区域 $key');
       }
     });
 
@@ -481,10 +478,7 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.enterText(
-        find.byKey(const Key('target_input')),
-        '闲聊',
-      );
+      await tester.enterText(find.byKey(const Key('target_input')), '闲聊');
       await tester.tap(find.byKey(const Key('create_button')));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.enterText(find.byKey(const Key('message_input')), '你好');

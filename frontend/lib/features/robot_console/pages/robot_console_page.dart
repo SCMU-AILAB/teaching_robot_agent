@@ -45,9 +45,7 @@ class _RobotConsolePageState extends State<RobotConsolePage> {
     // 优先使用外部注入的控制器；否则按传入服务或默认 Mock 自建。
     _controller =
         widget.controller ??
-        RobotConsoleController(
-          widget.service ?? MockRobotConsoleService(),
-        );
+        RobotConsoleController(widget.service ?? MockRobotConsoleService());
     unawaited(_controller.initialize());
   }
 
@@ -185,15 +183,18 @@ class _RobotConsolePageState extends State<RobotConsolePage> {
                   ],
                 );
               }
-              // 窄屏纵向：对话固定高度，观察与动作依次排列。
-              return ListView(
-                children: [
-                  SizedBox(height: 440, child: conversationPanel),
-                  const SizedBox(height: ConsoleSpace.panelGap),
-                  observationPanel,
-                  const SizedBox(height: ConsoleSpace.panelGap),
-                  actionPanel,
-                ],
+              // 窄屏纵向：对话固定高度，观察与动作依次排列；面板数量固定，一次构建全部。
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: 440, child: conversationPanel),
+                    const SizedBox(height: ConsoleSpace.panelGap),
+                    observationPanel,
+                    const SizedBox(height: ConsoleSpace.panelGap),
+                    actionPanel,
+                  ],
+                ),
               );
             },
           ),

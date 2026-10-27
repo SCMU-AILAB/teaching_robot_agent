@@ -189,3 +189,9 @@
 - **朗读清理**：新增 `speech/text.py` `speakable_text`，去掉标题、列表符号（“1. ”须带空格，行首“3.5 米”保留）、加粗、链接、代码块与表情，换行改为停顿；`SpeakSkill` 播报前清理，清理后为空则动作失败，证据记录 `spoken_text`。显示给前端的回答文本不改。
 - **测试**：新增 `tests/test_speakable_text.py` 4 项（含真实模型回答原文）；`test_object_safety_flow.py` 消息顺序测试按新顺序更新，新增安全问题检索命中断言与系统提示规则断言。Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，323 项 unittest 通过。
 - **真实模型复测**（示例桌面图片作文件摄像头）：6 个问题回答均为纯文本 33–58 字；插座、剪刀回答内容与资料条目一致；资料库没有条目时直接说明；闲聊不硬扯资料；首问约 3 秒（模型已热），其余约 1 秒。仍为单轮抽样，非系统评测。
+
+## 2026-10-27：控制台原型分支审查（feature/robot-console-ui）
+
+- **分支无法编译**：10-14 加入的根目录 `.gitignore` 规则 `models/` 未锚定，忽略了所有名为 models 的目录，作者的 `frontend/lib/features/robot_console/models/robot_console_models.dart` 从未进入提交，`flutter analyze` 144 个问题。main 已改为 `/models/`（`a0232db`）。按负责人指示，依据控制器、模拟服务、组件与测试中的用法重建该文件（9 个类型：`RobotSession`、`RobotStatus`、`ChatMessage`、`RobotAction`、`SceneObservation`、`SceneObject`、`SafetyEntry`、`ConsoleScenario`、`RobotConsoleFailure`），文件头注明为重建，不是原件；作者如保留原件可对照替换。
+- **原有问题**：测试中 `final RobotAction actionOfState() =>` 不是合法 Dart；4 项测试使用默认 900 ms 步长却只推进 500 ms；3 项测试结束时遗留模拟定时器；窄屏布局用懒加载 `ListView`，视口外面板不构建，改为与中屏一致的 `SingleChildScrollView`；8 个文件未按 `dart format` 格式化。
+- **验证**：`flutter analyze` 无问题，41 项 `flutter test` 通过，`flutter build web`（课堂与控制台两个入口）成功；Python 四项检查通过。控制台仍只使用模拟数据，未接 HTTP。

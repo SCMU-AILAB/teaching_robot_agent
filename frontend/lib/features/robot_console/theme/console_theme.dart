@@ -138,11 +138,7 @@ BoxDecoration consolePanelDecoration({Color? color}) => BoxDecoration(
   border: Border.all(color: ConsoleColors.border),
   borderRadius: BorderRadius.circular(ConsoleSpace.radius),
   boxShadow: const [
-    BoxShadow(
-      color: Color(0x0a000000),
-      blurRadius: 8,
-      offset: Offset(0, 2),
-    ),
+    BoxShadow(color: Color(0x0a000000), blurRadius: 8, offset: Offset(0, 2)),
   ],
 );
 

@@ -61,11 +61,7 @@ class ConsoleStatusBar extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         spacing: 24,
         runSpacing: 12,
-        children: [
-          _brand(),
-          _robotStatus(robot),
-          _controls(),
-        ],
+        children: [_brand(), _robotStatus(robot), _controls()],
       ),
     );
   }
@@ -116,9 +112,7 @@ class ConsoleStatusBar extends StatelessWidget {
         Icon(
           robot.isMoving ? Icons.directions_run : Icons.stop_circle_outlined,
           size: 16,
-          color: robot.isMoving
-              ? ConsoleColors.info
-              : ConsoleColors.textMuted,
+          color: robot.isMoving ? ConsoleColors.info : ConsoleColors.textMuted,
         ),
         Text(robot.isMoving ? '移动中' : '静止', style: ConsoleText.bodySmall),
         if (robot.poseText != null)
@@ -194,10 +188,7 @@ class ConsoleStatusBar extends StatelessWidget {
         // 请求处理中禁止切换连接，避免命令与断线状态交错。
         OutlinedButton.icon(
           onPressed: busy ? null : onToggleConnection,
-          icon: Icon(
-            connected ? Icons.link_off : Icons.link,
-            size: 16,
-          ),
+          icon: Icon(connected ? Icons.link_off : Icons.link, size: 16),
           label: Text(connected ? '模拟断线' : '重新连接'),
         ),
       ],

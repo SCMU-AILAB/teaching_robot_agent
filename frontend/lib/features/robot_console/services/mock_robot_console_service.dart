@@ -139,11 +139,7 @@ class MockRobotConsoleService implements RobotConsoleService {
       _state.copyWith(
         messages: [
           ..._state.messages,
-          ChatMessage(
-            messageId: 'm-${++_messageId}',
-            role: 'user',
-            text: text,
-          ),
+          ChatMessage(messageId: 'm-${++_messageId}', role: 'user', text: text),
         ],
         note: '',
         processing: true,
@@ -159,7 +155,9 @@ class MockRobotConsoleService implements RobotConsoleService {
           '热水壶里的水很烫，直接碰容易烫伤。要请大人帮忙倒热水，等晾温了再拿。'
           '来源：项目人工编写的安全教育示例；待负责人审核，非现场风险检测结论',
         );
-      } else if (text.contains('看') || text.contains('观察') || text.contains('什么')) {
+      } else if (text.contains('看') ||
+          text.contains('观察') ||
+          text.contains('什么')) {
         _respondObservation();
       } else if (text.contains('转') ||
           text.contains('移动') ||
@@ -232,9 +230,7 @@ class MockRobotConsoleService implements RobotConsoleService {
           );
           if (hadObservation) {
             // 已有场景观察：移动终态先使旧观察失效，再强制重新观察后回答。
-            _runObservation(
-              () => _answerAndSpeak('已向左转 0.1 弧度，我重新观察了现在的场景。'),
-            );
+            _runObservation(() => _answerAndSpeak('已向左转 0.1 弧度，我重新观察了现在的场景。'));
           } else {
             _answerAndSpeak('已向左转 0.1 弧度。需要我看看现在的场景吗？');
           }
@@ -383,9 +379,7 @@ class MockRobotConsoleService implements RobotConsoleService {
       throw const RobotConsoleFailure('任务仍在处理中，不能验收。');
     }
     commands.add('finish_task');
-    _emit(
-      _state.copyWith(taskStatus: 'completed', note: '任务已验收完成。'),
-    );
+    _emit(_state.copyWith(taskStatus: 'completed', note: '任务已验收完成。'));
   }
 
   @override
@@ -394,12 +388,7 @@ class MockRobotConsoleService implements RobotConsoleService {
     if (!_state.taskActive) return;
     commands.add('stop_task');
     _cancelTimers();
-    _emit(
-      _state.copyWith(
-        taskStatus: 'cancelling',
-        note: '停止请求已接受，正在确认资源释放。',
-      ),
-    );
+    _emit(_state.copyWith(taskStatus: 'cancelling', note: '停止请求已接受，正在确认资源释放。'));
     _schedule(
       () => _emit(
         _state.copyWith(
@@ -437,7 +426,11 @@ class MockRobotConsoleService implements RobotConsoleService {
     }
     commands.add('start_recording');
     _emit(
-      _state.copyWith(recordingStatus: 'recording', recordingSeconds: 0, note: ''),
+      _state.copyWith(
+        recordingStatus: 'recording',
+        recordingSeconds: 0,
+        note: '',
+      ),
     );
     _recordTimer = Timer.periodic(recordTick, (_) {
       final int seconds = _state.recordingSeconds + 1;
@@ -469,10 +462,7 @@ class MockRobotConsoleService implements RobotConsoleService {
         );
       } else if (_scenario == ConsoleScenario.asrFailure) {
         _emit(
-          _state.copyWith(
-            recordingStatus: 'failed',
-            note: '识别失败，请重新录音或输入文字。',
-          ),
+          _state.copyWith(recordingStatus: 'failed', note: '识别失败，请重新录音或输入文字。'),
         );
       } else {
         _emit(_state.copyWith(recordingStatus: 'completed'));

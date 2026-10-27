@@ -155,7 +155,7 @@ class ConsoleSectionHeader extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: Text(title, style: ConsoleText.sectionTitle)),
-        if (trailing != null) trailing!,
+        ?trailing,
       ],
     );
   }
@@ -181,11 +181,7 @@ class ConsoleEmptyHint extends StatelessWidget {
           children: [
             Icon(icon, size: 32, color: ConsoleColors.textMuted),
             const SizedBox(height: ConsoleSpace.itemGap),
-            Text(
-              text,
-              style: ConsoleText.caption,
-              textAlign: TextAlign.center,
-            ),
+            Text(text, style: ConsoleText.caption, textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -212,9 +208,7 @@ class ConsoleModeBadge extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             '本地模拟 · 未连接真实机器人',
-            style: ConsoleText.chipLabel.copyWith(
-              color: ConsoleColors.warning,
-            ),
+            style: ConsoleText.chipLabel.copyWith(color: ConsoleColors.warning),
           ),
         ],
       ),

@@ -97,7 +97,9 @@ class _ActionTimelineItem extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              Expanded(child: Text(action.skillName, style: ConsoleText.cardTitle)),
+              Expanded(
+                child: Text(action.skillName, style: ConsoleText.cardTitle),
+              ),
               ConsoleStatusChip(
                 label: consoleStatusText(action.status),
                 status: action.status,
@@ -114,9 +116,7 @@ class _ActionTimelineItem extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               action.failure!,
-              style: ConsoleText.bodySmall.copyWith(
-                color: ConsoleColors.error,
-              ),
+              style: ConsoleText.bodySmall.copyWith(color: ConsoleColors.error),
             ),
           ],
         ],

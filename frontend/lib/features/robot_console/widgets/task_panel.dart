@@ -119,11 +119,7 @@ class _BlockedReasonBar extends StatelessWidget {
     ),
     child: Row(
       children: [
-        const Icon(
-          Icons.error_outline,
-          size: 16,
-          color: ConsoleColors.error,
-        ),
+        const Icon(Icons.error_outline, size: 16, color: ConsoleColors.error),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -158,10 +154,7 @@ class _ActiveTaskBody extends StatelessWidget {
     children: [
       Text(session.taskTarget, style: ConsoleText.cardTitle),
       const SizedBox(height: 6),
-      Text(
-        '已记录 ${session.actions.length} 个动作',
-        style: ConsoleText.caption,
-      ),
+      Text('已记录 ${session.actions.length} 个动作', style: ConsoleText.caption),
       const SizedBox(height: 12),
       Wrap(
         spacing: 12,
@@ -178,9 +171,7 @@ class _ActiveTaskBody extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: stopEnabled ? onStop : null,
             icon: const Icon(Icons.stop_outlined, size: 18),
-            label: Text(
-              session.taskStatus == 'cancelling' ? '停止中…' : '停止任务',
-            ),
+            label: Text(session.taskStatus == 'cancelling' ? '停止中…' : '停止任务'),
           ),
         ],
       ),
@@ -216,9 +207,7 @@ class _CreateTaskRow extends StatelessWidget {
                 required bool isFocused,
                 required int? maxLength,
               }) => null,
-          decoration: const InputDecoration(
-            hintText: '例如：看看桌上有什么，讲讲安全知识',
-          ),
+          decoration: const InputDecoration(hintText: '例如：看看桌上有什么，讲讲安全知识'),
           onSubmitted: (_) => onCreate(),
         ),
       ),
