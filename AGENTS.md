@@ -146,3 +146,46 @@
 - **测试**：新增 `tests/test_resident_asr.py` 12 项（只加载一次、未加载/关闭后拒绝、模型缺失、参数校验、并发串行、取消与超时等待推理结束、推理中关闭、应用启停与语音入队回答、启动失败不降级、真实装配）。Ruff、150 个文件格式检查通过，basedpyright 0 errors / 0 warnings，282 项 unittest 通过。
 - **真实验证**：Apple M2 CPU、base int8：加载约 0.6 秒，3.2 秒/1.1 秒合成中文语音识别约 0.5–0.7 秒/0.4 秒；`ROBOT_AUDIO=real` 控制台启动、开始录音、退出释放链路实际运行。尚未用真人麦克风说话做识别验收；base 模型将“热水壶”识别为“热水湖”。
 - **远端链路**：服务器 `~/opt/teaching-robot-speech` 已部署 ASR 环境与 base 模型（未部署 Piper），`speech.real_demo` 仍可使用；虚拟环境另装了 CUDA 12 运行库但未启用，当前协议无法向远端传递设备配置。
+
+## 2026-10-14：常驻识别默认改为 SenseVoice
+
+- **评测**：服务器上 72 段合成中文语音（6 种音色 × 12 句）。Whisper base 字错率 49.7%、small 34.6%、medium 31.8%（出现重复幻觉）、large-v3-turbo 13.1%（需 GPU）；SenseVoice-small 18.6%，自然音色 1%，CPU 每段约 0.13 秒。给 Whisper 加领域提示词会输出提示原文或无关文本，已弃用。
+- **实现**：`ResidentASRProvider` 改为通用生命周期层（加载一次、串行推理、取消/超时/关闭等待推理结束），引擎可替换：`providers/asr/sensevoice_engine.py`（sherpa-onnx，默认）与 `WhisperEngine`；`SPEECH_ASR_ENGINE` 选择。`speech` 依赖新增 `sherpa-onnx==1.13.8` 与 `sherpa-onnx-core==1.13.8`（前者 wheel 元数据缺少对 core 的依赖声明，需显式锁定）。
+- **验证**：新增 `tests/test_sensevoice_engine.py` 7 项；Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过。M2 本机真实模型：加载约 0.85 秒，“你好，桌子上的热水壶能碰吗？”“那插座呢？”识别正确，各约 0.02–0.06 秒。尚未用真人录音验收。
+
+## 2026-10-23：接口统一规范与最小化（API_CONTRACT v1.0）
+
+- 按项目负责人指示，根目录 `API_CONTRACT.md` 改为仓库全部对外接口的唯一依据（v1.0 生效），前端按此实现；取代 v0.1 草案与 `feature/speech-output-lifecycle` 上的 v0.2 草案，合并该分支时以 main 版本为准。
+- HTTP 接口由 19 个减为 10 个：`system`、任务创建/快照/停止或完成、文字消息、录音开始/结束、事件流、摄像头快照、证据内容。事件类型由 10 种减为 6 种：用户输入与机器人回答合并为 `message.updated`；播报即 `speak` 动作；观察由机器人发起，结果经 `observation.created` 推送；设备状态并入 `system`；去掉 MJPEG 流与课程答题接口。
+- 同一文档补充底盘串口协议（以 `firmware/car-core/tests` 向量为一致性依据）、Ollama 与 GPT-SoVITS 调用约定、部署形态（Jetson 运行后端与设备，3080 运行模型与合成）。
+- `frontend/lib/core/constants/api_paths.dart` 填入全部路径常量；README、前端 README、模块协作合同同步引用。HTTP/SSE 服务端尚未实现。
+
+## 2026-10-23：HTTP/SSE 服务端实现（API_CONTRACT v1.0.1）
+
+- **框架**：FastAPI + uvicorn（新增依赖 `fastapi`、`uvicorn`）。路由层 `api/http.py` 只做解析与包装；`RequestValidationError`、未知路由与未处理异常统一转换为 `{code,message,data}`，不返回堆栈。调试页面 `/api/v1/docs`。
+- **服务层** `api/service.py` `RobotApiService`：同时一个活动任务；创建类请求按“路径 + client_request_id”去重（并发重复请求共享同一结果，失败不保留，保留 4096 条）；唯一输入消费者调用 `RobotHost.handle`，用户消息依次为 accepted → processing → answered/rejected/cancelled；模型服务连不上记为 rejected/50002。播报动作开始时即生成 assistant 消息并填 `speech_action_id`，回答返回后补全。停止经后台作业执行，HTTP 断开不撤销。
+- **事件** `api/events.py`：每任务递增序号、保留 1000 条、游标重放与登记之间无 await；慢订阅者、实例变化、游标过期或超前得到不占序号、无 id 的 `stream.reset`；15 秒注释心跳。快照与游标在同一同步段生成。
+- **核心改动**：`TeamGateway` 新增 `get_task`、`add_terminal_listener`、`add_observation_listener`（回调失败只记日志）。语音、Runtime、宿主未改。
+- **证据与摄像头**：证据接口只公开观察事件中出现过的画面，录音不对外。`api/preview.py` `CameraPreview` 在有人轮询时以 5 fps 常驻采集，预热丢弃 3 帧，空闲 10 秒停采；预览帧读取后立即释放证据。
+- **入口** `app/robot_server.py`：沿用控制台的环境变量装配，`ROBOT_API_HOST` 默认 `127.0.0.1`，`ROBOT_API_PORT` 默认 8000。
+- **测试**：新增 `tests/test_http_api.py` 15 项（系统状态、去重与单活动任务、统一错误码、消息与忙碌拒绝、事件重放与重置、停止 202/200、推理中停止、模型不可达 50002、确认完成、观察与证据释放、无语音 50002、录音转消息并播报、放弃录音、摄像头快照、事件日志）。
+- **验证**：Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过；本机以模拟设备 + 模拟语音实际启动 uvicorn，用 curl 走通系统状态、建任务、发消息、事件流重放、停止、`/docs` 与摄像头 50002。
+- **未验证**：Jetson 真机部署、真实摄像头预览帧率与 CPU 占用、真实 Ollama 与 GPT-SoVITS 下的完整链路、Flutter 前端联调。合同 v1.0.1 只补充实现说明与歧义澄清，待负责人确认。
+
+## 2026-10-25：麦克纳姆底盘接入 Python（CarAdapter）
+
+- **实现**：`robot/car_adapter.py` `CarAdapter(RobotAdapter)`，固件不改。后台线程读取 20 Hz 遥测，主机按编码器增量积分麦克纳姆里程计；`move_relative`/`turn_relative` 每帧遥测发送一次 `$V`，按剩余量减速并修正侧向/航向偏差，到位后停车并以连续两帧无编码器增量确认静止；堵转、命令被拒、遥测中断、超时均报错，失败与取消先立即发 `$S`。`RobotAdapterFactory` 注册 `car`（读取 `CAR_*` 环境变量，构造时不打开串口）。
+- **标定**：`CAR_COUNTS_PER_METER`、`CAR_COUNTS_PER_RADIAN` 缺失时不声明能力、不开放运动技能；新增 `app/car_calibrate.py` 实测换算。
+- **验收容差**：`RobotAdapter` 新增 `position_tolerance_m`、`yaw_tolerance_rad`（默认 0.001，模拟器行为不变），`MoveRelativeSkill.verify` 改用设备容差；底盘默认 0.02 米 / 0.035 弧度。
+- **测试**：`tests/car_firmware_fixture.py` 固件协议替身，`tests/test_car_adapter.py` 10 项（连接锁定端口、未标定不开放技能、转向后前进到位、经 Runtime 执行技能成功、运动中取消确认停车、故障中止与解除、遥测中断、i32 回绕、环境配置与工厂、标定轮组合）。Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，全部 unittest 通过。
+- **未验证**：真车（本次小车未连接）。里程计常数未标定；里程计看不到打滑，落地横移偏移问题仍在；低速逼近时 PI 起转能否稳定停在 2 厘米内需实测；拔线看门狗停车仍待测。
+
+## 2026-10-25：回答适合朗读、安全问答按资料作答
+
+真实 qwen3.5:9b（3080，经 SSH 隧道）联调发现：回答带 Markdown 列表、篇幅偏长，送去合成会念出符号；会说“这些都是安全的物品”；安全问题不调用 `lookup_knowledge` 却声称“这是安全资料里说的”（只有一次模型请求，来源是编造的）。
+
+- **提示词**：新增“回答格式”——口语纯文本，不用列表、标题、加粗、表情或换行，一般三句、80 字以内；没有观察或资料依据的状态不说成事实，不保证物品安全。检索块、`lookup_knowledge`、`observe_scene` 都没有相关条目时直接说明资料库没有，不得声称“资料里说”。
+- **每轮资料检索**：`EmbodiedAgent` 收到真实用户输入时，按原话调用一次 `lookup_knowledge`，以 `RETRIEVAL_PREFIX` 块（紧凑渲染，最多 3 条，无结果为“资料库没有相关条目”）放在本轮状态之后、本轮问题之前；本轮问题仍是工具历史前最后一条人类文本。模型仍可自行调用 `lookup_knowledge` 查其他主题。
+- **朗读清理**：新增 `speech/text.py` `speakable_text`，去掉标题、列表符号（“1. ”须带空格，行首“3.5 米”保留）、加粗、链接、代码块与表情，换行改为停顿；`SpeakSkill` 播报前清理，清理后为空则动作失败，证据记录 `spoken_text`。显示给前端的回答文本不改。
+- **测试**：新增 `tests/test_speakable_text.py` 4 项（含真实模型回答原文）；`test_object_safety_flow.py` 消息顺序测试按新顺序更新，新增安全问题检索命中断言与系统提示规则断言。Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，323 项 unittest 通过。
+- **真实模型复测**（示例桌面图片作文件摄像头）：6 个问题回答均为纯文本 33–58 字；插座、剪刀回答内容与资料条目一致；资料库没有条目时直接说明；闲聊不硬扯资料；首问约 3 秒（模型已热），其余约 1 秒。仍为单轮抽样，非系统评测。

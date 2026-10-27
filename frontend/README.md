@@ -31,7 +31,7 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5174
 
 `features/classroom/` 存放页面、控制器、模型和内部数据源接口；widgets/ 只负责展示。页面不发网络请求。`ClassroomService` 是本地页面数据源边界，不是新增后端接口合同。
 
-`core/constants/api_paths.dart` 当前不定义网络端点。API_CONTRACT.md 和 MODULE_CONTRACT.md 均仍为草案；真实 API/SSE 适配必须等核心提供已审核的端点、快照和广播能力。以后只由数据源适配器连接核心事件接口，禁止新增 Runtime.next_event() 消费者。
+`core/constants/api_paths.dart` 按根目录 API_CONTRACT.md v1.0 定义全部网络路径，前端只能使用其中的端点；新增或修改路径必须先改接口文档并经项目负责人确认。只由数据源适配器连接事件接口，禁止新增 Runtime.next_event() 消费者。
 
 本地快照的 sequence 用于模拟去重，不能宣称已验证后端事件游标、SSE 重放或网络恢复协议。页面的停止按钮只记录模拟 stop_task 命令，尚不能停止真实设备。教学反馈文本是固定示例，不替代 Teaching Agent。
 

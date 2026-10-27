@@ -76,7 +76,7 @@ uv run python -m app.classroom_demo
 - [设备适配接口](docs/ROBOT_ADAPTER.md)：拿到主办方 SDK 后实现 RobotAdapter。
 - [本地模型配置及调研](docs/LOCAL_MODELS.md)：Qwen 默认、宇树 VLM 对照、服务器联调结果。
 - [模块协作合同](docs/MODULE_CONTRACT.md)：共享媒体、感知、语音接口及证据存储。
-- [HTTP 合同草案](API_CONTRACT.md)：尚未实现 HTTP/SSE；本次 Python 重构不新增网络端点。
+- [接口文档 v1.0](API_CONTRACT.md)：仓库全部对外接口（HTTP API、底盘串口协议、外部推理服务）的唯一依据，前端按此实现；后端由 `uv run python -m app.robot_server` 启动，调试页面 `/api/v1/docs`。
 - [编码规范](docs/CODING_SPEC.md)：代码由负责人审核；当前按用户指示直接在 main 修改。
 
 ```bash
@@ -106,7 +106,7 @@ basedpyright 要求零错误、零警告。记录、输入去重和教学状态�
 
 ## 本机真实语音（常驻识别）
 
-`ROBOT_AUDIO=real` 时，`ResidentWhisperASRProvider` 在 `RobotApplication.start()` 加载一次 Whisper 模型，`close()` 释放；每次识别只做推理，不再为每段语音新起进程或 SSH 连接。同一模型串行推理；取消或超时会等原生推理结束后再传播，迟到结果丢弃。模型缺失时启动直接失败，不退回模拟识别，也不在运行时自动下载。
+`ROBOT_AUDIO=real` 时，`ResidentASRProvider` 在 `RobotApplication.start()` 加载一次识别模型（默认中文 SenseVoice-small，经 sherpa-onnx 在 CPU 运行；`SPEECH_ASR_ENGINE=whisper` 切回 Whisper），`close()` 释放；每次识别只做推理，不再为每段语音新起进程或 SSH 连接。同一模型串行推理；取消或超时会等原生推理结束后再传播，迟到结果丢弃。模型缺失时启动直接失败，不退回模拟识别，也不在运行时自动下载。
 
 ```bash
 uv sync --locked --extra speech
@@ -117,3 +117,5 @@ uv run --extra speech main.py
 ```
 
 2026-10-14 在 Apple M2 CPU（int8、base 模型）实测：模型加载约 0.6 秒；3.2 秒与 1.1 秒合成中文语音识别分别约 0.5–0.7 秒、0.4 秒。原远端方案（SSH 到服务器、每次新起进程）热状态约 2.6 秒。base 模型把“热水壶”识别为“热水湖”，需要更高准确率时可换 small 模型。远端 SSH 识别链路仍保留在 `speech.real_demo`。
+
+2026-10-14 在服务器上用 72 段合成语音（6 种音色 × 12 句）对比：Whisper base 字错率 49.7%，SenseVoice-small 18.6%（自然音色 1%，CPU 每段约 0.13 秒），large-v3-turbo 13.1%（需 GPU）。加提示词会让 Whisper 输出提示原文或无关文本，已弃用。默认改为 SenseVoice：下载 `csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17` 的 `model.int8.onnx`、`tokens.txt` 到 `models/sensevoice-small`，设 `SPEECH_ASR_MODEL_PATH=models/sensevoice-small`。尚未用真人录音验收。

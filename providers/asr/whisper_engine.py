@@ -4,7 +4,10 @@
 import io
 from collections.abc import Iterable
 from importlib import import_module
+from pathlib import Path
 from typing import Protocol, cast
+
+from domain.validation import nonempty_string
 
 
 class WhisperSegment(Protocol):
@@ -86,3 +89,68 @@ def transcribe_wav(
     # 识别段是惰性生成器，必须在推理所在线程内全部消费。
     text = "".join(segment.text for segment in segments).strip()
     return text, info.language
+
+
+class WhisperEngine:
+    """常驻识别使用的 faster-whisper 引擎，构造期间不导入可选依赖."""
+
+    def __init__(
+        self,
+        _model_path: str,
+        _language: str = "zh",
+        _device: str = "cpu",
+        _compute_type: str = "int8",
+        *,
+        _model_factory: WhisperModelFactory | None = None,
+    ) -> None:
+        """保存模型配置.
+
+        Args:
+            _model_path: 已下载的本地模型目录，须包含 model.bin.
+            _language: 识别语言代码.
+            _device: cpu 或 cuda.
+            _compute_type: 引擎计算精度，例如 int8 或 float16.
+            _model_factory: 测试注入的模型构造函数；缺省加载时导入 faster-whisper.
+
+        Raises:
+            ValueError: 设备或文本参数非法.
+        """
+        if _device not in {"cpu", "cuda"}:
+            raise ValueError("ASR compute device must be cpu or cuda")
+        self._model_path: str = nonempty_string(_model_path, "model_path")
+        self._language: str = nonempty_string(_language, "language")
+        self._device: str = _device
+        self._compute_type: str = nonempty_string(_compute_type, "compute_type")
+        self._factory: WhisperModelFactory | None = _model_factory
+        self._model: WhisperModel | None = None
+
+    @property
+    def name(self) -> str:
+        """日志使用的引擎名称."""
+        return f"whisper/{self._device}/{self._compute_type}"
+
+    def check_files(self) -> None:
+        """确认模型目录包含 model.bin."""
+        if not (Path(self._model_path) / "model.bin").is_file():
+            raise ValueError("Set SPEECH_ASR_MODEL_PATH to a downloaded Whisper model")
+
+    def load(self) -> None:
+        """只从本地目录加载模型."""
+        factory = self._factory or load_faster_whisper()
+        self._model = factory(
+            self._model_path,
+            device=self._device,
+            compute_type=self._compute_type,
+            local_files_only=True,
+            cpu_threads=4,
+        )
+
+    def recognize(self, content: bytes) -> tuple[str, str]:
+        """识别已校验的 WAV."""
+        if self._model is None:
+            raise RuntimeError("Whisper model is not loaded")
+        return transcribe_wav(self._model, content, self._language)
+
+    def unload(self) -> None:
+        """释放模型引用."""
+        self._model = None
