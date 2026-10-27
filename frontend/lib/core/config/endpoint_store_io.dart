@@ -31,9 +31,9 @@ Future<void> saveEndpoint(String baseUrl) async {
   try {
     final File file = _configFile();
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(<String, String>{
-      'device_api_base': baseUrl,
-    }));
+    await file.writeAsString(
+      jsonEncode(<String, String>{'device_api_base': baseUrl}),
+    );
   } catch (_) {
     // 写不进去时本次会话仍生效，下次启动回落到默认地址。
   }

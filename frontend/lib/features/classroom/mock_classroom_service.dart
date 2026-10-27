@@ -205,9 +205,7 @@ class MockClassroomService implements ClassroomService {
     );
     // 老师回答延迟发出（约 4 个 step），贴近真实思考/合成耗时。
     _schedule(
-      () => _answer(
-        '收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。',
-      ),
+      () => _answer('收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。'),
       4,
     );
   }

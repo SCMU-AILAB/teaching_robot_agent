@@ -62,8 +62,7 @@ class _MjpegCameraViewState extends State<_MjpegCameraView> {
     super.initState();
     _viewSeed += 1;
     _viewType = 'teaching-robot-camera-$_viewSeed';
-    _image = web.HTMLImageElement()
-      ..setAttribute('alt', '设备摄像头实时画面');
+    _image = web.HTMLImageElement()..setAttribute('alt', '设备摄像头实时画面');
     _image.style
       ..setProperty('width', '100%')
       ..setProperty('height', '100%')
@@ -127,7 +126,6 @@ class _MjpegCameraViewState extends State<_MjpegCameraView> {
   }
 
   @override
-  Widget build(BuildContext context) => _live
-      ? HtmlElementView(viewType: _viewType)
-      : widget.unavailable;
+  Widget build(BuildContext context) =>
+      _live ? HtmlElementView(viewType: _viewType) : widget.unavailable;
 }

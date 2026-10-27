@@ -12,9 +12,7 @@ void main() {
     expect(find.text('检查设备服务地址与网络后重试'), findsOneWidget);
   });
 
-  testWidgets('有流地址但无快照地址时仍给出占位而不是空白画面', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('有流地址但无快照地址时仍给出占位而不是空白画面', (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(

@@ -27,7 +27,11 @@ Future<String> describeDevice(String baseUrl) async {
 ///
 /// 保存前可以「测试连接」验证地址可达；点保存返回新地址（取消返回 null）。
 class EndpointDialog extends StatefulWidget {
-  const EndpointDialog({required this.current, this.probe = describeDevice, super.key});
+  const EndpointDialog({
+    required this.current,
+    this.probe = describeDevice,
+    super.key,
+  });
 
   /// 当前生效地址。
   final String current;
@@ -125,7 +129,11 @@ class _EndpointDialogState extends State<EndpointDialog> {
           const SizedBox(height: 10),
           const Text(
             'Mac 端通过公网 IP 连 Jetson 时填它的对外地址；内网调试填 192.168.x.x:8090。',
-            style: TextStyle(fontSize: 12, color: Color(0xff73817b), height: 1.5),
+            style: TextStyle(
+              fontSize: 12,
+              color: Color(0xff73817b),
+              height: 1.5,
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),

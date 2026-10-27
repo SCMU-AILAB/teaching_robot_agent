@@ -180,12 +180,9 @@ class ClassroomController extends ChangeNotifier {
     }
   }
 
-  Future<bool> initialize() => _run(
-    () async {
-      _acceptSnapshot(await _service.snapshot());
-    },
-    source: 'connection',
-  );
+  Future<bool> initialize() => _run(() async {
+    _acceptSnapshot(await _service.snapshot());
+  }, source: 'connection');
 
   /// 创建课堂：目标为空或超长时本地拦截，不发无效请求。
   Future<bool> createTask(String target) {
@@ -211,6 +208,7 @@ class ClassroomController extends ChangeNotifier {
   /// 摄像头单帧地址，非 Web 平台轮询使用。
   Uri? cameraSnapshotUrl({int? maxWidth}) =>
       _service.cameraSnapshotUrl(maxWidth: maxWidth);
+
   /// 发送文字：点击瞬间进入加载态，直到老师回答事件到达或失败才结束。
   Future<bool> submitText(String text) async {
     if (_disposed || busy || awaitingReply) return false;
@@ -238,6 +236,7 @@ class ClassroomController extends ChangeNotifier {
     }
     return ok;
   }
+
   Future<bool> record() => _run(
     () => state.recording == 'recording'
         ? _service.finishRecording()
@@ -266,14 +265,11 @@ class ClassroomController extends ChangeNotifier {
     _notify();
   }
 
-  Future<bool> reconnect() => _run(
-    () async {
-      await _service.reconnect();
-      _acceptSnapshot(await _service.snapshot());
-      if (!_disposed) connected = true;
-    },
-    source: 'connection',
-  );
+  Future<bool> reconnect() => _run(() async {
+    await _service.reconnect();
+    _acceptSnapshot(await _service.snapshot());
+    if (!_disposed) connected = true;
+  }, source: 'connection');
 
   void selectScenario(DemoScenario value) {
     scenario = value;

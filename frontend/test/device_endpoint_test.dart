@@ -18,7 +18,9 @@ void main() {
   test('查询参数 api 可覆盖设备地址，末尾斜杠被去掉', () {
     expect(
       resolveDeviceBaseUrl(
-        base: Uri.parse('http://192.168.0.127:8000/?api=http://10.0.0.5:8090//'),
+        base: Uri.parse(
+          'http://192.168.0.127:8000/?api=http://10.0.0.5:8090//',
+        ),
       ),
       'http://10.0.0.5:8090',
     );

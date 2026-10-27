@@ -349,21 +349,21 @@ class _ClassroomPageState extends State<ClassroomPage> {
                 builder: (BuildContext context, bool morphing, Widget? child) =>
                     Opacity(opacity: morphing ? 0 : 1, child: child),
                 child: KeyedSubtree(
-                key: _messageInputKey,
-                child: TextField(
-                  key: const Key('message-input'),
-                  controller: _message,
-                  // 播报期间也可打字，只有任务不可用才禁用。
-                  enabled: available,
-                  minLines: 1,
-                  maxLines: 4,
-                  maxLength: 4000,
-                  decoration: const InputDecoration(
-                    hintText: '输入你的发现或问题…',
-                    counterText: '',
+                  key: _messageInputKey,
+                  child: TextField(
+                    key: const Key('message-input'),
+                    controller: _message,
+                    // 播报期间也可打字，只有任务不可用才禁用。
+                    enabled: available,
+                    minLines: 1,
+                    maxLines: 4,
+                    maxLength: 4000,
+                    decoration: const InputDecoration(
+                      hintText: '输入你的发现或问题…',
+                      counterText: '',
+                    ),
+                    onSubmitted: (_) => unawaited(_send()),
                   ),
-                  onSubmitted: (_) => unawaited(_send()),
-                ),
                 ),
               ),
             ),

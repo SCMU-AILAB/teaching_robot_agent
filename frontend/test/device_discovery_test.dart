@@ -115,9 +115,8 @@ void main() {
           probed.add(host);
           return host == '10.0.0.2';
         },
-        fetch: (Uri uri) async => uri.host == '10.0.0.2'
-            ? systemPayload()
-            : null,
+        fetch: (Uri uri) async =>
+            uri.host == '10.0.0.2' ? systemPayload() : null,
       );
       expect(probed, <String>{'10.0.0.1', '10.0.0.2', '10.0.0.3'});
       expect(found!.baseUrl, 'http://10.0.0.2:8090');

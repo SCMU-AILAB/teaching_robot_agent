@@ -244,51 +244,49 @@ class _ConversationPanelState extends State<ConversationPanel> {
                     // 学生消息整体向左上收，避免贴右缘/下缘被窗口压住文字；
                     // 只动位移不动布局（iMessage 只动位移与缩放）。
                     return Transform.translate(
-                      offset: student
-                          ? const Offset(-28, -10)
-                          : Offset.zero,
+                      offset: student ? const Offset(-28, -10) : Offset.zero,
                       child: Row(
-                      key: ValueKey('row-${message.id}'),
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: student
-                          ? MainAxisAlignment.end
-                          : MainAxisAlignment.start,
-                      children: [
-                        if (!student) ...[
-                          const CircleAvatar(
-                            radius: 16,
-                            backgroundColor: Color(0xffe5f2ec),
-                            child: Icon(
-                              Symbols.smart_toy_rounded,
-                              size: 18,
-                              color: Color(0xff147d64),
-                              fill: 1,
+                        key: ValueKey('row-${message.id}'),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: student
+                            ? MainAxisAlignment.end
+                            : MainAxisAlignment.start,
+                        children: [
+                          if (!student) ...[
+                            const CircleAvatar(
+                              radius: 16,
+                              backgroundColor: Color(0xffe5f2ec),
+                              child: Icon(
+                                Symbols.smart_toy_rounded,
+                                size: 18,
+                                color: Color(0xff147d64),
+                                fill: 1,
+                              ),
                             ),
+                            const SizedBox(width: 12),
+                          ],
+                          Flexible(
+                            child: student
+                                // 学生消息：输入框收缩变蓝飞入，落位后整块弹两下。
+                                // play=false（回收重建）→ 静态展示，绝不重播。
+                                ? BubbleSendTransition(
+                                    key: ValueKey('send-${message.id}'),
+                                    fromKey: widget.messageInputKey,
+                                    landingKey: bubbleKey,
+                                    text: message.text,
+                                    morphing: widget.sendMorphing,
+                                    play: play,
+                                    onComplete: _release,
+                                    child: block,
+                                  )
+                                // 老师回答：浮入 + 整块弹两下，仅首次插入播放。
+                                : BubbleArriveTransition(
+                                    key: ValueKey('arrive-${message.id}'),
+                                    play: play,
+                                    child: block,
+                                  ),
                           ),
-                          const SizedBox(width: 12),
                         ],
-                        Flexible(
-                          child: student
-                              // 学生消息：输入框收缩变蓝飞入，落位后整块弹两下。
-                              // play=false（回收重建）→ 静态展示，绝不重播。
-                              ? BubbleSendTransition(
-                                  key: ValueKey('send-${message.id}'),
-                                  fromKey: widget.messageInputKey,
-                                  landingKey: bubbleKey,
-                                  text: message.text,
-                                  morphing: widget.sendMorphing,
-                                  play: play,
-                                  onComplete: _release,
-                                  child: block,
-                                )
-                              // 老师回答：浮入 + 整块弹两下，仅首次插入播放。
-                              : BubbleArriveTransition(
-                                  key: ValueKey('arrive-${message.id}'),
-                                  play: play,
-                                  child: block,
-                                ),
-                        ),
-                      ],
                       ),
                     );
                   },

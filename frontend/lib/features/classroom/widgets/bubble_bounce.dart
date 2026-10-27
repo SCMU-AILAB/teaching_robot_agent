@@ -42,38 +42,37 @@ class _BubbleBounceState extends State<BubbleBounce>
   )..addStatusListener(_onStatus);
 
   /// 双段过冲（弹两下），振幅按 [widget.amplitude] 缩放。
-  TweenSequence<double> _sequence(double amplitude) =>
-      TweenSequence<double>([
-        TweenSequenceItem(
-          tween: Tween<double>(
-            begin: 1,
-            end: 1 + 0.12 * amplitude,
-          ).chain(CurveTween(curve: Curves.easeOutCubic)),
-          weight: 26,
-        ),
-        TweenSequenceItem(
-          tween: Tween<double>(
-            begin: 1 + 0.12 * amplitude,
-            end: 1 - 0.04 * amplitude,
-          ).chain(CurveTween(curve: Curves.easeInOutCubic)),
-          weight: 22,
-        ),
-        // 第二下小幅过冲——「弹两下」的第二弹。
-        TweenSequenceItem(
-          tween: Tween<double>(
-            begin: 1 - 0.04 * amplitude,
-            end: 1 + 0.03 * amplitude,
-          ).chain(CurveTween(curve: Curves.easeInOutCubic)),
-          weight: 22,
-        ),
-        TweenSequenceItem(
-          tween: Tween<double>(
-            begin: 1 + 0.03 * amplitude,
-            end: 1,
-          ).chain(CurveTween(curve: Curves.easeOutCubic)),
-          weight: 30,
-        ),
-      ]);
+  TweenSequence<double> _sequence(double amplitude) => TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween<double>(
+        begin: 1,
+        end: 1 + 0.12 * amplitude,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)),
+      weight: 26,
+    ),
+    TweenSequenceItem(
+      tween: Tween<double>(
+        begin: 1 + 0.12 * amplitude,
+        end: 1 - 0.04 * amplitude,
+      ).chain(CurveTween(curve: Curves.easeInOutCubic)),
+      weight: 22,
+    ),
+    // 第二下小幅过冲——「弹两下」的第二弹。
+    TweenSequenceItem(
+      tween: Tween<double>(
+        begin: 1 - 0.04 * amplitude,
+        end: 1 + 0.03 * amplitude,
+      ).chain(CurveTween(curve: Curves.easeInOutCubic)),
+      weight: 22,
+    ),
+    TweenSequenceItem(
+      tween: Tween<double>(
+        begin: 1 + 0.03 * amplitude,
+        end: 1,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)),
+      weight: 30,
+    ),
+  ]);
 
   @override
   void initState() {

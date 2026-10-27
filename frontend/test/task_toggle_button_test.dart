@@ -28,11 +28,7 @@ void main() {
     int stops = 0;
 
     await tester.pumpWidget(
-      harness(
-        active: false,
-        onStart: () => starts++,
-        onStop: () => stops++,
-      ),
+      harness(active: false, onStart: () => starts++, onStop: () => stops++),
     );
     // 动词逐字渲染，「课堂」保持完整且静止。
     expect(find.text('开'), findsOneWidget);
@@ -87,7 +83,9 @@ void main() {
 
   testWidgets('滚动期间按钮宽度不变，字符只做垂直位移', (WidgetTester tester) async {
     await tester.pumpWidget(harness(active: false));
-    final double idleWidth = tester.getSize(find.byType(TaskToggleButton)).width;
+    final double idleWidth = tester
+        .getSize(find.byType(TaskToggleButton))
+        .width;
     final double idleDx = tester.getTopLeft(find.text('开')).dx;
 
     await tester.pumpWidget(harness(active: true));

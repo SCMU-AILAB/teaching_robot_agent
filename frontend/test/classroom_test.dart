@@ -138,9 +138,9 @@ void main() {
     final Finder errorBox = find.byKey(const Key('field-error-box'));
     expect(errorBox, findsOneWidget);
     final double errorTop = tester.getTopLeft(errorBox).dy;
-    final double inputTop = tester.getTopLeft(
-      find.byKey(const Key('message-input')),
-    ).dy;
+    final double inputTop = tester
+        .getTopLeft(find.byKey(const Key('message-input')))
+        .dy;
     expect(errorTop, greaterThan(inputTop));
     controller.selectScenario(DemoScenario.normal);
     await tester.pump();
@@ -152,9 +152,7 @@ void main() {
     service.dispose();
   });
 
-  testWidgets('点击发送立即进入加载，老师回答事件到达才结束', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('点击发送立即进入加载，老师回答事件到达才结束', (WidgetTester tester) async {
     final MockClassroomService service = MockClassroomService(
       step: const Duration(milliseconds: 100),
     );
@@ -176,9 +174,7 @@ void main() {
     await advance(tester, 6);
     expect(controller.awaitingReply, isFalse);
     expect(
-      controller.state.messages.any(
-        (ClassMessage m) => m.role == 'assistant',
-      ),
+      controller.state.messages.any((ClassMessage m) => m.role == 'assistant'),
       isTrue,
     );
     // 排干回答后的播报链计时器，避免测试收尾时挂起 Timer。
@@ -186,9 +182,7 @@ void main() {
     service.dispose();
   });
 
-  testWidgets('录音输入与文字一致：转写即加载，回答到达才结束', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('录音输入与文字一致：转写即加载，回答到达才结束', (WidgetTester tester) async {
     final MockClassroomService service = MockClassroomService(
       step: const Duration(milliseconds: 100),
     );
@@ -212,9 +206,7 @@ void main() {
     await advance(tester);
     expect(controller.awaitingReply, isFalse);
     expect(
-      controller.state.messages.any(
-        (ClassMessage m) => m.role == 'student',
-      ),
+      controller.state.messages.any((ClassMessage m) => m.role == 'student'),
       isTrue,
     );
     await advance(tester);
@@ -597,9 +589,7 @@ void main() {
     service.dispose();
   });
 
-  testWidgets('未连接服务器时画面与观察显示未连接，不出现示例内容', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('未连接服务器时画面与观察显示未连接，不出现示例内容', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1366, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);

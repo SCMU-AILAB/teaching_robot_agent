@@ -8,7 +8,9 @@ Widget harness(SessionModel state, GlobalKey inputKey) => MaterialApp(
   home: Scaffold(
     body: Column(
       children: [
-        Expanded(child: ConversationPanel(state: state, messageInputKey: inputKey)),
+        Expanded(
+          child: ConversationPanel(state: state, messageInputKey: inputKey),
+        ),
         KeyedSubtree(key: inputKey, child: const SizedBox(height: 40)),
       ],
     ),
@@ -25,7 +27,10 @@ void main() {
     await tester.pump();
     // 先只来一条学生消息：播一次飞入，把入场记入 _animated。
     await tester.pumpWidget(
-      harness(withMessages(const [ClassMessage(1, 'student', '第一句话')]), inputKey),
+      harness(
+        withMessages(const [ClassMessage(1, 'student', '第一句话')]),
+        inputKey,
+      ),
     );
     await tester.pump(const Duration(milliseconds: 150));
     await tester.pumpAndSettle();
@@ -34,8 +39,7 @@ void main() {
     // 追加大量消息把「第一句话」顶出 345px 视口（触发 ListView 回收）。
     final List<ClassMessage> many = [
       const ClassMessage(1, 'student', '第一句话'),
-      for (int i = 2; i <= 24; i++)
-        ClassMessage(i, 'assistant', '填充回答 $i'),
+      for (int i = 2; i <= 24; i++) ClassMessage(i, 'assistant', '填充回答 $i'),
     ];
     await tester.pumpWidget(harness(withMessages(many), inputKey));
     await tester.pump(const Duration(milliseconds: 300));

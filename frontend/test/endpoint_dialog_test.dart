@@ -19,8 +19,10 @@ Future<String?> openDialog(
           onPressed: () async {
             result = await showDialog<String>(
               context: context,
-              builder: (_) =>
-                  EndpointDialog(current: current, probe: probe ?? (_) async => 'ok'),
+              builder: (_) => EndpointDialog(
+                current: current,
+                probe: probe ?? (_) async => 'ok',
+              ),
             );
           },
           child: const Text('open'),
@@ -36,7 +38,10 @@ Future<String?> openDialog(
 void main() {
   testWidgets('非法地址不发探测、不关闭对话框', (WidgetTester tester) async {
     await openDialog(tester, current: 'http://1.2.3.4:8090');
-    await tester.enterText(find.byKey(const Key('endpoint-input')), '1.2.3.4:8090');
+    await tester.enterText(
+      find.byKey(const Key('endpoint-input')),
+      '1.2.3.4:8090',
+    );
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('endpoint-error')), findsOneWidget);
@@ -75,7 +80,8 @@ void main() {
             onPressed: () async {
               popped = await showDialog<String>(
                 context: context,
-                builder: (_) => const EndpointDialog(current: 'http://1.2.3.4:8090'),
+                builder: (_) =>
+                    const EndpointDialog(current: 'http://1.2.3.4:8090'),
               );
             },
             child: const Text('open'),

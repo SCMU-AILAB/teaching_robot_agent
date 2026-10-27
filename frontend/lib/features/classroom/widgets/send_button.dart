@@ -21,8 +21,7 @@ class SendButton extends StatefulWidget {
   State<SendButton> createState() => _SendButtonState();
 }
 
-class _SendButtonState extends State<SendButton>
-    with TickerProviderStateMixin {
+class _SendButtonState extends State<SendButton> with TickerProviderStateMixin {
   static const Color _accent = Color(0xff147d64);
   static const Color _disabledSurface = Color(0xffe4e9eb);
   static const Color _disabledIcon = Color(0xff98a6a0);

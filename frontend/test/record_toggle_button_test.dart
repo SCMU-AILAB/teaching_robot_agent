@@ -4,19 +4,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:teaching_robot_frontend/features/classroom/widgets/record_toggle_button.dart';
 
 void main() {
-  Widget harness({
-    required bool recording,
-    VoidCallback? onPressed,
-  }) => MaterialApp(
-    home: Scaffold(
-      body: Center(
-        child: RecordToggleButton(
-          recording: recording,
-          onPressed: onPressed ?? () {},
+  Widget harness({required bool recording, VoidCallback? onPressed}) =>
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: RecordToggleButton(
+              recording: recording,
+              onPressed: onPressed ?? () {},
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
 
   testWidgets('切换时动词逐字滚动，录音二字保持静止', (WidgetTester tester) async {
     await tester.pumpWidget(harness(recording: false));
@@ -64,9 +62,7 @@ void main() {
 
   testWidgets('点击触发回调，禁用时不可点击', (WidgetTester tester) async {
     int taps = 0;
-    await tester.pumpWidget(
-      harness(recording: false, onPressed: () => taps++),
-    );
+    await tester.pumpWidget(harness(recording: false, onPressed: () => taps++));
     await tester.tap(find.byKey(const Key('record-button')));
     expect(taps, 1);
 

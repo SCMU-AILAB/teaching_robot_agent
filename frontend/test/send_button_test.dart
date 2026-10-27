@@ -5,13 +5,14 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:teaching_robot_frontend/features/classroom/widgets/send_button.dart';
 
 void main() {
-  Widget harness({required bool loading, VoidCallback? onPressed}) => MaterialApp(
-    home: Scaffold(
-      body: Center(
-        child: SendButton(loading: loading, onPressed: onPressed),
-      ),
-    ),
-  );
+  Widget harness({required bool loading, VoidCallback? onPressed}) =>
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SendButton(loading: loading, onPressed: onPressed),
+          ),
+        ),
+      );
 
   testWidgets('发送时箭头向上滑出按钮，结束时从下方滑入', (WidgetTester tester) async {
     await tester.pumpWidget(harness(loading: false, onPressed: () {}));
