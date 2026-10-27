@@ -64,10 +64,8 @@ class _BubbleSendTransitionState extends State<BubbleSendTransition>
   /// 落位交叉淡化起点：飞行末段真实块浮现、幽灵淡出，消除落位突变。
   static const double _fadePhase = 0.82;
 
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: _duration,
-  )..addStatusListener(_onStatus);
+  /// 在 initState 创建：惰性初始化会让从未播放的实例在 dispose 中才创建 ticker。
+  late final AnimationController _controller;
 
   OverlayEntry? _entry;
   bool _landed = false;
@@ -81,6 +79,8 @@ class _BubbleSendTransitionState extends State<BubbleSendTransition>
   @override
   void initState() {
     super.initState();
+    _controller = AnimationController(vsync: this, duration: _duration)
+      ..addStatusListener(_onStatus);
     _animate = widget.play;
     // 静态路径直接落位：不飞、不回调（放行由兜底计时器负责）。
     _landed = !_animate;
@@ -223,10 +223,8 @@ class _BubbleSendTransitionState extends State<BubbleSendTransition>
       return AnimatedBuilder(
         animation: _controller,
         child: widget.child,
-        builder: (BuildContext context, Widget? child) => Opacity(
-          opacity: _landIn(_controller.value),
-          child: child,
-        ),
+        builder: (BuildContext context, Widget? child) =>
+            Opacity(opacity: _landIn(_controller.value), child: child),
       );
     }
     // 落位后整条消息块「弹两下」，完成后放行排队回答。

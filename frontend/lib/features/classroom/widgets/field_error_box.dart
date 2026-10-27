@@ -96,7 +96,7 @@ class _FieldErrorBoxState extends State<FieldErrorBox>
       builder: (BuildContext context, Widget? child) => SizeTransition(
         sizeFactor: _height,
         axis: Axis.vertical,
-        alignment: Alignment.topCenter,
+        axisAlignment: -1.0,
         child: FadeTransition(
           opacity: _fade,
           child: Transform.translate(
