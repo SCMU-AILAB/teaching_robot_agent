@@ -1,5 +1,6 @@
 // frontend/lib/features/classroom/widgets/status_label.dart
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 
 /// 将技术状态转换为操作者可读的文字，不改变领域状态含义。
 class StatusLabel extends StatelessWidget {
@@ -25,6 +26,7 @@ class StatusLabel extends StatelessWidget {
     'not_started': '准备开始',
     'explaining': '讲解中',
     'awaiting_answer': '等待回答',
+    'awaiting_input': '等待提问',
     'feedback': '反馈中',
   };
 
@@ -37,6 +39,7 @@ class StatusLabel extends StatelessWidget {
       'recording',
       'explaining',
       'awaiting_answer',
+      'awaiting_input',
     ].contains(status);
     final Color color = failed
         ? const Color(0xffb6403a)
@@ -46,7 +49,7 @@ class StatusLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.circle, size: 7, color: color),
+        Icon(Symbols.circle_rounded, size: 7, color: color),
         const SizedBox(width: 7),
         Text(
           labels[status] ?? status,

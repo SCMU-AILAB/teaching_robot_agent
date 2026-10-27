@@ -2,7 +2,14 @@
 
 ## 部署职责
 
-服务器没有声卡，也不需要声卡。本地 Mac 或机器人负责录音和播放；服务器负责 ASR 和 TTS。当前默认入口已按这一分工装配，不再默认在 Mac 执行识别和合成。
+当前存在两条真实语音链路，部署职责不同，适配器装配互相独立：
+
+- **远程推理链路**（`python -m speech.real_demo`）：本地负责录音和播放，服务器负责 Whisper ASR 与 Piper TTS。服务器没有声卡，也不需要声卡。
+- **本机常驻链路**（`ROBOT_AUDIO=real` 启动主控制台）：录音、SenseVoice 常驻识别、合成与播放都在运行主程序的机器上完成，不需要服务器。识别引擎经 sherpa-onnx 在 CPU 运行，见下文"本机常驻识别"。
+
+比赛设备（2026-10-19 起）为 **Jetson Orin Nano 8GB 开发板 + USB 声卡**，但**推理分工不变**：ASR、TTS 与模型推理仍在服务器，Jetson 只承担采音、上传音频、接收并播放音频与设备控制。比赛链路使用上面的远程推理链路；下面的本机常驻链路只用于开发机本地调试，不作为比赛方案。
+
+两条链路各自拥有独立的输入消费者，不得与现有教学消费者竞争读取同一队列。
 
 ```text
 本地麦克风 → 本地 WAV 证据 → SSH 上传 → 服务器 Whisper ASR
@@ -38,14 +45,14 @@ uv run --extra speech-client python -m speech.real_demo
 
 - SPEECH_SSH_HOST、SPEECH_SSH_USER、SPEECH_SSH_PORT：服务器 SSH 连接信息。
 - SPEECH_SERVER_DIRECTORY：服务器语音安装目录，必须是绝对路径。
-- SPEECH_INPUT_DEVICE、SPEECH_OUTPUT_DEVICE：本地设备编号/名称，空值为系统默认。
+- SPEECH_INPUT_DEVICE、SPEECH_OUTPUT_DEVICE：本地设备**名称**，空值为系统默认。必须填名称而不是枚举序号，因为序号由内核枚举顺序决定，拔插后会变化；名称支持子串匹配并忽略大小写，匹配不到或有多个同名设备时启动即报错，不会静默退回系统默认设备。
 - SPEECH_SAMPLE_RATE：默认 16000；SPEECH_MAX_DURATION_S：默认 15，最长 60 秒。
 - SPEECH_TIMEOUT_S：默认 60，包含连接、传输及推理，最大 300 秒。
 - SPEECH_ASR_LANGUAGE：默认 zh；SPEECH_TTS_VOICE：默认 huayan。未部署的音色明确拒绝。
 
 枚举本地设备：`uv run --extra speech-client python -m providers.audio.worker devices`。本地仍需麦克风授权和扬声器；这些设置与服务器声卡无关。
 
-## 操作流程
+## 远程链路操作流程（real_demo）
 
 1. 输入 `/record`，等待“正在录音”后说话。
 2. `/finish` 主动结束，或等待最大时长。音频上传服务器识别，控制台显示最终转写。
@@ -54,6 +61,22 @@ uv run --extra speech-client python -m speech.real_demo
 5. 连续三次验证设备可重复打开；现场确认播放停止后不再发声。
 
 固定回答不是 Agent 生成的回答。独立演示拥有自己的输入消费者，不得与现有教学消费者竞争读取同一队列。
+
+## 本机常驻识别（主控制台 real 模式）
+
+```bash
+uv sync --locked --extra speech
+export ROBOT_AUDIO=real
+export SPEECH_ASR_MODEL_PATH=models/sensevoice-small
+uv run --extra speech main.py
+```
+
+- 模型目录须包含 `model.int8.onnx`（或 `model.onnx`）与 `tokens.txt`；启动时校验，缺失或非法直接报错，不回退模拟。
+- `SPEECH_ASR_ENGINE` 默认 `sensevoice`，可切换 `whisper`（此时模型目录应为 faster-whisper 模型）；两者互为对照，用于识别质量评测。
+- 识别模型在应用启动时进程内加载一次。合成使用本机系统 TTS（macOS `say`、Linux `espeak-ng`），仅用于开发调试；**比赛链路的合成在服务器执行**（Piper 中文音色），不依赖开发机或 Jetson 的系统语音。
+- 控制台命令：`/record` 开始录音，`/done` 结束录音并识别，`/finish` 确认任务完成，`/stop` 停止本轮，`/quit` 退出并清理。
+
+本机常驻链路尚未完成真人语音验收；实测计划与统计口径见 `REAL_SPEECH_ACCEPTANCE_PLAN.md`。Jetson 设备端需要验证的是声卡、采播、通信与资源释放，**不承担识别与合成**；服务器到 Jetson 的实际出声延迟尚未测量，不得用 Mac 上的合成数据代替。
 
 ## 服务器安装记录
 
