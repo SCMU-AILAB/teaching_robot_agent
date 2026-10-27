@@ -71,6 +71,8 @@ class _TaskView:
     recordings: dict[str, RecordingRecord] = field(default_factory=dict)
     # 机器人回答按用户消息编号登记，避免重复生成。
     replies: dict[str, str] = field(default_factory=dict)
+    # 本任务观察事件公开过的画面，任务记录清理时一并撤销公开。
+    evidence_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -382,18 +384,9 @@ class RobotApiService:
                     raise
                 # 任务停止取消了处理协程，不是本消费者被取消。
                 self._update_message(message, status="cancelled")
-            except ValueError:
-                self._update_message(
-                    message,
-                    status="rejected",
-                    error=resource_error(ErrorCode.INVALID_STATE, "任务已停止，未执行"),
-                )
             except ServiceError as error:
-                code = error_code_of(error.code)
-                self._update_message(
-                    message,
-                    status="rejected",
-                    error=resource_error(code, "模型或设备服务处理失败"),
+                self._reject(
+                    message, error_code_of(error.code), "模型或设备服务处理失败"
                 )
             except (httpx.TransportError, ConnectionError, TimeoutError) as error:
                 logger.warning(
@@ -401,22 +394,23 @@ class RobotApiService:
                     item.task_id,
                     error,
                 )
-                self._update_message(
-                    message,
-                    status="rejected",
-                    error=resource_error(
-                        ErrorCode.UNAVAILABLE, "模型服务不可用，任务已停止"
-                    ),
-                )
+                self._reject(message, ErrorCode.UNAVAILABLE, "模型服务不可用")
+            except ValueError as error:
+                if self._app.gateway.get_task(item.task_id).status not in _ACTIVE:
+                    self._reject(message, ErrorCode.INVALID_STATE, "任务已停止")
+                else:
+                    # 任务仍在：模型返回了不合规的工具调用或参数。
+                    logger.warning(
+                        "[RobotApiService._consume] 模型结果无法执行 task_id=%s error=%r",
+                        item.task_id,
+                        error,
+                    )
+                    self._reject(message, ErrorCode.INTERNAL, "模型回答无法执行")
             except Exception:
                 logger.exception(
                     "[RobotApiService._consume] 消息处理失败 task_id=%s", item.task_id
                 )
-                self._update_message(
-                    message,
-                    status="rejected",
-                    error=resource_error(ErrorCode.INTERNAL, "处理失败，任务已停止"),
-                )
+                self._reject(message, ErrorCode.INTERNAL, "处理失败")
             else:
                 speech_ids = [
                     action_id
@@ -431,6 +425,16 @@ class RobotApiService:
             finally:
                 _ = self._processing.pop(item.task_id, None)
                 self._refresh_task(item.task_id)
+
+    def _reject(self, message: MessageRecord, code: ErrorCode, reason: str) -> None:
+        """消息处理失败；说明任务是否仍可继续对话."""
+        active = self._app.gateway.get_task(message.task_id).status in _ACTIVE
+        suffix = "，本条未执行，可以继续对话" if active else "，本条未执行"
+        self._update_message(
+            message,
+            status="rejected",
+            error=resource_error(code, reason + suffix),
+        )
 
     def _record_reply(
         self, message: MessageRecord, text: str, speech_action_id: int | None
@@ -650,6 +654,7 @@ class RobotApiService:
         if view is None:
             return
         view.observation = result
+        view.evidence_ids.add(result.frame.evidence_id)
         self._exposed_evidence.add(result.frame.evidence_id)
         view.log.publish("observation.created", self._observation_payload(result))
 
@@ -695,7 +700,11 @@ class RobotApiService:
 
     def _on_action(self, action_id: int) -> None:
         """动作变化：发布最新记录；播报开始时先行生成机器人回答."""
-        record = self._app.runtime.get_action(action_id)
+        try:
+            record = self._app.runtime.get_action(action_id)
+        except KeyError:
+            # 积压事件对应的旧动作记录可能已被清理。
+            return
         task_id = record.raw_request.task_id
         view = self._views.get(task_id)
         if view is None:
@@ -800,4 +809,11 @@ class RobotApiService:
             if len(self._views) <= self._max_tasks:
                 return
             if self._app.gateway.get_task(task_id).status in _TERMINAL:
-                self._views.pop(task_id).log.close("task_evicted")
+                view = self._views.pop(task_id)
+                view.log.close("task_evicted")
+                self._linked_speech.difference_update(view.actions)
+                # 其他任务可能经缓存共享同一帧，仍被引用的保持公开。
+                shared = set[str]().union(
+                    *(item.evidence_ids for item in self._views.values())
+                )
+                self._exposed_evidence.difference_update(view.evidence_ids - shared)

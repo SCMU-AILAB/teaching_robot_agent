@@ -47,12 +47,79 @@ class _Options(argparse.Namespace):
     duration: float = 15
 
 
-def run_audio(mode: str, device: str | int | None, rate: int, duration: float) -> None:
+def _match_score(name: str, wanted: str) -> int:
+    """返回名称匹配强度；-1 表示不匹配."""
+    lowered = name.casefold()
+    target = wanted.casefold()
+    if lowered == target:
+        return 3
+    if lowered.startswith(target):
+        return 2
+    if target in lowered:
+        return 1
+    return -1
+
+
+class _DeviceQuery(Protocol):
+    """sounddevice 模块中解析设备所需的最小接口."""
+
+    def query_devices(self) -> list[dict[str, object]]: ...
+
+
+def resolve_device(driver: _DeviceQuery, text: str, *, output: bool) -> int | None:
+    """按设备名称解析 sounddevice 序号.
+
+    设备序号由内核枚举顺序决定，拔插后会变化，因此配置只接受名称。
+    名称必须唯一匹配到具备对应方向通道的设备，否则明确报错，
+    不退回系统默认设备，避免静默选错声卡。
+
+    Args:
+        driver: 已导入的 sounddevice 模块。
+        text: 环境变量给出的设备名称，空字符串表示系统默认。
+        output: 为 True 时按播放通道筛选，否则按录音通道筛选。
+
+    Returns:
+        匹配到的设备序号；名称为空时返回 None。
+
+    Raises:
+        ValueError: 没有匹配设备，或名称同时匹配多个设备。
+    """
+    wanted = text.strip()
+    if not wanted:
+        return None
+    query = driver.query_devices
+    channel_key = "max_output_channels" if output else "max_input_channels"
+    candidates: list[tuple[int, int, str]] = []
+    # ========== Step1: 只保留具备目标方向通道的设备 ==========
+    for index, info in enumerate(query()):
+        name = str(info.get("name", ""))
+        channels = info.get(channel_key)
+        if not isinstance(channels, int) or channels <= 0:
+            continue
+        score = _match_score(name, wanted)
+        if score >= 0:
+            candidates.append((score, index, name))
+    # ========== Step2: 取最强匹配，重叠时拒绝猜测 ==========
+    if not candidates:
+        direction = "playback" if output else "capture"
+        raise ValueError(f"No {direction} device matches {wanted!r}")
+    best = max(score for score, _index, _name in candidates)
+    winners = [(index, name) for score, index, name in candidates if score == best]
+    if len(winners) > 1:
+        names = ", ".join(f"{index}:{name}" for index, name in winners)
+        raise ValueError(f"Ambiguous device name {wanted!r}: {names}")
+    return winners[0][0]
+
+
+def run_audio(mode: str, device: str, rate: int, duration: float) -> None:
     """采集或播放 PCM；READY 代表设备已启动，完成代表驱动已停止."""
     driver = import_module("sounddevice")
     if mode == "devices":
         print(cast(Callable[[], object], driver.query_devices)())
         return
+    # 可选依赖只在工作进程内导入，边界处收敛为最小接口，不传播 ModuleType。
+    query = cast(_DeviceQuery, cast(object, driver))
+    device_index = resolve_device(query, device, output=mode == "play")
     stopping = False
 
     def finish(_signum: int, _frame: FrameType | None) -> None:
@@ -73,11 +140,11 @@ def run_audio(mode: str, device: str | int | None, rate: int, duration: float) -
             samplerate=audio.sample_rate,
             channels=audio.channels,
             dtype="int16",
-            device=device,
+            device=device_index,
         )
     else:
         stream = cast(_StreamFactory, driver.RawInputStream)(
-            samplerate=rate, channels=1, dtype="int16", device=device
+            samplerate=rate, channels=1, dtype="int16", device=device_index
         )
     chunks: list[bytes] = []
     cancelled = False
@@ -126,9 +193,8 @@ def main() -> None:
     _ = parser.parse_args(namespace=args)
     mode = args.mode
     device_text = args.device
-    device = int(device_text) if device_text.isdecimal() else device_text or None
     try:
-        run_audio(mode, device, args.rate, args.duration)
+        run_audio(mode, device_text, args.rate, args.duration)
     except Exception as error:
         print(f"Audio device failed: {type(error).__name__}", file=sys.stderr)
         raise SystemExit(1) from None

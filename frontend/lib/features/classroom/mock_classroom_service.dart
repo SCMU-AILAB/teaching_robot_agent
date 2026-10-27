@@ -82,7 +82,7 @@ class MockClassroomService implements ClassroomService {
   }
 
   @override
-  Future<void> createTask(String target) async {
+  Future<void> createTask(String target, {String? topicId}) async {
     _requireOnline();
     if (target.trim().isEmpty || target.length > 2000) {
       throw const ClassroomFailure('请输入 1–2000 字的课堂目标。');
@@ -173,12 +173,21 @@ class MockClassroomService implements ClassroomService {
       _state.playback == 'playing';
 
   @override
-  Future<void> submitText(String text) async {
+  Future<void> submitText(
+    String text, {
+    String kind = 'question',
+    String? questionId,
+  }) async {
     _requireTask();
     if (text.trim().isEmpty || text.length > 4000) {
       throw const ClassroomFailure('请输入 1–4000 字的内容。');
     }
-    if (_audioBusy) throw const ClassroomFailure('请等待当前语音交互结束。');
+    // 只拦录音/转写/初始化：回答播报期间仍可连续发文字。
+    if (_initializing ||
+        _state.recording == 'recording' ||
+        _state.recording == 'transcribing') {
+      throw const ClassroomFailure('请等待当前语音交互结束。');
+    }
     commands.add('submit_text');
     _submitInput(text.trim());
   }
@@ -194,11 +203,19 @@ class MockClassroomService implements ClassroomService {
         note: '',
       ),
     );
-    _answer('收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。');
+    // 老师回答延迟发出（约 4 个 step），贴近真实思考/合成耗时。
+    _schedule(
+      () => _answer('收到你的描述：“$text”。在这张示例图中，绿色杯子在蓝色书的左边。再找一找橙色方块在哪里。'),
+      4,
+    );
   }
 
   @override
-  Future<void> startRecording() async {
+  Future<void> startRecording({
+    String kind = 'question',
+    String? questionId,
+    double maxDurationS = 15,
+  }) async {
     _requireTask();
     if (_audioBusy) throw const ClassroomFailure('音频设备正在使用，请稍后录音。');
     commands.add('start_recording');
@@ -276,7 +293,9 @@ class MockClassroomService implements ClassroomService {
   }
 
   @override
-  Future<void> refreshObservation() async {
+  Future<void> refreshObservation({
+    String question = '请描述画面中的物体及其相对位置。',
+  }) async {
     _requireTask();
     commands.add('refresh_observation');
     _emit(
@@ -292,6 +311,12 @@ class MockClassroomService implements ClassroomService {
   void setScenario(DemoScenario scenario) => _scenario = scenario;
 
   @override
+  Uri? cameraSnapshotUrl({int? maxWidth}) => null;
+
+  @override
+  Uri? cameraStreamUrl({int fps = 10}) => null;
+
+  @override
   void disconnect() {
     if (_disposed) return;
     _online = false;
@@ -302,7 +327,7 @@ class MockClassroomService implements ClassroomService {
   Future<void> reconnect() async {
     if (_disposed) throw const ClassroomFailure('课堂已关闭。');
     _online = true;
-    _connections.add(true);
+    // 只有断线信号由连接流下发；「已连上」以快照成功为准（控制器确认）。
   }
 
   @override

@@ -83,6 +83,8 @@ class SpeechInputService:
                 raise ValueError("Session already exists")
             self._gateway.require_active(task_id)
             if len(self._sessions) >= 4096:
+                self._prune_finished()
+            if len(self._sessions) >= 4096:
                 raise RuntimeError("Recording retention capacity reached")
             self._starting.add(task_id)
             try:
@@ -112,6 +114,17 @@ class SpeechInputService:
             self._sessions[recording_id] = _Session(task, task_id)
             task.add_done_callback(self._observe_failure)
             logger.info("[SpeechInputService.start] 语音输入会话已启动")
+
+    def _prune_finished(self) -> None:
+        """达到保留上限时清理识别与清理都已结束、且清理成功的旧会话."""
+        for key in [
+            key
+            for key, session in self._sessions.items()
+            if session.task.done()
+            and not session.cleanup_failed
+            and (session.cleanup is None or session.cleanup.done())
+        ]:
+            del self._sessions[key]
 
     @staticmethod
     def _validate_fields(text: object, is_final: object) -> None:

@@ -1,0 +1,113 @@
+// frontend/lib/features/classroom/widgets/camera_view.dart
+import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
+
+import '../../../core/constants/app_radius.dart';
+import 'camera_snapshot_view.dart';
+import 'camera_view_io.dart'
+    if (dart.library.js_interop) 'camera_view_web.dart'
+    as platform;
+
+/// 设备摄像头实时画面。
+///
+/// Web 端把 MJPEG 流交给浏览器 `<img>` 原生解码（CPU 占用低、延迟最小），
+/// 其余平台无法解码 multipart 流，改为按帧轮询单帧快照。
+///
+/// 数据源没有 MJPEG 流（API_CONTRACT v1.0）时，各平台都轮询单帧快照；
+/// 两个地址都为空表示没有摄像头（例如纯内存测试替身），直接显示
+/// [CameraUnavailable]，不做任何网络请求。
+class CameraView extends StatelessWidget {
+  const CameraView({
+    required this.streamUrl,
+    this.snapshotUrl,
+    this.fps = 2,
+    this.borderRadius = AppRadius.media,
+    this.unavailable = const CameraUnavailable(),
+    super.key,
+  });
+
+  /// MJPEG 地址；v1.0 没有该接口，为空时轮询单帧快照。
+  final Uri? streamUrl;
+
+  /// 单帧地址（合同 GET /api/v1/camera/snapshot），非 Web 平台轮询使用。
+  final Uri? snapshotUrl;
+
+  /// 画面帧率，同时作为非 Web 平台的轮询频率。
+  ///
+  /// 默认 2 fps：桌面端每帧都是一次 `camera/snapshot` 请求，公网链路上
+  /// 10 fps × ~120KB 会吃掉约 10 Mbps；2 fps + 640px 约 1 Mbps，够看清桌面物体。
+  final int fps;
+
+  /// 画面圆角：Web 平台视图不受 ClipRRect 裁剪，需下沉到元素样式。
+  final double borderRadius;
+
+  /// 无画面时的占位内容。
+  final Widget unavailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final Uri? stream = streamUrl;
+    if (stream == null) {
+      final Uri? snapshot = snapshotUrl;
+      if (snapshot == null) return unavailable;
+      return SnapshotCameraView(
+        snapshotUrl: snapshot,
+        fps: fps,
+        borderRadius: borderRadius,
+        unavailable: unavailable,
+      );
+    }
+    return platform.buildCameraView(
+      streamUrl: stream,
+      snapshotUrl: snapshotUrl,
+      fps: fps,
+      borderRadius: borderRadius,
+      unavailable: unavailable,
+    );
+  }
+}
+
+/// 无画面时的占位：与实时画面同一尺寸与圆角。
+///
+/// [title]/[detail] 由调用方按连接阶段覆盖，默认是「未连接服务器」。
+class CameraUnavailable extends StatelessWidget {
+  const CameraUnavailable({
+    this.title = '未连接服务器',
+    this.detail = '检查设备服务地址与网络后重试',
+    super.key,
+  });
+
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xffe8eded),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Symbols.cloud_off_rounded,
+            size: 38,
+            color: Color(0xff93a29c),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Color(0xff55635e),
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            detail,
+            style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
+          ),
+        ],
+      ),
+    ),
+  );
+}

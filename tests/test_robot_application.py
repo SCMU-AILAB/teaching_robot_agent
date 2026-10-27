@@ -3,6 +3,7 @@
 
 import asyncio
 import unittest
+from typing import override
 from unittest.mock import patch
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -16,6 +17,22 @@ from domain.models import ActionStatus, TaskStatus
 from perception.simulated import SimulatedPerception
 from robot.simulated import SimulatedAdapter, SimulationMode
 from storage.evidence import EvidenceStore
+
+
+class StuckAdapter(SimulatedAdapter):
+    """运动失败；stop_fails 为真时停车无法确认."""
+
+    def __init__(self) -> None:
+        """失败模式的模拟底盘."""
+        super().__init__(_mode=SimulationMode.FAILURE)
+        self.stop_fails: bool = False
+
+    @override
+    async def stop(self) -> None:
+        """按开关模拟停车确认失败."""
+        if self.stop_fails:
+            raise RuntimeError("motor driver did not respond")
+        await super().stop()
 
 
 class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
@@ -217,8 +234,53 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await app.close()
 
-    async def test_failed_motion_ends_task_without_retry(self) -> None:
-        """模型请求的运动失败后不续接或自动重复动作."""
+    async def test_failed_motion_keeps_task_without_retry(self) -> None:
+        """运动失败后不续接或自动重复动作；设备已确认停止，任务继续接受下一句."""
+        model = FakeMessagesListChatModel(
+            responses=[
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "submit_action",
+                            "args": {
+                                "skill": "move_relative",
+                                "arguments": {"distance_m": 0.1},
+                            },
+                            "id": "m",
+                        }
+                    ],
+                ),
+                AIMessage("刚才没有走成。"),
+            ]
+        )
+        app = RobotApplication(
+            SimulatedAdapter(_mode=SimulationMode.FAILURE),
+            SimulatedPerception(EvidenceStore()),
+            model,
+        )
+        try:
+            await app.start()
+            task = await app.create_task("移动")
+            _ = app.gateway.submit_text(task.task_id, "前进")
+            with patch.object(
+                FakeMessagesListChatModel, "bind_tools", return_value=model
+            ):
+                reply = await app.process_next()
+                self.assertEqual(reply.task_status, TaskStatus.RUNNING)
+                self.assertIn("动作未成功", reply.text)
+                self.assertEqual(len(app.runtime.list_actions()), 1)
+                self.assertIsNone(app.runtime.blocked_reason)
+                _ = app.gateway.submit_text(task.task_id, "怎么了")
+                follow_up = await app.process_next()
+            self.assertEqual(follow_up.text, "刚才没有走成。")
+            self.assertEqual(follow_up.task_status, TaskStatus.RUNNING)
+            self.assertEqual(len(app.runtime.list_actions()), 1)
+        finally:
+            await app.close()
+
+    async def test_unconfirmed_stop_ends_task(self) -> None:
+        """运动失败且停车无法确认：执行层锁定，宿主结束整个任务."""
         model = FakeMessagesListChatModel(
             responses=[
                 AIMessage(
@@ -236,26 +298,25 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 )
             ]
         )
-        app = RobotApplication(
-            SimulatedAdapter(_mode=SimulationMode.FAILURE),
-            SimulatedPerception(EvidenceStore()),
-            model,
-        )
+        robot = StuckAdapter()
+        app = RobotApplication(robot, SimulatedPerception(EvidenceStore()), model)
         try:
             await app.start()
             task = await app.create_task("移动")
             _ = app.gateway.submit_text(task.task_id, "前进")
+            robot.stop_fails = True
             with patch.object(
                 FakeMessagesListChatModel, "bind_tools", return_value=model
             ):
                 reply = await app.process_next()
+            self.assertTrue(app.runtime.blocked_reason)
             self.assertEqual(reply.task_status, TaskStatus.FAILED)
-            self.assertEqual(len(app.runtime.list_actions()), 1)
         finally:
+            robot.stop_fails = False
             await app.close()
 
     async def test_action_limit_stops_instead_of_claiming_completion(self) -> None:
-        """持续提交动作的模型达到上限后被停止，不把整体目标记为完成."""
+        """持续提交动作的模型达到上限后停下本轮，不把整体目标记为完成，任务可继续."""
         model = FakeMessagesListChatModel(
             responses=[
                 AIMessage(
@@ -282,7 +343,13 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 FakeMessagesListChatModel, "bind_tools", return_value=model
             ):
                 reply = await app.process_next()
-            self.assertEqual(reply.task_status, TaskStatus.CANCELLED)
-            self.assertEqual(len(reply.action_ids), 3)
+                self.assertEqual(reply.task_status, TaskStatus.RUNNING)
+                self.assertEqual(len(reply.action_ids), 3)
+                self.assertIn("不代表整体目标已完成", reply.text)
+                # 本轮作废后策略不再等待旧动作，下一句可以正常处理。
+                _ = app.gateway.submit_text(task.task_id, "再转")
+                again = await app.process_next()
+            self.assertEqual(len(again.action_ids), 3)
+            self.assertEqual(again.task_status, TaskStatus.RUNNING)
         finally:
             await app.close()

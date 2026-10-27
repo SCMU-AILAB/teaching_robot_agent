@@ -21,6 +21,11 @@ class RobotSkill(ABC):
         """检查动作参数，非法输入抛出异常."""
         pass
 
+    def minimum_timeout_s(self, robot: RobotAdapter, args: dict[str, object]) -> float:
+        """该设备完成本动作所需的最短执行期限，秒；参数已通过 validate."""
+        _ = (robot, args)
+        return 0.0
+
     async def check_preconditions(self, robot: RobotAdapter) -> None:
         """确认设备已连接且未处于运动状态."""
         for capability in self.required_capabilities:

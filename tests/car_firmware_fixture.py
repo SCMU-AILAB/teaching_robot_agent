@@ -43,6 +43,9 @@ class FirmwareSerial:
         self._last_tick: float = time.monotonic()
         self._next_telemetry: float = 0.0
         self.silent: bool = False
+        # 静止时编码器停在边沿来回跳 1 个计数，与真实正交编码器一致。
+        self.jitter: bool = False
+        self._jitter_phase: int = 0
         self.closed: bool = False
         self.commands: list[str] = []
 
@@ -153,8 +156,12 @@ class FirmwareSerial:
                 and self._last_tick >= self._next_telemetry
             ):
                 self._next_telemetry = self._last_tick + _TELEMETRY_S
+                offset = 0
+                if self.jitter:
+                    self._jitter_phase ^= 1
+                    offset = self._jitter_phase
                 counts = [
-                    (round(value) + (1 << 31)) % (1 << 32) - (1 << 31)
+                    (round(value) + offset + (1 << 31)) % (1 << 32) - (1 << 31)
                     for value in self._encoders
                 ]
                 duties = [round(value * 0.37) for value in self._speed]

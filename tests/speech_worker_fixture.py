@@ -12,10 +12,17 @@ from types import FrameType
 from providers.audio.wav import PcmAudio, encode_wav
 
 
+def write_marker(path: str) -> None:
+    """先写临时文件再原子替换，读侧要么看不到文件，要么读到完整内容."""
+    temporary = Path(f"{path}.{os.getpid()}.tmp")
+    _ = temporary.write_text(str(os.getpid()), encoding="ascii")
+    os.replace(temporary, path)
+
+
 def main() -> None:
     """复现就绪、自然结束、主动停止、停止失败和推理挂起时序."""
     scenario, marker, *arguments = sys.argv[1:]
-    _ = Path(marker).write_text(str(os.getpid()), encoding="ascii")
+    write_marker(marker)
     stopped = False
     completed = False
 
@@ -43,14 +50,14 @@ def main() -> None:
         if mode == "play":
             _ = sys.stdin.buffer.read()
         if scenario in {"early-stop", "early-bad-stop"}:
-            _ = Path(marker + ".device").write_text(str(os.getpid()), encoding="ascii")
+            write_marker(marker + ".device")
             time.sleep(60)
         print("READY", flush=True)
         if scenario == "completed-before-exit":
             print("COMPLETED", flush=True)
             completed = True
             os.close(sys.stdout.fileno())
-            _ = Path(marker + ".device").write_text(str(os.getpid()), encoding="ascii")
+            write_marker(marker + ".device")
             time.sleep(60)
         delay = (
             float(arguments[arguments.index("--duration") + 1])

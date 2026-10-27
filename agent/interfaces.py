@@ -19,3 +19,7 @@ class DecisionAgent(Protocol):
     ) -> AgentTurn:
         """返回讲解或待执行动作编号."""
         ...
+
+    def abandon_turn(self) -> None:
+        """作废未完成的本轮决策（等待中的动作与工具历史），保留跨轮对话记忆."""
+        ...

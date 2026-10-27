@@ -45,6 +45,10 @@ class ScriptedAgent(DecisionAgent):
         self.calls += 1
         return await self.handler(user_input)
 
+    @override
+    def abandon_turn(self) -> None:
+        """脚本没有跨调用状态，无需清理."""
+
 
 class ClassroomHostTests(unittest.IsolatedAsyncioTestCase):
     """课堂结束与停止必须由真实状态支持，输入重试不能重复副作用."""

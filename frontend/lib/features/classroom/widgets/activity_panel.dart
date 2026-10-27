@@ -1,5 +1,6 @@
 // frontend/lib/features/classroom/widgets/activity_panel.dart
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 
 import '../session_model.dart';
 import 'status_label.dart';
@@ -75,8 +76,8 @@ class ActivityPanel extends StatelessWidget {
           child: Row(
             children: [
               const Icon(
-                Icons.chevron_right,
-                size: 17,
+                Symbols.chevron_right_rounded,
+                size: 16,
                 color: Color(0xff83908d),
               ),
               const SizedBox(width: 8),
