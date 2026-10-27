@@ -1,13 +1,27 @@
 # agent/context.py
 """统一教学、环境与执行上下文，不触发外部模型调用."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from app.team_gateway import TaskSnapshot, TeamGateway, UserInput
 from domain.education import TeachingSession
 from domain.services import ObservationResult
 from education.service import EducationService
+
+# 本轮状态只带最近几个设备动作；更早的动作与播报原文不再影响决策，
+# 全部放入会让同一任务多轮对话后超出模型上下文。
+_CONTEXT_ACTIONS = 3
+
+
+def _recent_actions(snapshot: TaskSnapshot) -> TaskSnapshot:
+    """去掉播报动作（回答已在对话记忆中），只保留最近的设备动作."""
+    actions = tuple(
+        record
+        for record in snapshot.actions
+        if record.raw_request.skill_name != "speak"
+    )
+    return replace(snapshot, actions=actions[-_CONTEXT_ACTIONS:])
 
 
 @dataclass(frozen=True)
@@ -60,7 +74,9 @@ class RobotContextBuilder:
             raise ValueError("Input belongs to another task")
         observation = self._gateway.resolve_observation(task_id, observation)
         return RobotContext(
-            await self._gateway.get_snapshot(task_id), user_input, observation
+            _recent_actions(await self._gateway.get_snapshot(task_id)),
+            user_input,
+            observation,
         )
 
 
@@ -84,7 +100,7 @@ class ContextBuilder:
         if observation is not None and observation.task_id != task_id:
             raise ValueError("Observation belongs to another task")
         observation = self._gateway.resolve_observation(task_id, observation)
-        snapshot = await self._gateway.get_snapshot(task_id)
+        snapshot = _recent_actions(await self._gateway.get_snapshot(task_id))
         return TeachingContext(
             snapshot, self._education.get_state(task_id), user_input, observation
         )

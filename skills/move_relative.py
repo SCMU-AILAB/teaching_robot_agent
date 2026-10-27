@@ -32,6 +32,12 @@ class MoveRelativeSkill(RobotSkill):
         """检查动作参数，非法输入抛出异常."""
         _ = self._parse_arguments(args)
 
+    @override
+    def minimum_timeout_s(self, robot: RobotAdapter, args: dict[str, object]) -> float:
+        """按请求距离与速度估算的运动时长交给设备换算期限."""
+        amount, speed = self._parse_arguments(args)
+        return robot.motion_timeout_s(abs(amount) / speed)
+
     def _parse_arguments(self, args: object) -> tuple[float, float]:
         """校验移动参数并返回距离与速度，单位为米和米每秒."""
         arguments = string_key_dict(args, "arguments")

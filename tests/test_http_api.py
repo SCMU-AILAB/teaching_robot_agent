@@ -514,7 +514,7 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(h.messages(task_id)), 1)
 
     async def test_model_unreachable_rejects_message_with_50002(self) -> None:
-        """模型服务连不上：消息 rejected 且错误码 50002，宿主停止任务."""
+        """模型服务连不上：消息 rejected 且错误码 50002，任务保留，恢复后可继续对话."""
         async with harness() as h:
             task_id = await h.create_task()
             with patch.object(
@@ -530,9 +530,47 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
                 )
             message = items(await h.snapshot(task_id), "messages")[0]
             self.assertEqual(dig(message, "error", "code"), 50002)
-            await wait_until(
-                lambda: h.robot.gateway.get_task(task_id).status == TaskStatus.CANCELLED
+            self.assertEqual(
+                h.robot.gateway.get_task(task_id).status, TaskStatus.PENDING
             )
+            h.script([AIMessage("我在呢。")])
+            reply = await h.say(task_id, "还在吗", "m2")
+            self.assertEqual(reply.status, 202, reply.body)
+            await wait_until(
+                lambda: (
+                    [item.status for item in h.messages(task_id)]
+                    == ["rejected", "answered", "final"]
+                )
+            )
+
+    async def test_invalid_model_tool_call_rejects_only_that_message(self) -> None:
+        """模型调用不存在的工具：本条 rejected/50001，任务保留，下一句正常回答."""
+        async with harness() as h:
+            task_id = await h.create_task()
+            h.script(
+                [
+                    AIMessage(
+                        "",
+                        tool_calls=[{"name": "fly", "args": {}, "id": "x"}],
+                    ),
+                    AIMessage("我只能在地上走。"),
+                ]
+            )
+            _ = await h.say(task_id, "飞起来")
+            await wait_until(
+                lambda: [item.status for item in h.messages(task_id)] == ["rejected"]
+            )
+            message = items(await h.snapshot(task_id), "messages")[0]
+            self.assertEqual(dig(message, "error", "code"), 50001)
+            self.assertIn("可以继续对话", str(dig(message, "error", "message")))
+            _ = await h.say(task_id, "那走一下", "m2")
+            await wait_until(
+                lambda: (
+                    [item.status for item in h.messages(task_id)]
+                    == ["rejected", "answered", "final"]
+                )
+            )
+            self.assertEqual(h.messages(task_id)[-1].text, "我只能在地上走。")
 
     async def test_completed_requires_user_confirmation(self) -> None:
         """确认完成返回 200 且写入结束时间；完成后可以创建新任务."""

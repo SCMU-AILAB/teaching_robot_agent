@@ -250,7 +250,7 @@ class RobotAudioTests(unittest.IsolatedAsyncioTestCase):
                 await app.close()
 
     async def test_synthesis_failure_preserves_text_and_failed_action(self) -> None:
-        """合成失败保留回答文字，动作及任务明确失败."""
+        """合成失败保留回答文字，播报动作明确失败，任务继续接受下一句."""
         self.tts = MockTTSProvider(
             self.evidence, _error=RuntimeError("TTS unavailable")
         )
@@ -261,11 +261,17 @@ class RobotAudioTests(unittest.IsolatedAsyncioTestCase):
             FakeMessagesListChatModel, "bind_tools", return_value=self.model
         ):
             reply = await app.process_next()
-        self.assertIn("成年人", reply.text)
-        self.assertIn("播报未完成", reply.text)
-        self.assertEqual(reply.task_status, TaskStatus.FAILED)
-        self.assertEqual(app.runtime.list_actions()[0].status, ActionStatus.FAILED)
-        self.assertFalse(self.device.busy)
+            self.assertIn("成年人", reply.text)
+            self.assertIn("播报未完成", reply.text)
+            self.assertEqual(reply.task_status, TaskStatus.RUNNING)
+            self.assertEqual(app.runtime.list_actions()[0].status, ActionStatus.FAILED)
+            self.assertIsNone(app.runtime.blocked_reason)
+            self.assertFalse(self.device.busy)
+            _ = app.gateway.submit_text(task.task_id, "再说一遍")
+            again = await app.process_next()
+        self.assertIn("成年人", again.text)
+        self.assertEqual(again.task_status, TaskStatus.RUNNING)
+        self.assertEqual(len(app.runtime.list_actions()), 2)
 
     async def test_runtime_timeout_and_invalid_args(self) -> None:
         """执行期限覆盖合成，非法参数在生成动作之前拒绝."""

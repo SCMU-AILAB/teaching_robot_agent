@@ -1,6 +1,7 @@
 # tests/test_robot_adapter.py
 """验证设备能力边界和转向动作在真实 Runtime 中的生命周期."""
 
+import asyncio
 import math
 import unittest
 from typing import override
@@ -76,6 +77,19 @@ class RobotAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(pose.x, 0)
             self.assertAlmostEqual(pose.y, 0.2)
             self.assertAlmostEqual(pose.yaw, math.pi / 2)
+
+    async def test_idle_simulator_still_accepts_actions(self) -> None:
+        """空闲超过遥测有效期后，模拟器状态仍是当前的，动作前置检查通过."""
+        robot = SimulatedAdapter()
+        robot.telemetry_max_age_s = 0.05
+        async with ActionManager(robot, build_robot_skills(robot)) as runtime:
+            await asyncio.sleep(0.1)
+            robot.validate_state(await robot.get_state())
+            action = await runtime.submit_action(
+                ActionRequest(1, "turn_relative", {"angle_rad": 0.1})
+            )
+            result = await runtime.wait_for_action(action.action_id)
+            self.assertEqual(result.status, ActionStatus.SUCCEEDED, result.failure)
 
     async def test_turn_timeout_and_failure_stop_device(self) -> None:
         """转向失败或超时均经 Runtime 清理并确认停止."""

@@ -63,7 +63,8 @@ async def run_console() -> None:
             print("本次处理已取消。", flush=True)
         except Exception as error:
             print(
-                f"任务失败：{type(error).__name__}；请检查服务与运行日志。", flush=True
+                f"本条处理失败：{type(error).__name__}；请检查服务与运行日志。",
+                flush=True,
             )
 
     async def transcribe_and_reply(identifier: str, expected_task_id: int) -> None:

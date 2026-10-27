@@ -110,6 +110,12 @@ class EmbodiedAgent:
         """返回本任务对话记忆，供宿主诊断与测试读取."""
         return self._memory
 
+    def abandon_turn(self) -> None:
+        """宿主作废本轮后调用：清空等待中的动作与工具历史，对话记忆保留."""
+        self._pending = None
+        self._input = None
+        self._history.clear()
+
     async def decide(
         self,
         user_input: UserInput | None = None,

@@ -110,6 +110,32 @@ class CarAdapterTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await runtime.close()
 
+    async def test_slow_move_gets_device_deadline_and_jitter_counts_as_still(
+        self,
+    ) -> None:
+        """调用方期限短于运动本身时按设备放宽；编码器静止抖动 1 个计数仍能确认停车."""
+        port = FirmwareSerial()
+        port.jitter = True
+        car = _adapter(port)
+        runtime = ActionManager(car, build_robot_skills(car))
+        await runtime.start()
+        try:
+            record = await runtime.submit_action(
+                ActionRequest(
+                    1,
+                    "move_relative",
+                    {"distance_m": 0.2, "speed_m_s": 0.1},
+                    timeout_s=1.0,
+                )
+            )
+            self.assertEqual(record.raw_request.timeout_s, car.motion_timeout_s(2.0))
+            result = await runtime.wait_for_action(record.action_id)
+            self.assertEqual(result.status, ActionStatus.SUCCEEDED, result.failure)
+            self.assertIsNone(runtime.blocked_reason)
+            self.assertFalse((await car.get_state()).is_moving)
+        finally:
+            await runtime.close()
+
     async def test_cancel_mid_move_stops_and_confirms(self) -> None:
         """运动中取消：立即发停止，stop() 由遥测确认四轮静止."""
         port = FirmwareSerial()

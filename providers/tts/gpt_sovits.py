@@ -86,8 +86,9 @@ class GPTSoVITSProvider:
     async def start(self) -> None:
         """创建 HTTP 客户端；重复调用复用同一客户端."""
         if self._client is None:
+            # 合成服务在本机或隧道上，不经过环境变量里的 HTTP 代理。
             self._client = httpx.AsyncClient(
-                base_url=self._url, transport=self._transport
+                base_url=self._url, transport=self._transport, trust_env=False
             )
 
     async def close(self) -> None:

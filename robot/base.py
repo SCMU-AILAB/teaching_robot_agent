@@ -33,6 +33,14 @@ class RobotAdapter(ABC):
         for value in (state.position.x, state.position.y, state.position.yaw):
             _ = finite_float(value, "pose")
 
+    def motion_timeout_s(self, nominal_s: float) -> float:
+        """按请求速度估算耗时 nominal_s 的运动至少需要的执行期限，秒.
+
+        默认不额外要求；真实设备按自身加减速、到位逼近和停车确认覆盖。
+        """
+        _ = nominal_s
+        return 0.0
+
     @property
     def capabilities(self) -> frozenset[RobotCapability]:
         """默认不声明可选能力；厂商适配器只公开实际验证的能力."""
