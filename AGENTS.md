@@ -214,3 +214,11 @@
 - **测试**：原“失败即停止任务”的 4 项测试改为断言任务保留且下一句正常处理（运动失败、动作上限、合成失败、模型不可达 50002）；新增 2 项：模型调用不存在的工具时本条 50001、下一句正常回答；运动失败且停车无法确认时执行层锁定、任务记 failed。
 - **文档**：`docs/COMPETITION_ARCHITECTURE.md` 宿主流程同步。
 - **验证**：Ruff、179 个文件格式检查通过；basedpyright 0 errors / 0 warnings / 0 notes；354 项 unittest 通过；`app.robot_audio_demo` 离线运行成功。
+
+## 2026-10-27：模拟底盘空闲后播报与移动全部失败
+
+用迁到 v1.0 的前端连本机 `app.robot_server`（模拟底盘 + 模拟语音 + 本地假模型）联调时发现：回答已生成，`speak` 动作失败，原因 `Robot telemetry is stale or predates the command`。`SimulatedAdapter` 只在连接、移动、停止时更新 `updated_at`，空闲超过 `telemetry_max_age_s`（2 秒）后状态被判为过期，所有技能的前置检查都会失败；单元测试都在 2 秒内跑完，之前真模型联调未开语音，所以一直没暴露。
+
+- **修改**：模拟器状态即时可得，`get_state` 以读取时间作为遥测时间，删去 `_updated_at`。
+- **测试**：`tests/test_robot_adapter.py` 新增空闲超过遥测有效期后仍能执行转向（修复前失败）。
+- **验证**：Ruff、格式检查通过；basedpyright 0/0/0；全部 unittest 通过。

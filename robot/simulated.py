@@ -52,30 +52,29 @@ class SimulatedAdapter(RobotAdapter):
         self._connected: bool = False
         self._moving: bool = False
         self._position: Pose2D = Pose2D()
-        self._updated_at: float = time.time()
         self._stop_event: asyncio.Event | None = None
 
     @override
     async def connect(self) -> None:
         """建立设备连接并更新状态."""
         self._connected = True
-        self._updated_at = time.time()
 
     @override
     async def disconnect(self) -> None:
         """停止设备并释放连接."""
         await self.stop()
         self._connected = False
-        self._updated_at = time.time()
 
     @override
     async def get_state(self) -> RobotState:
-        """返回当前连接、运动和位姿快照."""
+        """返回当前连接、运动和位姿快照；模拟状态即时可得，读取时间即遥测时间."""
+        # 若沿用最后一次变化的时间，空闲超过 telemetry_max_age_s 后状态会被判为过期，
+        # 播报与移动的前置检查都会失败。
         return RobotState(
             is_connected=self._connected,
             is_moving=self._moving,
             position=self._position,
-            updated_at=self._updated_at,
+            updated_at=time.time(),
         )
 
     @override
@@ -117,7 +116,6 @@ class SimulatedAdapter(RobotAdapter):
         stop_event = asyncio.Event()
         self._stop_event = stop_event
         self._moving = True
-        self._updated_at = time.time()
 
         # 异常或协程取消不会冒充设备已经停止；Runtime 必须调用清理。
         if self.mode == SimulationMode.HANG:
@@ -135,7 +133,6 @@ class SimulatedAdapter(RobotAdapter):
                 y=origin.y + (target.y - origin.y) * fraction,
                 yaw=origin.yaw + (target.yaw - origin.yaw) * fraction,
             )
-            self._updated_at = time.time()
             if self.mode == SimulationMode.FAILURE and fraction >= 0.5:
                 raise RuntimeError("simulated movement failure")
             if fraction >= 1.0:
@@ -154,4 +151,3 @@ class SimulatedAdapter(RobotAdapter):
         if self._stop_event is not None:
             self._stop_event.set()
         self._moving = False
-        self._updated_at = time.time()
