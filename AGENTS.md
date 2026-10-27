@@ -234,3 +234,9 @@
 - **联调**：本机以模拟底盘 + 模拟语音 + 本地假 Ollama 启动 `app.robot_server`（端口 8090），迁移后的数据层实际走通建任务、文字问答与播报、录音转写问答、停止确认；模型不可达时消息被拒并显示原因，任务保留（PR #16 已合入）。联调中发现模拟底盘空闲后播报全部失败，已在 PR #16 修复。
 - **验证**：`flutter analyze` 无问题，85 项 `flutter test` 通过，`flutter build web` 与 `flutter build macos` 成功；Python Ruff、188 个文件格式检查通过，basedpyright 0/0/0，371 项 unittest 通过。
 - **未处理**：未与 Jetson 实机联调；后端没有跨源响应头，Web 版须与后端同源托管；页面没有“确认完成”入口；`pubspec.lock` 保留作者版本（本机 Flutter 3.38.2 解析结果较旧，未提交）。
+
+## 2026-10-27：控制台原型分支审查（feature/robot-console-ui）
+
+- **分支无法编译**：10-14 加入的根目录 `.gitignore` 规则 `models/` 未锚定，忽略了所有名为 models 的目录，作者的 `frontend/lib/features/robot_console/models/robot_console_models.dart` 从未进入提交，`flutter analyze` 144 个问题。main 已改为 `/models/`（`a0232db`）。按负责人指示，依据控制器、模拟服务、组件与测试中的用法重建该文件（9 个类型：`RobotSession`、`RobotStatus`、`ChatMessage`、`RobotAction`、`SceneObservation`、`SceneObject`、`SafetyEntry`、`ConsoleScenario`、`RobotConsoleFailure`），文件头注明为重建，不是原件；作者如保留原件可对照替换。
+- **原有问题**：测试中 `final RobotAction actionOfState() =>` 不是合法 Dart；4 项测试使用默认 900 ms 步长却只推进 500 ms；3 项测试结束时遗留模拟定时器；窄屏布局用懒加载 `ListView`，视口外面板不构建，改为与中屏一致的 `SingleChildScrollView`；8 个文件未按 `dart format` 格式化。
+- **验证**：`flutter analyze` 无问题，41 项 `flutter test` 通过，`flutter build web`（课堂与控制台两个入口）成功；Python 四项检查通过。控制台仍只使用模拟数据，未接 HTTP。
