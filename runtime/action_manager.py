@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 from copy import deepcopy
+from dataclasses import replace
 from types import TracebackType
 
 from domain.models import (
@@ -174,6 +175,10 @@ class ActionManager:
         skill.validate(request.args)
         for capability in skill.required_capabilities:
             self.robot.require_capability(capability)
+        # 期限不能短于设备完成该动作本身所需的时间，否则真实运动必然被判超时。
+        minimum = skill.minimum_timeout_s(self.robot, request.args)
+        if minimum > request.timeout_s:
+            request = replace(request, timeout_s=minimum)
         # ========== Step2: 创建隔离记录并通知消费者 ==========
         record = self.store.create_action(request)
         self._done[record.action_id] = asyncio.Event()
@@ -239,7 +244,10 @@ class ActionManager:
             )
         )
         if record.status.is_terminal:
-            self._done[record.action_id].set()
+            # 等待者已持有事件对象；终态后移出登记，避免长时间运行累积。
+            done = self._done.pop(record.action_id, None)
+            if done is not None:
+                done.set()
 
     def _transition(
         self,

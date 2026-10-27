@@ -55,8 +55,9 @@ Agent / 人工控制 / 通用任务流程
 - **连接**：打开串口前 DTR/RTS 置低；发送 `$S` 锁定通信口并解除故障，2 秒内收不到遥测即失败。后台线程读取 20 Hz 遥测，超过 0.5 秒没有遥测报告未连接。
 - **里程计**：主机按轮位（左前 M4、右前 M1、左后 M3、右后 M2）把编码器增量代入麦克纳姆正运动学，取半步航向积分位姿，处理 i32 回绕。它看不到打滑，声明的 LOCALIZATION 只是编码器里程计。
 - **标定**：`CAR_COUNTS_PER_METER`（前进 1 米时四轮平均计数）与 `CAR_COUNTS_PER_RADIAN`（逆时针 1 弧度时 (-左前+右前-左后+右后)/4）必填，可选 `CAR_COUNTS_PER_METER_LATERAL`。未标定时不声明任何能力，`build_robot_skills` 不注册运动技能。用 `uv run --extra car python -m app.car_calibrate PORT forward|turn|lateral` 实测，小车会真实移动。
-- **运动**：`move_relative` / `turn_relative` 每帧遥测发送一次 `$V`（刷新 300 ms 看门狗），按剩余量减速，移动时修正侧向与航向偏差、转向时保持位置；到位后停车并以连续两帧四轮无增量确认静止。速度千分比 = 每秒计数 / 4，单轴上限 `CAR_MAX_PERMILLE`（默认 600）。
+- **运动**：`move_relative` / `turn_relative` 每帧遥测发送一次 `$V`（刷新 300 ms 看门狗），按剩余量减速，移动时修正侧向与航向偏差、转向时保持位置；到位后停车并以连续两帧四轮增量不超过 1 个计数确认静止（正交编码器停在边沿会来回跳 1 个计数）。速度千分比 = 每秒计数 / 4，单轴上限 `CAR_MAX_PERMILLE`（默认 600）。
 - **失败**：固件报告堵转/编码器故障（state 3）、命令被拒（应答码非 0）、运动中 0.3 秒无遥测或超过期限（估算耗时 × 2 + 3 秒）都报错；失败与取消先立即发 `$S`，再由 Runtime 清理阶段的 `stop()` 确认静止，确认不了则报错并锁定执行层。
+- **动作期限**：`RobotAdapter.motion_timeout_s` 给出设备完成一次运动至少需要的期限（底盘为估算耗时 × 2 + 5 秒，覆盖到位期限与停车确认），Runtime 提交动作时把较短的调用方期限放宽到该值；模拟器为 0，不改变调用方期限。
 - **验收容差**：`RobotAdapter.position_tolerance_m` / `yaw_tolerance_rad`（模拟器 1 毫米 / 0.001 弧度），底盘默认 2 厘米 / 0.035 弧度（约 2°），可由 `CAR_POSITION_TOLERANCE_M`、`CAR_YAW_TOLERANCE_RAD` 调整。`MoveRelativeSkill.verify` 按设备容差判定。
 - **测试**：`tests/car_firmware_fixture.py` 按固件协议行为实现串口替身（CRC 校验、应答、遥测、斜率、看门狗、故障锁定），`tests/test_car_adapter.py` 覆盖连接、未标定、移动与转向到位、经 Runtime 执行技能、运动中取消、故障、遥测中断与计数回绕。
 

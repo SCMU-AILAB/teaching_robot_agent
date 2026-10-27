@@ -35,6 +35,10 @@ _COUNTS_PER_PERMILLE = 4.0
 _STATE_MOVING = 1
 _STATE_FAULT = 3
 _I32 = 1 << 32
+# 停车确认期限，秒。
+_HALT_TIMEOUT_S = 1.0
+# 单帧（50 ms）编码器增量不超过该值视为静止：正交编码器停在边沿时可能来回跳 1 个计数。
+_STILL_COUNTS = 1
 
 
 @dataclass(frozen=True)
@@ -174,6 +178,11 @@ class CarAdapter(RobotAdapter):
             }
         )
 
+    @override
+    def motion_timeout_s(self, nominal_s: float) -> float:
+        """覆盖 _drive 的期限（2 倍估算加 3 秒）及到位后的停车确认."""
+        return nominal_s * 2 + 3.0 + _HALT_TIMEOUT_S + 1.0
+
     # ========== 连接与遥测 ==========
 
     @override
@@ -264,7 +273,9 @@ class CarAdapter(RobotAdapter):
                 for new, old in zip(frame.encoders, previous, strict=True)
             )
             front_left, front_right, rear_left, rear_right = m4, m1, m3, m2
-            self._wheels_turning = any((m1, m2, m3, m4))
+            self._wheels_turning = any(
+                abs(item) > _STILL_COUNTS for item in (m1, m2, m3, m4)
+            )
             self._integrate(front_left, front_right, rear_left, rear_right)
         self._signal()
 
@@ -344,7 +355,7 @@ class CarAdapter(RobotAdapter):
         if link is None:
             raise RuntimeError("Car is not connected")
         await self._send(stop(link.next_seq()))
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + _HALT_TIMEOUT_S
         still = 0
         while still < 2:
             if not await self._wait_ticks(1, max(0.0, deadline - time.monotonic())):

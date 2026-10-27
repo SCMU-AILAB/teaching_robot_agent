@@ -5,6 +5,7 @@
 """
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -272,16 +273,20 @@ class CarLink:
         self._port: SerialPort = _port
         self._buffer: bytearray = bytearray()
         self._seq: int = 0
+        # 取消运动时停止帧可能与线程池中未写完的速度帧并发，整帧写入才不会交错。
+        self._write_lock: threading.Lock = threading.Lock()
         self.invalid_lines: int = 0
 
     def next_seq(self) -> int:
         """返回下一个循环序号."""
-        self._seq = (self._seq + 1) & 0xFFFF
-        return self._seq
+        with self._write_lock:
+            self._seq = (self._seq + 1) & 0xFFFF
+            return self._seq
 
     def send(self, frame: bytes) -> None:
-        """发送一条已编码的命令帧."""
-        _ = self._port.write(frame)
+        """发送一条已编码的命令帧；多线程调用时整帧串行写入."""
+        with self._write_lock:
+            _ = self._port.write(frame)
 
     def poll(self, max_bytes: int = 4096) -> list[CarFrame]:
         """读取当前可得字节，返回其中完整且合法的帧."""

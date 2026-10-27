@@ -165,12 +165,18 @@ class TaskCoordinator:
             return task
         task.status = TaskStatus.CANCELLING
         self.store.save_task(task)
-        if task_id not in self._cancellations:
-            self._cancellations[task_id] = asyncio.create_task(
+        cancellation = self._cancellations.get(task_id)
+        if cancellation is None:
+            cancellation = asyncio.create_task(
                 self._cancel_task(task_id), name=f"robot-task-cancel-{task_id}"
             )
+            self._cancellations[task_id] = cancellation
+            # 终态保存后不再需要共享作业；之后的取消请求直接返回终态记录。
+            cancellation.add_done_callback(
+                lambda _: self._cancellations.pop(task_id, None)
+            )
         # API 请求断开或等待者取消后，任务仍要完成停止与终态更新。
-        await asyncio.shield(self._cancellations[task_id])
+        await asyncio.shield(cancellation)
         return self.get_task(task_id)
 
     async def _cancel_task(self, task_id: int) -> None:
