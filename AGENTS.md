@@ -189,3 +189,15 @@
 - **朗读清理**：新增 `speech/text.py` `speakable_text`，去掉标题、列表符号（“1. ”须带空格，行首“3.5 米”保留）、加粗、链接、代码块与表情，换行改为停顿；`SpeakSkill` 播报前清理，清理后为空则动作失败，证据记录 `spoken_text`。显示给前端的回答文本不改。
 - **测试**：新增 `tests/test_speakable_text.py` 4 项（含真实模型回答原文）；`test_object_safety_flow.py` 消息顺序测试按新顺序更新，新增安全问题检索命中断言与系统提示规则断言。Ruff、格式检查通过，basedpyright 0 errors / 0 warnings，323 项 unittest 通过。
 - **真实模型复测**（示例桌面图片作文件摄像头）：6 个问题回答均为纯文本 33–58 字；插座、剪刀回答内容与资料条目一致；资料库没有条目时直接说明；闲聊不硬扯资料；首问约 3 秒（模型已热），其余约 1 秒。仍为单轮抽样，非系统评测。
+
+## 2026-10-27：语音与前端分支审查（feature/speech-output-lifecycle）
+
+分支在 PR #2 之后又积累 28 个提交：前端接设备真实数据、局域网设备发现、macOS 桌面端、Jetson 设备端指南、TTS/ASR 测评工具、音频设备按名称解析。按负责人指示审查后合入。
+
+- **合并 main**：`API_CONTRACT.md` 按 v1.0 规定以 main 为准，分支上的 v0.2 草案修改不保留；`frontend/README.md` 冲突合并后按 v1.0 重写。
+- **前端接口迁到 v1.0**：原 `DeviceClassroomService` 调用的 `tasks/{id}/session`、`tasks/{id}/inputs`、`POST tasks/{id}/observations`、`camera/stream` 与 `teaching.updated`、`input.updated`、`assistant.message`、`playback.updated`、`camera.status` 事件在 v1.0 中都不存在，连 main 的后端会全部失败。重写为任务快照（`GET /tasks/{id}`）+ SSE（带快照游标建流、`stream.reset` 重读快照，连续重置按 3 秒退避）+ 任务/消息/录音命令；请求体只含合同字段（服务端 `extra="forbid"`）；路径统一取 `core/constants/api_paths.dart`。v1.0 没有的能力：课堂阶段由消息处理状态推导（讲解中 / 等待提问），播报状态取最近一个 `speak` 动作，“刷新观察”改为一句提问请机器人重新观察，摄像头在没有 MJPEG 时各平台轮询单帧快照。被拒绝的用户消息补一条机器人说明并写入设备说明，避免页面一直停在“等待回答”。
+- **原有问题**：`SizeTransition(alignment:)` 在 Flutter 3.38.2 不存在，改为 `axisAlignment: -1.0`（两个版本都能编译）；`BubbleSendTransition` 的动画控制器为惰性 `late final`，从未播放的实例在 `dispose` 中才创建 ticker 触发断言，改在 `initState` 创建；`dart format`。
+- **测试**：`test/device_classroom_service_test.dart` 按 v1.0 重写 12 项（错误包装、快照映射、播报状态、建任务字段与游标建流、SSE 去重与回答补全、拒绝说明、`stream.reset`、网络不可达、摄像头地址、消息与录音命令字段）。
+- **联调**：本机以模拟底盘 + 模拟语音 + 本地假 Ollama 启动 `app.robot_server`（端口 8090），迁移后的数据层实际走通建任务、文字问答与播报、录音转写问答、停止确认；模型不可达时消息被拒并显示原因，任务保留（需 PR #16）。联调中发现模拟底盘空闲后播报全部失败，已在 PR #16 修复。
+- **验证**：`flutter analyze` 无问题，85 项 `flutter test` 通过，`flutter build web` 与 `flutter build macos` 成功；Python Ruff、188 个文件格式检查通过，basedpyright 0/0/0，371 项 unittest 通过。
+- **未处理**：未与 Jetson 实机联调；后端没有跨源响应头，Web 版须与后端同源托管；页面没有“确认完成”入口；`pubspec.lock` 保留作者版本（本机 Flutter 3.38.2 解析结果较旧，未提交）。
