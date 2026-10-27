@@ -12,6 +12,8 @@ from domain.models import ActionStatus, TaskState, TaskStatus
 from domain.services import ObservationRequest
 from domain.validation import positive_int
 
+_INPUT_RETENTION = 4096
+
 
 @dataclass(frozen=True)
 class RobotReply:
@@ -94,8 +96,11 @@ class RobotHost:
                 raise ValueError("Start the robot before handling input")
             if item.question_id is not None:
                 raise ValueError("Use explicit teaching mode for question answers")
-            if len(self._seen) >= 4096:
-                raise RuntimeError("Input retention capacity reached")
+            while len(self._seen) >= _INPUT_RETENTION:
+                # 只保留最近的去重记录；长期运行不能因累计输入数而拒绝服务。
+                oldest = next(iter(self._seen))
+                del self._seen[oldest]
+                _ = self._replies.pop(oldest, None)
             self._seen[item.input_id] = item
             worker = asyncio.create_task(self._handle(item), name="robot-input")
             self._workers[item.task_id] = worker

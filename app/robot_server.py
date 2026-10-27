@@ -81,6 +81,8 @@ async def serve_robot(slot: ServiceSlot) -> AsyncGenerator[None]:
         )
         yield
     finally:
+        # 先摘下服务，关闭期间到达的请求得到 50002，而不是操作已关闭的服务。
+        slot.service = None
         try:
             await service.close()
         finally:

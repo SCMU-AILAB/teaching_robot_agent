@@ -86,6 +86,7 @@ class TeamGateway:
         self._task_evidence: dict[int, set[str]] = {}
         self._observation_listeners: list[Callable[[ObservationResult], None]] = []
         self._coordinator.add_terminal_listener(self._release_task_evidence)
+        self._coordinator.add_terminal_listener(self._forget_transcripts)
 
     def add_terminal_listener(self, listener: Callable[[int], None]) -> None:
         """装配阶段注册任务终态回调；回调必须同步且不阻塞."""
@@ -128,6 +129,11 @@ class TeamGateway:
     def _release_task_evidence(self, task_id: int) -> None:
         """任务终态回调：释放该任务独占的帧证据；观察记录保留供事后查询."""
         self._release_unreferenced(self._task_evidence.pop(task_id, set()))
+
+    def _forget_transcripts(self, task_id: int) -> None:
+        """任务终态回调：已结束任务不再接受转写，去重记录随之清理."""
+        for key in [key for key in self._transcripts if key[0] == task_id]:
+            del self._transcripts[key]
 
     def _release_unreferenced(self, evidence_ids: Iterable[str]) -> None:
         """只释放没有被其他未结束任务引用的证据；缓存命中可能让多个任务共享一帧."""
@@ -265,6 +271,7 @@ class TeamGateway:
                 raise ValueError("Recording already submitted with different text")
             return previous
         if len(self._transcripts) >= 4096:
+            # 只有未结束任务的转写留在这里；超限说明单个任务录音异常地多。
             raise RuntimeError("Transcript retention capacity reached")
         item = UserInput(
             uuid4().hex, task_id, transcript.text, "speech", recording_id, question_id

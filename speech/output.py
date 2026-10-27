@@ -83,11 +83,22 @@ class SpeechOutputService:
         if any(not item.task.done() for item in self._outputs.values()):
             raise RuntimeError("Speech output busy")
         if len(self._outputs) >= 4096:
+            self._prune_finished()
+        if len(self._outputs) >= 4096:
             raise RuntimeError("Output retention capacity reached")
         task = asyncio.create_task(self._run(playback_id, text, voice_id, timeout))
         self._outputs[playback_id] = _Output(task)
         task.add_done_callback(self._observe_failure)
         logger.info("[SpeechOutputService.start] 语音输出会话已启动")
+
+    def _prune_finished(self) -> None:
+        """达到保留上限时清理作业与停止清理都已结束的旧输出."""
+        for key in [
+            key
+            for key, item in self._outputs.items()
+            if item.task.done() and (item.cleanup is None or item.cleanup.done())
+        ]:
+            del self._outputs[key]
 
     @staticmethod
     def _observe_failure(task: asyncio.Task[PlaybackState]) -> None:

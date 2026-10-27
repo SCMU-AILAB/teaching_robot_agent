@@ -71,6 +71,8 @@ class _TaskView:
     recordings: dict[str, RecordingRecord] = field(default_factory=dict)
     # 机器人回答按用户消息编号登记，避免重复生成。
     replies: dict[str, str] = field(default_factory=dict)
+    # 本任务观察事件公开过的画面，任务记录清理时一并撤销公开。
+    evidence_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -650,6 +652,7 @@ class RobotApiService:
         if view is None:
             return
         view.observation = result
+        view.evidence_ids.add(result.frame.evidence_id)
         self._exposed_evidence.add(result.frame.evidence_id)
         view.log.publish("observation.created", self._observation_payload(result))
 
@@ -695,7 +698,11 @@ class RobotApiService:
 
     def _on_action(self, action_id: int) -> None:
         """动作变化：发布最新记录；播报开始时先行生成机器人回答."""
-        record = self._app.runtime.get_action(action_id)
+        try:
+            record = self._app.runtime.get_action(action_id)
+        except KeyError:
+            # 积压事件对应的旧动作记录可能已被清理。
+            return
         task_id = record.raw_request.task_id
         view = self._views.get(task_id)
         if view is None:
@@ -800,4 +807,11 @@ class RobotApiService:
             if len(self._views) <= self._max_tasks:
                 return
             if self._app.gateway.get_task(task_id).status in _TERMINAL:
-                self._views.pop(task_id).log.close("task_evicted")
+                view = self._views.pop(task_id)
+                view.log.close("task_evicted")
+                self._linked_speech.difference_update(view.actions)
+                # 其他任务可能经缓存共享同一帧，仍被引用的保持公开。
+                shared = set[str]().union(
+                    *(item.evidence_ids for item in self._views.values())
+                )
+                self._exposed_evidence.difference_update(view.evidence_ids - shared)
