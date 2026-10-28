@@ -46,6 +46,7 @@ def build_local_model(role: str = "VLM") -> ChatOllama:
         format="json" if role == "VLM" else "",
         num_ctx=4096,
         num_predict=768,
-        keep_alive="5m",
+        # 模型常驻时长；5 分钟会在孩子停顿后卸载，下一句要从磁盘重新加载（3080 实测十余秒至超时）。
+        keep_alive=os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
         client_kwargs={"trust_env": False, "timeout": 60.0},
     )

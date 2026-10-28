@@ -159,6 +159,14 @@ class LocalVisionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 _ = build_local_model()
 
+    def test_keep_alive_defaults_to_thirty_minutes(self) -> None:
+        """模型默认常驻 30 分钟，避免孩子停顿后重新加载；可由环境变量调整."""
+        base = {"OLLAMA_BASE_URL": "http://127.0.0.1:11434"}
+        with patch.dict(os.environ, base, clear=True):
+            self.assertEqual(build_local_model("AGENT").keep_alive, "30m")
+        with patch.dict(os.environ, {**base, "OLLAMA_KEEP_ALIVE": "10m"}, clear=True):
+            self.assertEqual(build_local_model("AGENT").keep_alive, "10m")
+
 
 class LocalAgentTests(unittest.IsolatedAsyncioTestCase):
     """脚本化模型驱动真实业务工具，测试不依赖服务器可用性."""
