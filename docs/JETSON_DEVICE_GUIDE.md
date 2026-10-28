@@ -1,48 +1,43 @@
-# Jetson 设备端开发指南
+# Jetson 设备端部署指南
 
-> 本文件是给**在 Jetson 板子上工作的 AI / 开发者**的任务说明。请先完整读一遍再动手。
-> 版本：2026-10-20，对应主仓库提交 `a73da60`。
+> 给**在 Jetson 板子上部署与调试机器人后端的人或 AI** 的说明。动手前请完整读一遍。
+> 版本：2026-10-28，对应 API_CONTRACT v1.0。旧版（2026-10-20）描述的“Jetson 只采音放音、经 SSH 把音频交给服务器”的架构已经废弃。
 
 ---
 
-## 1. 你的角色
-
-你负责的是**设备端**（Jetson Orin NX + USB 声卡），不是服务端，也不是算法端。
-
-系统分工：
+## 1. 系统分工
 
 ```
-                     ┌──────────────── 服务器（不在本机）────────────────┐
-学生说话             │  Whisper/SenseVoice ASR │ 教学 Agent 推理 │ Piper TTS │
-   │                 └───────────────────────────────────────────────┘
-   ▼                         ▲ 音频上行              │ 音频下行
-┌────────────────────────── Jetson（你负责这里）──────────────────────────┐
-│  采音（麦克风） → 上传 →  接收文本 → 接收音频 → 播放（扬声器）           │
-│  接收控制决策 → 转换为运动指令 → 串口下发 → ESP32 → 小车电机            │
-└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────── 3080 服务器（局域网 192.168.0.239）────────────────────┐
+│  Ollama：qwen3.5:9b 决策与看图（127.0.0.1:11435）                            │
+│  GPT-SoVITS api_v2：训练音色合成（127.0.0.1:9881）                            │
+└─────────────────────────────────────────────────────────────────────────┘
+              ▲ 两个服务都只监听 3080 本机，Jetson 经 SSH 隧道访问
+              │
+┌──────────────────────────── Jetson（本机）────────────────────────────────┐
+│  app.robot_server：任务、Agent 决策循环、动作执行、HTTP/SSE API（8090）        │
+│  摄像头 → 观察；麦克风 → SenseVoice 常驻识别（CPU）；扬声器 ← 播放合成音频        │
+│  串口 → STM32 底盘固件（CarAdapter，主机端里程计）                              │
+└─────────────────────────────────────────────────────────────────────────┘
+              ▲ 前端（Mac 桌面端）只连 Jetson 的 8090，不直接访问 3080
 ```
 
-**一句话**：Jetson 是"耳朵、嘴和手"，大脑在服务器。
+- 接口以根目录 `API_CONTRACT.md` 为唯一依据；Jetson 不新增接口，只部署和调试。
+- GPT-SoVITS 能读取服务器上任意路径的参考音频，**绝不能**开放到局域网，只能经隧道访问。
+- Jetson 不运行 GPT-SoVITS 或大模型；显存与内存留给摄像头、识别与后端本身。
 
 ### 你必须做的
 
-1. 采集麦克风音频，按约定格式交给服务器识别。
-2. 接收服务器返回的音频并播放，能中途停止并确认停止。
-3. 接收上层的运动决策，翻译成 ESP32 能执行的指令并下发。
-4. 保证设备资源（声卡句柄、子进程、串口）在取消、异常、退出时全部释放。
+- 每一步都留证据（命令与真实输出），未验证的如实写“未验证”。
+- 需要 `sudo` 的操作（装系统包、开机自启 linger、加入 dialout 组）**先请示负责人**，不得自动执行。
+- 底盘第一次上电运动前，先架空车轮或确认前方有空地，并准备好随时断电。
 
 ### 你绝对不能做的
 
-| 禁止项 | 原因 |
-|---|---|
-| 在板子上加载 ASR / TTS 模型（SenseVoice、Whisper、Piper 等） | 推理和合成只在服务器执行，板端不做推理 |
-| 自己决定或猜测服务器、ESP32 的通信协议 | 协议未定稿，必须先上报，等负责人确认 |
-| 自动执行 `sudo`、自动 `apt install`、改系统配置 | 需要人工批准；当前 `libportaudio2` 就属于这种情况 |
-| 修改 `runtime/`、`robot/`、`skills/`、`domain/`、`storage/` 里的共享模型 | 属于核心层，改动会影响服务器侧与前端 |
-| 修改 `docs/API_CONTRACT.md`、`docs/MODULE_CONTRACT.md` | 合同变更必须先提审 |
-| 用硬编码序号选声卡（如 `plughw:2,0`） | 序号随拔插漂移，必须按名称 |
-| 把模拟结果当成真实验证结果汇报 | 验收要求区分"已验证 / 未验证" |
-| 为了跑通而加 `noqa`、`ignore`、`type: ignore` | 违反编码规范 |
+- 把 3080 的 Ollama 或 GPT-SoVITS 改为监听局域网。
+- 把 HTTP API 映射到公网。
+- 在配置里写密码；SSH 一律用密钥。
+- 修改 `domain/`、`runtime/`、`agent/` 等核心代码来“绕过”设备问题；发现问题写进汇报。
 
 ---
 
@@ -70,126 +65,70 @@
 
 ---
 
-## 3. 目录结构
+## 3. 环境准备
 
-```
-~/teachingrobotagent/
-├── README.md                    ← 本文件
-├── CODING_SPEC.pdf              ← 代码规范原件（v1.0，与下文第 9 节对应）
-├── requirements.txt             ← 设备端唯一第三方依赖（sounddevice）
-├── .env.example                 ← 环境变量模板
-├── domain/                      # 共享数据模型（只读，不要改）
-│   ├── services.py              # AudioReference / TranscriptResult / PlaybackState
-│   ├── models.py / robot.py / education.py
-│   └── validation.py            # 入参校验工具
-├── storage/
-│   ├── evidence.py              # 证据存储：按不透明 ID 存音频，不暴露文件路径
-│   └── memory.py
-├── providers/
-│   ├── audio/
-│   │   ├── worker.py            # 设备工作子进程：唯一真正打开声卡的地方
-│   │   ├── wav.py               # PCM/WAV 编解码
-│   │   ├── recorder.py          # PortAudioRecorder：录音生命周期
-│   │   └── real_player.py       # PortAudioPlayer：播放与停止确认
-│   ├── asr/remote.py            # RemoteASRProvider：上传音频给服务器识别
-│   └── tts/remote.py            # RemoteTTSProvider：请求服务器合成并落地为证据
-├── speech/
-│   ├── config.py                # 环境变量装配
-│   ├── remote.py                # SSH 传输层（标准输入输出，不新开端口）
-│   ├── _process.py              # 子进程统一管理
-│   ├── _lifecycle.py            # 取消与清理辅助
-│   ├── resources.py             # AudioDeviceLease：录音与播放互斥
-│   ├── interfaces.py            # Protocol 定义
-│   ├── input.py                 # SpeechInputService：录音 → 识别 → 提交
-│   ├── output.py                # SpeechOutputService：合成 → 播放 → 终止态
-│   └── real_demo.py             # 设备端可运行入口（固定回答，非真实 Agent）
-├── app/team_gateway.py          # 输入队列门面（只读）
-├── runtime/  robot/  skills/    # 核心层，real_demo 依赖它们；只读，不要改
-└── perception/                  # 感知接口与模拟实现（只读）
+### 3.1 代码与依赖（不需要 sudo）
+
+```bash
+cd ~ && git clone https://github.com/SCMU-AILAB/teaching_robot_agent.git
+cd ~/teaching_robot_agent
+curl -LsSf https://astral.sh/uv/install.sh | sh        # 安装到 ~/.local/bin，不需要 sudo
+~/.local/bin/uv sync --frozen --extra speech --extra car
 ```
 
-> `runtime/`、`robot/`、`skills/`、`perception/` 只是因为 `speech/real_demo.py` 依赖才带过来，
-> **不是给你改的**。你的工作范围是 `providers/audio/`、`providers/asr/remote.py`、
-> `providers/tts/remote.py`、`speech/`（`config.py`、`remote.py`、`input.py`、`output.py`、
-> `resources.py`），以及将来的 ESP32 控制模块。
+锁文件中的原生依赖（sherpa-onnx、onnxruntime、opencv、av）都有 linux aarch64 wheel，不需要编译；
+若下载慢，可加 `--index-url https://pypi.tuna.tsinghua.edu.cn/simple`。
+
+### 3.2 系统包与权限（**必须先请示**）
+
+```bash
+sudo apt update && sudo apt install -y libportaudio2   # sounddevice 依赖
+sudo usermod -aG dialout "$USER"                        # 访问底盘串口，重新登录生效
+sudo loginctl enable-linger "$USER"                     # 用户级服务开机自启
+```
+
+自检：`.venv/bin/python -c "import sounddevice; print(sounddevice.query_devices())"`。
+
+### 3.3 识别模型
+
+把 SenseVoice 模型目录（含 `model.int8.onnx` 与 `tokens.txt`）放到 `~/teaching_robot_agent/models/sensevoice-small/`。
+根目录 `models/` 已被忽略，不会提交。
+
+### 3.4 到 3080 的 SSH 隧道
+
+Jetson 需要能免密钥登录 3080：
+
+```bash
+ssh-keygen -t ed25519            # 已有密钥可跳过
+ssh-copy-id yaoyifeng@192.168.0.239
+ssh -o BatchMode=yes yaoyifeng@192.168.0.239 echo ok
+```
+
+隧道由 `teaching-robot-tunnel.service` 常驻维护：Jetson 本机 `21435 → 3080 Ollama 11435`，`29881 → 3080 GPT-SoVITS 9881`。
 
 ---
 
-## 4. 环境准备
+## 4. 配置
 
-### 4.1 建立虚拟环境（不需要 sudo）
-
-```bash
-cd ~/teachingrobotagent
-python3 -m venv .venv
-./.venv/bin/pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-```
-
-### 4.2 安装 PortAudio（**必须先请示，不得自动执行**）
-
-当前板子缺 `libportaudio2`，`sounddevice` 无法加载。安装命令：
+程序不读取 `.env` 文件，配置全部来自环境变量。部署时由 systemd 从 `~/teaching-robot/robot.env` 读取：
 
 ```bash
-sudo apt update && sudo apt install -y libportaudio2
+mkdir -p ~/teaching-robot
+cp deploy/jetson/robot.env.example ~/teaching-robot/robot.env
+chmod 600 ~/teaching-robot/robot.env
 ```
 
-- 这条命令**需要人工批准**，执行前先在汇报里说明"我准备执行 apt 安装，请确认"。
-- 装完自检：`.venv/bin/python -c "import sounddevice; print(sounddevice.query_devices())"`。
+逐项核对模板中的值。要点：
 
-> 在 PortAudio 装好之前，只能用 ALSA 命令行（`arecord` / `aplay`）验证硬件，
-> **不能**说"语音链路已验证"。
-
-### 4.3 服务器连通性
-
-设备端通过 `ssh` 标准输入输出与服务器通信，**不需要新开端口、不使用 HTTP**：
-
-```bash
-ssh -T -p 22 <用户>@<服务器地址> "echo ok"
-```
-
----
-
-## 5. 配置
-
-程序**不会自动读取 `.env`**，环境变量需要在启动前导出。
-
-| 变量 | 含义 | 示例 |
-|---|---|---|
-| `SPEECH_SSH_HOST` | 服务器地址 | `10.0.0.5` |
-| `SPEECH_SSH_USER` | 服务器用户名 | `speech` |
-| `SPEECH_SSH_PORT` | SSH 端口 | `22` |
-| `SPEECH_SERVER_DIRECTORY` | 服务器语音安装目录（绝对路径） | `/opt/speech` |
-| `SPEECH_INPUT_DEVICE` | **录音设备名称** | `Earpods` |
-| `SPEECH_OUTPUT_DEVICE` | **播放设备名称** | `USB Audio Device` |
-| `SPEECH_SAMPLE_RATE` | 采样率，默认 16000 | `16000` |
-| `SPEECH_MAX_DURATION_S` | 单次录音上限，默认 15 | `15` |
-| `SPEECH_TIMEOUT_S` | 单次往返超时，默认 60 | `60` |
-| `SPEECH_ASR_LANGUAGE` | 识别语言 | `zh` |
-| `SPEECH_TTS_VOICE` | 音色 | `huayan` |
-
-### 设备必须按名称配置
-
-代码用 `providers/audio/worker.py` 的 `resolve_device()` 解析：空名称走系统默认；
-否则按名称匹配（完整名 > 前缀 > 子串，忽略大小写），并校验该设备是否具备对应方向
-（录音看 `max_input_channels`，播放看 `max_output_channels`）。
-
-- 找不到设备 → 抛 `ValueError`，**不会静默退回系统默认**。
-- 多个设备同名 → 抛 `ValueError` 并列出候选，要求配更精确的名称。
-- **不支持数字序号**，因为序号随拔插漂移。
-
-查设备列表：
-
-```bash
-./.venv/bin/python -m providers.audio.worker devices
-```
+- **设备按名称配置**：`SPEECH_INPUT_DEVICE`、`SPEECH_OUTPUT_DEVICE` 用名称（子串、忽略大小写），不要填序号；
+  找不到或同名多个时启动报错，不会退回系统默认。枚举：`.venv/bin/python -m providers.audio.worker devices`。
+- **底盘**：`ROBOT_ADAPTER=car` 时 `CAR_SERIAL_PORT` 必填；`CAR_COUNTS_PER_METER`、`CAR_COUNTS_PER_RADIAN`
+  未标定时底盘只连接、不开放运动技能。标定前可先用 `ROBOT_ADAPTER=simulated`。
+- **端口**：`ROBOT_API_PORT=8090` 与前端默认一致，`ROBOT_API_HOST=0.0.0.0` 只用于受控局域网。
 
 ### 播放前必须设音量
 
-```bash
-amixer -c "$(basename "$(readlink -f /sys/class/sound/card*/device 2>/dev/null | head -1)")" sset PCM 100%
-```
-
-更实用的写法是按名称定位：
+C-Media 扬声器默认只有 14/37（约 -23 dB）：
 
 ```bash
 for c in /sys/class/sound/card*; do
@@ -199,72 +138,63 @@ done
 
 ---
 
-## 6. 运行入口
+## 5. 运行
+
+### 5.1 手动前台运行（调试）
 
 ```bash
-cd ~/teachingrobotagent
-set -a; source .env.speech; set +a       # 或手动 export
-./.venv/bin/python -m speech.real_demo
+cd ~/teaching_robot_agent
+ssh -N -L 21435:127.0.0.1:11435 -L 29881:127.0.0.1:9881 yaoyifeng@192.168.0.239 &   # 隧道
+set -a; source ~/teaching-robot/robot.env; set +a
+.venv/bin/python -m app.robot_server
 ```
 
-控制台命令：
+启动日志应依次出现：设备已连接、`GPTSoVITSProvider._warmup 预热完成`、`机器人后端已启动`。
+预热失败只记警告（例如隧道还没连上），首句播报会慢。
 
-| 命令 | 作用 |
-|---|---|
-| `/record` | 开始录音 |
-| `/finish` | 结束录音并送识别 |
-| `/stop` | 取消当前这一轮（录音/识别/合成/播放） |
-| `/quit` | 退出并释放设备 |
+### 5.2 常驻服务
 
-一次正常交互的输出顺序应为：`正在录音…` → `识别：<文本>` → `正在合成…` → `播放结果：completed`。
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/jetson/teaching-robot-tunnel.service deploy/jetson/teaching-robot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now teaching-robot-tunnel teaching-robot
+journalctl --user -u teaching-robot -f
+```
 
-> 这个入口用的是**固定测试回答**，不是真实 Agent 回答。它的作用是验证
-> "采音 → 服务器识别 → 服务器合成 → 本地播放"这条链路本身。
+更新代码后：`git pull && ~/.local/bin/uv sync --frozen --extra speech --extra car && systemctl --user restart teaching-robot`。
+
+### 5.3 底盘标定（需要人在车旁）
+
+```bash
+.venv/bin/python -m app.car_calibrate /dev/ttyUSB0 forward --permille 300 --seconds 2
+.venv/bin/python -m app.car_calibrate /dev/ttyUSB0 turn --permille 300 --seconds 2
+```
+
+按提示输入实测距离或角度，把打印的 `CAR_COUNTS_PER_*` 写入 `robot.env` 后重启服务。
 
 ---
 
-## 7. 验收自检清单
+## 6. 验收自检清单
 
-按顺序做，每条都要有证据（命令输出或日志），不能只写"通过"。
+按顺序做，每条都要有证据。
 
 | # | 检查项 | 命令 / 判据 |
 |---|---|---|
-| 1 | 声卡枚举 | `cat /proc/asound/cards` 能看到 C-Media 与 Earpods |
-| 2 | 设备名称解析 | `python -m providers.audio.worker devices` 输出包含两者 |
-| 3 | 录音可用 | 录 3 秒后统计采样点，峰值 > 300 视为有输入 |
-| 4 | 播放可用 | 播放 1 kHz 测试音，**人工确认听到** |
-| 5 | 音量已设置 | `amixer -c <n> sget PCM` 显示 100%（0 dB） |
-| 6 | SSH 连通 | `ssh -T -p 22 user@host "echo ok"` 返回 ok |
-| 7 | 单轮往返 | `/record` → `/finish`，记录"结束录音"到"文本返回"的耗时 |
-| 8 | 播放停止 | 播放中 `/stop`，终态必须是 `stopped`（不是 `completed`） |
-| 9 | 资源释放 | 取消后 `ps aux | grep worker` 无残留；`ls /proc/asound/card*/pcm*p/sub0/status` 无 `RUNNING` |
-| 10 | 反复插拔 | 拔插声卡后重新运行，设备仍能按名称找到 |
+| 1 | 隧道 | `curl -s http://127.0.0.1:21435/api/tags` 列出 `qwen3.5:9b`；`curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:29881/tts` 有响应（非连接失败） |
+| 2 | 后端状态 | `curl -s http://127.0.0.1:8090/api/v1/system`：`robot.connected`、`camera.available`、`audio.available` 为 true，`services` 全为 `ready` |
+| 3 | 局域网可达 | 在 Mac 上 `curl http://<Jetson 地址>:8090/api/v1/system` 成功 |
+| 4 | 摄像头 | `curl -o f.jpg http://127.0.0.1:8090/api/v1/camera/snapshot` 得到正确画面 |
+| 5 | 文字问答 | 前端建任务后问“看看桌上有什么”：先出现观察事件，再出现回答与播报，人工确认听到 |
+| 6 | 语音问答 | 前端录音提问，转写正确并得到播报回答 |
+| 7 | 底盘 | 标定后让机器人“向左转一点点”“往前走二十厘米”，动作 succeeded 且实际位移与指令相符 |
+| 8 | 停止 | 运动中点停止，任务 `cancelled`，车轮在 1 秒内停下 |
+| 9 | 拔线看门狗 | 运动中拔掉串口线，底盘 300 ms 内自行停车 |
+| 10 | 断网恢复 | 断开再恢复 Jetson 网络，隧道自动重连，下一句问答正常 |
 
 ---
 
-## 8. 待实现：ESP32 运动指令下发
-
-**当前仓库里没有这部分代码，也没有定稿协议。** 你需要做的是先上报方案，不要自己定。
-
-已知约束：
-
-- Jetson 与 ESP32 之间大概率是串口/UART（也可能是 USB CDC），**传输方式待确认**。
-- 指令需要覆盖：前进、后退、左转、右转、停止、速度设置；是否要闭环反馈待确认。
-- 必须支持**急停**：任何异常或超时都要能回到停止状态。
-- 下发必须与其他任务解耦：语音播报不能阻塞运动停止。
-
-上报时按这个格式写：
-
-1. 传输方式（UART 设备名、波特率）与协议草案（帧格式、校验、应答）。
-2. 失败与超时策略（重发次数、超时后是否强制停车）。
-3. 与语音链路的资源冲突分析（是否共用同一线程/事件循环）。
-4. 测试方法（无硬件时如何用假串口验证）。
-
-在负责人确认前，只能写**不落地的设计文档**，不能写死协议常量。
-
----
-
-## 9. 编码规范（必须遵守）
+## 7. 编码规范（必须遵守）
 
 来源：本目录内 `CODING_SPEC.pdf`（v1.0 原件），主仓库另有 Markdown 版 `docs/CODING_SPEC.md`。两者冲突时以 PDF 原件为准，并按主仓库实际配置（`pyproject.toml` 的 ruff / basedpyright 规则）执行。
 
@@ -286,12 +216,13 @@ basedpyright          # 要求 0 error 0 warning
 python -m unittest discover -s tests
 ```
 
-> 板子上没有 `uv`，可以直接用 `./.venv/bin/ruff`、`./.venv/bin/basedpyright`，
-> 或把这四项放到主仓库跑。
+> 板子上按第 3 节装好 `uv` 后，用 `uv run` 执行这四项；也可以放到主仓库跑。
 
 ---
 
-## 10. 汇报格式
+---
+
+## 8. 汇报格式
 
 每次交付按这个结构写，缺项视为未完成：
 
@@ -305,12 +236,16 @@ python -m unittest discover -s tests
 
 ---
 
-## 11. 当前已知问题（不要重复踩）
+---
+
+## 9. 当前已知问题
 
 | 问题 | 现状 |
 |---|---|
-| 缺 PortAudio | `sounddevice` 无法加载，`providers.audio.worker` 跑不起来，需人工装 `libportaudio2` |
-| 扬声器默认音量过低 | 14/37（-23 dB），必须 `amixer` 拉到 100% |
+| 缺 PortAudio | 需人工安装 `libportaudio2`（第 3.2 节） |
+| 扬声器默认音量过低 | 14/37（-23 dB），播放前用 `amixer` 拉到 100% |
 | C-Media 声卡无采集 | 纯输出设备，麦克风必须用 Earpods 那类带采集的设备 |
-| 板子无 `uv` | 用 `python3 -m venv` + pip（清华源） |
 | 内存被其他项目占用 | `Go2Agent`、`llama.cpp`、`frp` 已占约 6 GiB，联调时注意别抢资源 |
+| 3080 内存紧张 | GPT-SoVITS 闲置半小时后首句可能需要数十秒；后端只在启动时预热一次 |
+| 底盘未标定 | 里程计常数、到位精度、拔线停车均未实测；里程计看不到打滑 |
+| 本指南的部署步骤 | 2026-10-28 编写时 Jetson 不在线，**整套步骤尚未在板子上实际执行过** |
