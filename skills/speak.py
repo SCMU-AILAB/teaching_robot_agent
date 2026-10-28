@@ -12,6 +12,16 @@ from skills.base import RobotSkill
 from speech.output import SpeechOutputService
 from speech.text import speakable_text
 
+# 合成加播放的期限：真实 GPT-SoVITS 合成约 0.13 秒/字、播放约 0.19 秒/字（3080 实测），
+# 按 0.5 秒/字留余量；固定 30 秒会让八十字左右的回答必然超时。
+_SPEECH_BASE_S = 15.0
+_SPEECH_PER_CHAR_S = 0.5
+
+
+def speech_budget_s(text: str) -> float:
+    """按朗读文本长度给出合成与播放的共用期限，秒."""
+    return _SPEECH_BASE_S + _SPEECH_PER_CHAR_S * len(text)
+
 
 class SpeakSkill(RobotSkill):
     """串行 Runtime 独占的播报技能，语音设备由输出服务管理."""
@@ -49,7 +59,7 @@ class SpeakSkill(RobotSkill):
         voice = args.get("voice_id")
         voice_id = nonempty_string(voice, "voice_id") if voice is not None else None
         playback_id = uuid4().hex
-        await self._output.start(playback_id, text, voice_id)
+        await self._output.start(playback_id, text, voice_id, speech_budget_s(text))
         self._playback_id = playback_id
         state = await self._output.wait_finished(playback_id)
         if state.status != PlaybackStatus.COMPLETED:

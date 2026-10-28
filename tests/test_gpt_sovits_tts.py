@@ -63,6 +63,44 @@ class GPTSoVITSProviderTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["media_type"], "wav")
         self.assertIs(body["streaming_mode"], False)
 
+    async def test_warmup_synthesizes_once_and_tolerates_failure(self) -> None:
+        """启动预热合成一句并释放音频；服务不可用时只记日志、不阻止启动."""
+        calls: list[str] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            calls.append(cast(str, json.loads(request.content)["text"]))
+            return httpx.Response(200, content=WAV)
+
+        store = EvidenceStore()
+        provider = GPTSoVITSProvider(
+            store,
+            "http://127.0.0.1:9880",
+            {"robot": VOICE},
+            "robot",
+            _transport=httpx.MockTransport(handle),
+            _warmup_timeout_s=5,
+        )
+        await provider.start()
+        await provider.start()
+        self.assertEqual(calls, ["你好。"])
+        self.assertEqual(store.used_bytes, 0)
+        await provider.close()
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+        down = GPTSoVITSProvider(
+            EvidenceStore(),
+            "http://127.0.0.1:9880",
+            {"robot": VOICE},
+            "robot",
+            _transport=httpx.MockTransport(refuse),
+            _warmup_timeout_s=5,
+        )
+        with self.assertLogs("providers.tts.gpt_sovits", "WARNING"):
+            await down.start()
+        await down.close()
+
     async def test_server_error_and_invalid_audio_are_rejected(self) -> None:
         """HTTP 错误带上服务端说明，非 WAV 内容不登记."""
         responses = [

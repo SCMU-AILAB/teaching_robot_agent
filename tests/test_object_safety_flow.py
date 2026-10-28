@@ -398,15 +398,20 @@ class PromptOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(m.text.startswith(INPUT_PREFIX) for m in first))
 
     async def test_system_prompt_keeps_safety_rules(self) -> None:
-        """实际发送的系统提示保留动作验证、导航与能力限制规则."""
+        """实际发送的系统提示保留动作验证、导航、能力限制与说话方式规则."""
         system = (await self._seen([AIMessage("你好。")], ["你好"]))[0][0].text
         for phrase in (
             "不得声称尚未验证的动作成功",
             "视觉描述不等于导航目标；不能把短时移动说成到达指定物体",
             "遵守 capabilities 能力限制",
-            "只写口语纯文本",
+            "讲给孩子听的话用短句",
+            "孩子要求转向或移动时，本轮必须用 submit_action 提交动作",
+            "也不要保证“这些东西是安全的”",
         ):
             self.assertIn(phrase, system)
+        # 真实 qwen3.5:9b 实测：“只写口语纯文本”类的输出格式要求会让模型对观察、
+        # 转向请求只回文字、不调用工具，不得再加回系统提示。
+        self.assertNotIn("纯文本", system)
 
 
 if __name__ == "__main__":

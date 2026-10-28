@@ -121,6 +121,8 @@ def build_tts(
             {"default": profile},
             "default",
             _speed_factor=float(os.environ.get("SPEECH_GPTSOVITS_SPEED", "1.0")),
+            # 服务重启后首次合成实测 88 秒，启动时预热一次。
+            _warmup_timeout_s=180.0,
         )
         return provider, (provider,)
     # 与服务器 Piper 的 SPEECH_TTS_VOICE 分开，避免把 huayan 交给系统合成引擎。

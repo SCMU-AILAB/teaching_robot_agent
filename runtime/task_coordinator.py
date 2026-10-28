@@ -4,7 +4,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from domain.education import TeachingSession, TeachingStage
 from domain.models import (
@@ -38,6 +38,8 @@ class TaskCoordinator:
         self._cancellations: dict[int, asyncio.Task[None]] = {}
         self._resources: list[TaskResource] = []
         self._terminal_listeners: list[Callable[[int], None]] = []
+        # 宿主已作废的轮次中的动作（失败、超时或被取消），不再决定任务终态。
+        self._handled_actions: dict[int, set[int]] = {}
 
     def add_terminal_listener(self, listener: Callable[[int], None]) -> None:
         """装配阶段注册任务终态回调，用于释放任务级资源；回调必须同步且不阻塞."""
@@ -54,6 +56,23 @@ class TaskCoordinator:
                     "[TaskCoordinator._notify_terminal] 终态回调失败 task_id=%s",
                     task_id,
                 )
+
+    def acknowledge_failures(self, task_id: int, action_ids: Iterable[int]) -> None:
+        """登记宿主已作废轮次中的动作；任务继续交互，之后停止或验收不因它们记为失败."""
+        task = self.get_task(task_id)
+        owned = set(task.action_ids)
+        self._handled_actions.setdefault(task_id, set()).update(
+            action_id for action_id in action_ids if action_id in owned
+        )
+
+    def _unhandled_failure(self, task_id: int, records: Iterable[ActionRecord]) -> bool:
+        """存在未被宿主处理的失败或超时动作."""
+        handled = self._handled_actions.get(task_id, set())
+        return any(
+            record.status in {ActionStatus.FAILED, ActionStatus.TIMED_OUT}
+            and record.action_id not in handled
+            for record in records
+        )
 
     def register_resource(self, resource: TaskResource) -> None:
         """装配阶段注册任务资源，停止流程等待它们实际退出."""
@@ -136,13 +155,18 @@ class TaskCoordinator:
             raise ValueError("All actions must be finished")
         if not records and teaching is None and not interaction_completed:
             raise ValueError("Empty tasks require teaching completion evidence")
+        handled = self._handled_actions.get(task_id, set())
         task.status = (
             TaskStatus.COMPLETED
-            if all(item.status == ActionStatus.SUCCEEDED for item in records)
+            if all(
+                item.status == ActionStatus.SUCCEEDED or item.action_id in handled
+                for item in records
+            )
             else TaskStatus.FAILED
         )
         task.ended_at = time.time()
         self.store.save_task(task)
+        _ = self._handled_actions.pop(task_id, None)
         self._notify_terminal(task_id)
         return task
 
@@ -200,17 +224,17 @@ class TaskCoordinator:
         records = await asyncio.gather(
             *(self.runtime.wait_for_action(action_id) for action_id in task.action_ids)
         )
+        # 停止确认失败（执行层锁定）或有未处理的失败动作时记失败。
         task.status = (
             TaskStatus.FAILED
             if resource_failed
-            or any(
-                item.status in {ActionStatus.FAILED, ActionStatus.TIMED_OUT}
-                for item in records
-            )
+            or self.runtime.blocked_reason is not None
+            or self._unhandled_failure(task_id, records)
             else TaskStatus.CANCELLED
         )
         task.ended_at = time.time()
         self.store.save_task(task)
+        _ = self._handled_actions.pop(task_id, None)
         self._notify_terminal(task_id)
         logger.info(
             "[TaskCoordinator._cancel_task] 任务取消流程结束 task_id=%s status=%s",

@@ -11,6 +11,8 @@ from app.team_gateway import TeamGateway, UserInput
 from domain.models import ActionStatus, TaskState, TaskStatus
 from domain.services import ObservationRequest
 from domain.validation import positive_int
+from skills.speak import speech_budget_s
+from speech.text import speakable_text
 
 _INPUT_RETENTION = 4096
 
@@ -188,10 +190,13 @@ class RobotHost:
         if agent is not None:
             agent.abandon_turn()
         snapshot = await self._gateway.get_snapshot(task_id)
-        return snapshot.blocked_reason is None and snapshot.task.status in {
+        recovered = snapshot.blocked_reason is None and snapshot.task.status in {
             TaskStatus.PENDING,
             TaskStatus.RUNNING,
         }
+        if recovered:
+            self._gateway.acknowledge_failures(task_id, started)
+        return recovered
 
     async def _end_turn(self, task_id: int) -> None:
         """动作链未正常结束：作废本轮；设备停止无法确认时结束任务."""
@@ -240,8 +245,12 @@ class RobotHost:
             action_id = turn.pending_action_id
             if action_id is None:
                 if self._speak_replies and turn.text.strip():
+                    # 期限按朗读长度给出，另留清理余量；固定值会让长回答必然超时。
                     record = await self._gateway.submit_action(
-                        item.task_id, "speak", {"text": turn.text}, timeout_s=30
+                        item.task_id,
+                        "speak",
+                        {"text": turn.text},
+                        timeout_s=speech_budget_s(speakable_text(turn.text)) + 5.0,
                     )
                     actions.append(record.action_id)
                     spoken = await self._gateway.wait_for_action(
@@ -254,6 +263,10 @@ class RobotHost:
                             await self._gateway.get_snapshot(item.task_id)
                         ).blocked_reason is not None:
                             await self._stop_task(item.task_id)
+                        else:
+                            self._gateway.acknowledge_failures(
+                                item.task_id, (record.action_id,)
+                            )
                         return await self._reply(
                             item.task_id,
                             turn.text + "（语音播报未完成，文字回答已保留。）",

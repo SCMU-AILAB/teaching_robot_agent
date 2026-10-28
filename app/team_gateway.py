@@ -148,6 +148,10 @@ class TeamGateway:
                     evidence_id,
                 )
 
+    def acknowledge_failures(self, task_id: int, action_ids: Iterable[int]) -> None:
+        """宿主作废一轮后登记其动作，之后的停止或验收不因这些动作记为失败."""
+        self._coordinator.acknowledge_failures(task_id, action_ids)
+
     def finish_interaction(self, task_id: int) -> TaskState:
         """由宿主显式结束一次问答任务，仍检查所有实际动作终态."""
         return self._coordinator.complete_task(task_id, interaction_completed=True)

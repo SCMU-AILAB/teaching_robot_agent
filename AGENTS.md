@@ -240,3 +240,20 @@
 - **分支无法编译**：10-14 加入的根目录 `.gitignore` 规则 `models/` 未锚定，忽略了所有名为 models 的目录，作者的 `frontend/lib/features/robot_console/models/robot_console_models.dart` 从未进入提交，`flutter analyze` 144 个问题。main 已改为 `/models/`（`a0232db`）。按负责人指示，依据控制器、模拟服务、组件与测试中的用法重建该文件（9 个类型：`RobotSession`、`RobotStatus`、`ChatMessage`、`RobotAction`、`SceneObservation`、`SceneObject`、`SafetyEntry`、`ConsoleScenario`、`RobotConsoleFailure`），文件头注明为重建，不是原件；作者如保留原件可对照替换。
 - **原有问题**：测试中 `final RobotAction actionOfState() =>` 不是合法 Dart；4 项测试使用默认 900 ms 步长却只推进 500 ms；3 项测试结束时遗留模拟定时器；窄屏布局用懒加载 `ListView`，视口外面板不构建，改为与中屏一致的 `SingleChildScrollView`；8 个文件未按 `dart format` 格式化。
 - **验证**：`flutter analyze` 无问题，41 项 `flutter test` 通过，`flutter build web`（课堂与控制台两个入口）成功；Python 四项检查通过。控制台仍只使用模拟数据，未接 HTTP。
+
+## 2026-10-28：真实模型、视觉、识别与合成整链路联调
+
+环境：3080（silencecf.me）上 qwen3.5:9b（Ollama 11435）与 GPT-SoVITS api_v2（9881，`TORCH_CUDNN_V8_API_DISABLED=1` 已生效），本机经 SSH 隧道 21435/29881 访问；本机 `app.robot_server` 用模拟底盘、文件摄像头（桌面示例图）、SenseVoice 常驻识别、GPT-SoVITS 合成、MacBook 扬声器播放，语音提问经 BlackHole 虚拟声卡回环注入。按负责人指示停掉了占 15 GB 显存的 ComfyUI（`chengfang` 账号进程），qwen 由 98% CPU 回到 100% GPU，生成约 70 token/s。
+
+发现并修复：
+
+- **模型几乎从不调用工具（P1，10-25 引入）**：“回答格式”一段（“最终回答会念给孩子听。只写口语纯文本……”）让模型把每轮都当成文字回答。实测“看看桌上有什么”“向左转一点点”“往前走二十厘米”三类请求 0/9 调用工具，只回“好的，我正在转”。逐段消融确认唯一原因是该段；限定范围、移到末尾等改写最多 4/5。改为两条普通规则（“没有依据的状态不说成事实、不保证安全”“讲给孩子听的话用短句，不用列表、标题或表情”），并新增“孩子要求转向或移动时，本轮必须用 submit_action 提交动作；没有提交动作就不能说‘正在转’‘已经走了’”（长对话中移动请求仍会偶发只答应不执行，加此句后 6/6）。5 类问题合计由 6/15 变为 15/15，闲聊与安全问答不误触发动作。测试锁定系统提示不得再出现“纯文本”。
+- **播报期限固定 30 秒**：合成约 0.13 秒/字、播放约 0.19 秒/字，七八十字的回答必然超时。宿主按朗读文本给出期限（15 秒 + 0.5 秒/字，另加 5 秒清理），`SpeakSkill` 以同一预算交给输出服务；显式给出的动作期限仍按原值执行。
+- **GPT-SoVITS 重启后首句极慢**：服务重启后首次合成实测 88 秒。`GPTSoVITSProvider` 新增可选启动预热（主应用 180 秒期限），预热失败只记警告不阻止启动；本次预热 2.55 秒。
+- **GPT-SoVITS 连接复用失败**：api_v2 的 uvicorn 空闲 5 秒关闭连接，合成后播放数秒再请求时复用已关闭的连接，报 `Server disconnected without sending a response`，请求未到达服务端。合成客户端不再保持空闲连接。
+- **停止已恢复的任务记为 failed**：PR #16 让失败轮次可恢复后，之前轮次的失败播报仍让后续停止记为 failed、验收记为 failed。`TaskCoordinator.acknowledge_failures` 登记宿主已作废轮次中的动作，停止与验收不再因它们记失败；宿主未处理的失败（如课堂宿主因动作失败结束课堂）与执行层锁定仍记 failed。
+
+最终整链路（`fullrun3`）：建任务、摄像头快照、观察（杯子左/书中/盒子右）、杯子追问、语音提问（转写一字不差）、左转并重新观察、前进 20 厘米并重新观察、插座安全问答、停止，8 个动作全部 succeeded，任务 cancelled。每轮耗时 13.5–39.3 秒，其中模型与观察 1.5–9 秒，其余为合成与播放（单句 7.8–32.2 秒）。
+
+- **测试**：`test_robot_audio.py` 合成失败用例追加“恢复后停止记 cancelled”，新增“恢复后验收记 completed、播报期限随长度增加”；`test_gpt_sovits_tts.py` 新增预热一次并释放音频、服务不可用不阻止启动；系统提示测试同步。Ruff、190 个文件格式检查通过，basedpyright 0/0/0，380 项 unittest 通过。
+- **未处理**：去掉字数上限后回答变长（约 60–90 字），单轮播报常超过 20 秒；加回字数要求会再次压制工具调用，需要另找办法（例如流式合成边合成边播，或回答后再压缩）。真车、真实摄像头与 Jetson 部署仍未联调。
