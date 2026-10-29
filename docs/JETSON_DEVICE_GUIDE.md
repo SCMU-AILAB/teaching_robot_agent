@@ -25,6 +25,7 @@
 - 接口以根目录 `API_CONTRACT.md` 为唯一依据；Jetson 不新增接口，只部署和调试。
 - GPT-SoVITS 能读取服务器上任意路径的参考音频，**绝不能**开放到局域网，只能经隧道访问。
 - Jetson 不运行 GPT-SoVITS 或大模型；显存与内存留给摄像头、识别与后端本身。
+- 3080 上的服务**不开机自启**：用机器人前在仓库根目录运行 `./model_server.sh start`，用完 `./model_server.sh stop` 释放显存。
 
 ### 你必须做的
 
