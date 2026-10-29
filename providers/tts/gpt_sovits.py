@@ -44,6 +44,7 @@ class GPTSoVITSProvider:
         _text_lang: str = "zh",
         _speed_factor: float = 1.0,
         _transport: httpx.AsyncBaseTransport | None = None,
+        _warmup_timeout_s: float | None = None,
     ) -> None:
         """校验服务地址与音色配置，构造时不发起连接.
 
@@ -55,6 +56,8 @@ class GPTSoVITSProvider:
             _text_lang: 待合成文本的语言。
             _speed_factor: 语速倍率，0.5–2.0。
             _transport: 测试替换用的 HTTP 传输层。
+            _warmup_timeout_s: 启动时预热合成一句的期限，秒；None 不预热。
+                服务重启后首次合成可能超过一分钟，预热避免首个回答播报超时。
 
         Raises:
             ValueError: 地址、音色、语言或语速不合法。
@@ -81,15 +84,44 @@ class GPTSoVITSProvider:
         self._text_lang: str = _text_lang
         self._speed: float = speed
         self._transport: httpx.AsyncBaseTransport | None = _transport
+        self._warmup_timeout_s: float | None = (
+            None
+            if _warmup_timeout_s is None
+            else finite_float(_warmup_timeout_s, "warmup_timeout_s")
+        )
         self._client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
-        """创建 HTTP 客户端；重复调用复用同一客户端."""
-        if self._client is None:
-            # 合成服务在本机或隧道上，不经过环境变量里的 HTTP 代理。
-            self._client = httpx.AsyncClient(
-                base_url=self._url, transport=self._transport, trust_env=False
+        """创建 HTTP 客户端并按配置预热；重复调用复用同一客户端."""
+        if self._client is not None:
+            return
+        # 合成服务在本机或隧道上，不经过环境变量里的 HTTP 代理。
+        # 不复用连接：api_v2 的 uvicorn 空闲 5 秒即关闭连接，合成后播放数秒再请求时
+        # 复用的连接已被服务端关闭，请求直接失败（经 SSH 隧道实测）。
+        self._client = httpx.AsyncClient(
+            base_url=self._url,
+            transport=self._transport,
+            trust_env=False,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        )
+        if self._warmup_timeout_s is not None:
+            await self._warmup(self._warmup_timeout_s)
+
+    async def _warmup(self, timeout_s: float) -> None:
+        """合成一句短话并丢弃；失败只记日志，首个真实播报会如实报告服务问题."""
+        started = time.monotonic()
+        try:
+            audio = await self.synthesize("你好。", None, timeout_s)
+        except Exception as error:
+            logger.warning(
+                "[GPTSoVITSProvider._warmup] 预热失败，首次播报可能较慢 error=%r", error
             )
+            return
+        self._evidence.release(audio.evidence_id)
+        logger.info(
+            "[GPTSoVITSProvider._warmup] 预热完成 耗时=%.2fs",
+            time.monotonic() - started,
+        )
 
     async def close(self) -> None:
         """释放 HTTP 客户端，重复调用安全."""

@@ -272,6 +272,29 @@ class RobotAudioTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("成年人", again.text)
         self.assertEqual(again.task_status, TaskStatus.RUNNING)
         self.assertEqual(len(app.runtime.list_actions()), 2)
+        # 已作废轮次的播报失败不影响之后的停止结果。
+        stopped = await app.cancel_task(task.task_id)
+        self.assertEqual(stopped.status, TaskStatus.CANCELLED)
+
+    async def test_finish_after_recovered_failure_and_speech_deadline(self) -> None:
+        """播报失败后继续对话，验收记为完成；播报期限随回答长度增加."""
+        self.tts = MockTTSProvider(
+            self.evidence, _error=RuntimeError("TTS unavailable")
+        )
+        long_answer = "请让成年人帮忙取热水，" * 12
+        self.model = FakeMessagesListChatModel(responses=[AIMessage(long_answer)])
+        app = await self.app()
+        task = await app.create_task("问答")
+        _ = app.gateway.submit_text(task.task_id, "你好")
+        with patch.object(
+            FakeMessagesListChatModel, "bind_tools", return_value=self.model
+        ):
+            reply = await app.process_next()
+        speak = app.runtime.get_action(reply.action_ids[0])
+        self.assertEqual(speak.status, ActionStatus.FAILED)
+        self.assertGreater(speak.raw_request.timeout_s, 30 + len(long_answer) * 0.3)
+        finished = await app.finish_task(task.task_id)
+        self.assertEqual(finished.status, TaskStatus.COMPLETED)
 
     async def test_runtime_timeout_and_invalid_args(self) -> None:
         """执行期限覆盖合成，非法参数在生成动作之前拒绝."""

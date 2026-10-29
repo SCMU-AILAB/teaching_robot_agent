@@ -3,7 +3,8 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field, replace
 
 from domain.services import AudioReference, PlaybackState, PlaybackStatus
 from domain.validation import finite_float, nonempty_string
@@ -12,6 +13,31 @@ from speech.interfaces import AudioPlayer, TTSProvider
 from storage.evidence import EvidenceStore
 
 logger = logging.getLogger(__name__)
+
+# 分句：在句末标点后切开；短于下限的句子并入下一句，避免过碎的合成请求。
+_SENTENCE_END = re.compile(r"(?<=[。！？!?；;])")
+_MIN_SEGMENT_CHARS = 12
+# 不超过该长度的文本整段合成，保持单段播放。
+_PIPELINE_MIN_CHARS = 30
+
+
+def split_for_speech(text: str) -> list[str]:
+    """把朗读文本切成依次合成播放的句段；短文本或没有句末标点时整段返回."""
+    if len(text) <= _PIPELINE_MIN_CHARS:
+        return [text]
+    segments: list[str] = []
+    buffer = ""
+    for sentence in _SENTENCE_END.split(text):
+        buffer += sentence
+        if len(buffer) >= _MIN_SEGMENT_CHARS:
+            segments.append(buffer)
+            buffer = ""
+    if buffer.strip():
+        if segments:
+            segments[-1] += buffer
+        else:
+            segments.append(buffer)
+    return segments
 
 
 @dataclass
@@ -24,6 +50,12 @@ class _Output:
     attempted_play: bool = False
     play_started: bool = False
     cleanup: asyncio.Task[PlaybackState | None] | None = None
+    # 分句播放时当前句段在播放器中的编号；首句沿用输出编号。
+    current: str = ""
+    # 全部句段结束后汇总的终态，供验证读取。
+    final: PlaybackState | None = None
+    # 已登记但尚未释放的合成音频。
+    audio: list[AudioReference] = field(default_factory=list)
 
 
 class SpeechOutputService:
@@ -87,7 +119,7 @@ class SpeechOutputService:
         if len(self._outputs) >= 4096:
             raise RuntimeError("Output retention capacity reached")
         task = asyncio.create_task(self._run(playback_id, text, voice_id, timeout))
-        self._outputs[playback_id] = _Output(task)
+        self._outputs[playback_id] = _Output(task, current=playback_id)
         task.add_done_callback(self._observe_failure)
         logger.info("[SpeechOutputService.start] 语音输出会话已启动")
 
@@ -107,14 +139,14 @@ class SpeechOutputService:
             _ = task.exception()
 
     async def _stop_player(self, playback_id: str) -> PlaybackState | None:
-        """合成尚未开始播放时没有播放终态，不伪造 stopped."""
+        """合成尚未开始播放时没有播放终态，不伪造 stopped；分句时停止当前句段."""
         item = self._outputs[playback_id]
         if not item.attempted_play:
             return None
         try:
-            state = await self._player.stop(playback_id)
-            self._validate_terminal(state, playback_id)
-            return state
+            state = await self._player.stop(item.current)
+            self._validate_terminal(state, item.current)
+            return replace(state, playback_id=playback_id)
         except KeyError:
             if item.play_started:
                 raise RuntimeError(
@@ -143,46 +175,78 @@ class SpeechOutputService:
             raise ValueError("Invalid playback timestamps")
 
     async def get_playback_state(self, playback_id: str) -> PlaybackState:
-        """查询已登记输出的真实播放器状态，未开始播放时明确失败."""
-        _ = self._outputs[playback_id]
-        state = await self._player.get_state(playback_id)
-        self._validate_terminal(state, playback_id)
-        return state
+        """查询已登记输出的真实播放状态；分句全部结束后返回汇总终态."""
+        item = self._outputs[playback_id]
+        if item.final is not None:
+            return item.final
+        state = await self._player.get_state(item.current)
+        self._validate_terminal(state, item.current)
+        return replace(state, playback_id=playback_id)
 
     async def _run(
         self, playback_id: str, text: str, voice_id: str | None, timeout_s: float
     ) -> PlaybackState:
-        """合成完成后播放，取消和失败都等待播放器停止."""
+        """按句段流水线合成与播放：播放当前句时合成下一句；取消和失败都等待播放器停止."""
         item = self._outputs[playback_id]
-        audio: AudioReference | None = None
+        segments = split_for_speech(text)
+        pending: asyncio.Task[AudioReference] | None = None
         try:
-            # ========== Step1: 合成只产生音频，不标记播放完成 ==========
             async with asyncio.timeout(timeout_s) as deadline:
-                audio = await self._tts.synthesize(text, voice_id, timeout_s)
-                if item.cancelled or self._closed:
-                    raise asyncio.CancelledError
-                if deadline.expired():
-                    raise TimeoutError("Synthesis exceeded output deadline")
-                # ========== Step2: 等待实际播放反馈再确认终态 ==========
-                item.stage = "playing"
-                item.attempted_play = True
-                await self._player.play(playback_id, audio)
-                item.play_started = True
-                if item.cancelled or self._closed:
-                    raise asyncio.CancelledError
-                state = await self._player.wait_finished(playback_id)
-                if deadline.expired():
-                    raise TimeoutError("Playback exceeded output deadline")
-                if (
-                    state.playback_id != playback_id
-                    or state.status == PlaybackStatus.PLAYING
-                ):
-                    raise ValueError(
-                        "Player did not return the requested terminal state"
-                    )
-                self._validate_terminal(state, playback_id)
-                item.stage = state.status.value
-                return state
+                synthesis = asyncio.create_task(
+                    self._tts.synthesize(segments[0], voice_id, timeout_s)
+                )
+                pending = synthesis
+                states: list[PlaybackState] = []
+                for index in range(len(segments)):
+                    # ========== Step1: 取得本句音频并预取下一句 ==========
+                    audio = await synthesis
+                    pending = None
+                    item.audio.append(audio)
+                    if item.cancelled or self._closed:
+                        raise asyncio.CancelledError
+                    if deadline.expired():
+                        raise TimeoutError("Synthesis exceeded output deadline")
+                    if index + 1 < len(segments):
+                        synthesis = asyncio.create_task(
+                            self._tts.synthesize(
+                                segments[index + 1], voice_id, timeout_s
+                            )
+                        )
+                        pending = synthesis
+                    # ========== Step2: 播放本句并等待实际播放反馈 ==========
+                    segment_id = playback_id if index == 0 else f"{playback_id}#{index}"
+                    item.current = segment_id
+                    item.stage = "playing"
+                    item.attempted_play = True
+                    item.play_started = False
+                    await self._player.play(segment_id, audio)
+                    item.play_started = True
+                    if item.cancelled or self._closed:
+                        raise asyncio.CancelledError
+                    state = await self._player.wait_finished(segment_id)
+                    if deadline.expired():
+                        raise TimeoutError("Playback exceeded output deadline")
+                    if (
+                        state.playback_id != segment_id
+                        or state.status == PlaybackStatus.PLAYING
+                    ):
+                        raise ValueError(
+                            "Player did not return the requested terminal state"
+                        )
+                    self._validate_terminal(state, segment_id)
+                    states.append(state)
+                    # 本句播放已结束，音频不再被读取。
+                    self._release_audio(item, audio)
+                    if state.status != PlaybackStatus.COMPLETED:
+                        break
+                final = replace(
+                    states[-1],
+                    playback_id=playback_id,
+                    started_at=states[0].started_at,
+                )
+                item.final = final
+                item.stage = final.status.value
+                return final
         except asyncio.CancelledError:
             item.stage = "cancelled"
             raise
@@ -190,6 +254,12 @@ class SpeechOutputService:
             item.stage = "failed"
             raise
         finally:
+            # 预取中的下一句合成随之取消；迟到的音频与已登记音频一并在停止确认后释放。
+            if pending is not None:
+                _ = pending.cancel()
+                results = await asyncio.gather(pending, return_exceptions=True)
+                if isinstance(results[0], AudioReference):
+                    item.audio.append(results[0])
             try:
                 _ = await finish_cleanup(
                     asyncio.create_task(self._stop_player(playback_id))
@@ -198,8 +268,15 @@ class SpeechOutputService:
                 item.stage = "failed"
                 raise
             # 播放器确认停止后音频不再被读取；停止未确认时保留证据供排查.
-            if audio is not None and self._evidence is not None:
-                self._evidence.release(audio.evidence_id)
+            for audio in tuple(item.audio):
+                self._release_audio(item, audio)
+
+    def _release_audio(self, item: _Output, audio: AudioReference) -> None:
+        """释放一段合成音频并从待释放列表移除."""
+        if audio in item.audio:
+            item.audio.remove(audio)
+        if self._evidence is not None:
+            self._evidence.release(audio.evidence_id)
 
     def get_stage(self, playback_id: str) -> str:
         """读取内部编排阶段，不能用它代替 PlaybackState."""
