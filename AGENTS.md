@@ -270,3 +270,12 @@
 - **`.env.example`**：GPT-SoVITS 注释仍写“运行在 Jetson 本机 9880”，按合同改为 3080 的 9881、经隧道访问。README 增加指南入口。
 - **核对**：锁文件中 sherpa-onnx、onnxruntime、opencv、av 均有 linux aarch64 wheel；`providers.audio.worker devices` 子命令存在。
 - **未验证**：整套步骤未在 Jetson 上执行；systemd 单元未经 `systemd-analyze verify`（本机为 macOS）；Jetson 到 3080 的免密钥登录、局域网地址与声卡名称需上板确认。
+
+## 2026-10-29：合并 #19、#20，Jetson 真实合成整链路
+
+- 按负责人指示合并 [PR #19](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/19)（`c9f6983`）与 [PR #20](https://github.com/SCMU-AILAB/teaching_robot_agent/pull/20)（`f128e81`，合并前改为以 main 为目标），删除两个分支。
+- 按负责人指示清空 3080 显存（结束占用 16 GB 的 ComfyUI），恢复 GPT-SoVITS 服务与开机自启。
+- Jetson 经负责人提供的远程 SSH 入口登录（只开放 SSH），部署 main `f128e81`。一条 SSH 会话同时把 Jetson 的 8090 转到本机、把本机到 3080 的隧道反向转到 Jetson 本机 21435/29881（临时中转，会话结束即失效）。GPT-SoVITS 刚重启，后端预热 30 秒。
+- 整链路（模拟底盘、文件摄像头、PipeWire 播放到 C-Media 扬声器）：快照、观察（杯子左/书中/盒子右）、杯子追问、左转与前进各自提交成功并重新观察、插座问答，5 次播报全部 succeeded（24–87 字，7.9–21.2 秒），停止 → cancelled，执行层未锁定；每轮 12.4–30.9 秒。
+- 观察到的模型行为：前进后回答“现在离桌子更近啦”，属于把短时移动说成接近物体，系统提示已有相应约束，未改。
+- 未验证：麦克风与摄像头（未接）、真车、扬声器实际音量（PipeWire 0.40、ALSA 14/37 未调）、Jetson → 3080 隧道的正式授权与常驻服务安装。
