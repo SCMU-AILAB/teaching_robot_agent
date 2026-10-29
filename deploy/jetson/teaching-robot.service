@@ -1,0 +1,20 @@
+# deploy/jetson/teaching-robot.service
+# 机器人后端：设备、感知、语音、Agent 与 HTTP API（app.robot_server）。
+# 用户级服务：复制到 ~/.config/systemd/user/ 后 systemctl --user enable --now。
+
+[Unit]
+Description=Teaching robot backend (app.robot_server)
+After=teaching-robot-tunnel.service
+Wants=teaching-robot-tunnel.service
+
+[Service]
+WorkingDirectory=%h/teaching_robot_agent
+EnvironmentFile=%h/teaching-robot/robot.env
+ExecStart=%h/teaching_robot_agent/.venv/bin/python -m app.robot_server
+# 退出时后端先停车并释放设备，给停止确认与资源释放留足时间。
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

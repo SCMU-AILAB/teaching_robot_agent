@@ -261,3 +261,12 @@
 - **3080 环境**：内存 31 GB、交换区常用 3–4 GB，GPT-SoVITS 闲置半小时后首句可能再次需要数十秒（本次预热 82 秒）；预热只在后端启动时执行，长时间闲置后的首句仍可能偏慢。
 - **测试（续）**：新增 `tests/test_speech_pipeline.py` 6 项（短文本不切、按句切且拼回原文、无句末标点不切、下一句在本句播完前开始合成且汇总完成并释放音频、第二句合成中停止只播一句且音频释放、后续句段合成失败不假报完成）；`test_local_models.py` 新增常驻时长默认与覆盖。387 项 unittest 通过。最终整链路（`fullrun5`）8 个动作全部成功、任务 cancelled，每轮 11.5–31.7 秒。
 - **未处理**：真车、真实摄像头与 Jetson 部署仍未联调；3080 长时间闲置后的首句延迟取决于该机内存。
+
+## 2026-10-28：Jetson 部署准备（未上板）
+
+- **背景**：Jetson 不在线（本机在外网，经 3080 也找不到原地址 192.168.0.127；在 3080 上扫描局域网被权限拒绝，未继续）。先准备不依赖板子的部署材料。
+- **指南重写**：`docs/JETSON_DEVICE_GUIDE.md` 原版（10-20）描述“Jetson 只采音放音、经 SSH 把音频交给服务器、运行 `speech.real_demo` 固定回答、ESP32 运动无代码”，与 API_CONTRACT v1.0 的部署形态不符。改为：Jetson 运行 `app.robot_server`（Agent、动作、HTTP/SSE、摄像头、SenseVoice 常驻识别、STM32 底盘 CarAdapter），3080 的 Ollama 与 GPT-SoVITS 只监听本机、经 SSH 隧道访问。保留 10-20 实测的硬件与声卡事实、编码规范与汇报格式；补充 uv 免 sudo 安装、需请示的系统操作（libportaudio2、dialout、linger）、底盘标定、10 项验收清单与已知问题。
+- **部署文件**：`deploy/jetson/robot.env.example`（Jetson 全部配置，端口 8090 与前端默认一致；含空格的值加双引号，systemd 与 bash 均可读取，已用 bash 实测解析）、`teaching-robot-tunnel.service`（用户级 SSH 隧道 21435→11435、29881→9881，保活与失败重启）、`teaching-robot.service`（用户级后端服务，依赖隧道）。
+- **`.env.example`**：GPT-SoVITS 注释仍写“运行在 Jetson 本机 9880”，按合同改为 3080 的 9881、经隧道访问。README 增加指南入口。
+- **核对**：锁文件中 sherpa-onnx、onnxruntime、opencv、av 均有 linux aarch64 wheel；`providers.audio.worker devices` 子命令存在。
+- **未验证**：整套步骤未在 Jetson 上执行；systemd 单元未经 `systemd-analyze verify`（本机为 macOS）；Jetson 到 3080 的免密钥登录、局域网地址与声卡名称需上板确认。
