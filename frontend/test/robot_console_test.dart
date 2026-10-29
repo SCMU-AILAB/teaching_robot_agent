@@ -59,7 +59,9 @@ void main() {
     });
 
     testWidgets('处理中不能验收，回答链结束后可以验收', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       // 处理链未结束，验收必须被拒绝。
@@ -73,7 +75,9 @@ void main() {
     });
 
     testWidgets('停止先 cancelling 后 cancelled，未终态动作转为取消', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('左转一下');
       await controller.submitText('左转一下');
       // 推进一拍让动作进入 queued。
@@ -98,7 +102,9 @@ void main() {
     });
 
     testWidgets('消息顺序正确且追问属于同一任务', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final controller = buildController(
+        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      );
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       await advance(tester, 5);
@@ -119,11 +125,17 @@ void main() {
     });
 
     testWidgets('处理中再次提交被拒绝', (tester) async {
-      final controller = buildController(MockRobotConsoleService());
+      final service = MockRobotConsoleService(
+        step: const Duration(milliseconds: 100),
+      );
+      final controller = buildController(service);
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       expect(await controller.submitText('还没好'), isFalse);
       expect(controller.error, '请等待当前处理结束。');
+      // 用例结束时链路仍在处理中，先释放模拟服务以满足 pending-timer 不变量；
+      // 控制器由 addTearDown 释放，不重复 dispose。
+      service.dispose();
     });
   });
 
@@ -217,9 +229,10 @@ void main() {
     });
 
     testWidgets('播放中开始录音被拒绝（录音播报互斥）', (tester) async {
-      final controller = buildController(
-        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      final service = MockRobotConsoleService(
+        step: const Duration(milliseconds: 100),
       );
+      final controller = buildController(service);
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       // 推进两拍进入播放中。
@@ -227,6 +240,8 @@ void main() {
       expect(controller.state.playbackStatus, 'playing');
       expect(await controller.record(), isFalse);
       expect(controller.error, '音频设备正在使用或任务处理中，请稍后。');
+      // 播报链还差一拍结束，先释放模拟服务以满足 pending-timer 不变量。
+      service.dispose();
     });
   });
 
@@ -295,13 +310,16 @@ void main() {
     });
 
     testWidgets('处理中刷新观察被拒绝', (tester) async {
-      final controller = buildController(
-        MockRobotConsoleService(step: const Duration(milliseconds: 100)),
+      final service = MockRobotConsoleService(
+        step: const Duration(milliseconds: 100),
       );
+      final controller = buildController(service);
       await controller.createTask('闲聊');
       await controller.submitText('你好');
       expect(await controller.refresh(), isFalse);
       expect(controller.error, '请等待当前处理结束。');
+      // 用例结束时链路仍在处理中，先释放模拟服务以满足 pending-timer 不变量。
+      service.dispose();
     });
   });
 
@@ -312,7 +330,7 @@ void main() {
       );
       await controller.createTask('左转一下');
       await controller.submitText('左转一下');
-      final RobotAction actionOfState() =>
+      RobotAction actionOfState() =>
           controller.state.actions.singleWhere(
             (action) => action.skillName == 'turn_relative',
           );
@@ -431,8 +449,11 @@ void main() {
       final service = MockRobotConsoleService(
         step: const Duration(milliseconds: 100),
       );
-      await tester.binding.setSurfaceSize(const Size(1400, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // setSurfaceSize 是物理像素；直接设置逻辑尺寸避免默认 dpr 缩放。
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1400, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildConsoleTheme(),
@@ -456,10 +477,25 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('机器人任务已就绪。'), findsOneWidget);
 
-      // 窄屏切换为纵向，五个区域仍然可用。
-      await tester.binding.setSurfaceSize(const Size(500, 900));
+      // 窄屏切换为纵向；视口内可能只显示对话区，直接滚动外层 ScrollPosition
+      // （避免拖拽被内层消息列表拦截）后再逐区域断言。
+      tester.view.physicalSize = const Size(500, 900);
       await tester.pump();
+      final ScrollableState pageScroll = tester.state(
+        find
+            .descendant(
+              of: find.byKey(const Key('console_scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       for (final key in keys) {
+        int guard = 0;
+        while (find.byKey(Key(key)).evaluate().isEmpty && guard < 20) {
+          pageScroll.position.jumpTo(pageScroll.position.pixels + 300);
+          await tester.pump();
+          guard++;
+        }
         expect(
           find.byKey(Key(key)),
           findsOneWidget,
@@ -472,8 +508,10 @@ void main() {
       final service = MockRobotConsoleService(
         step: const Duration(milliseconds: 100),
       );
-      await tester.binding.setSurfaceSize(const Size(1400, 900));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1400, 900);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
       await tester.pumpWidget(
         MaterialApp(
           theme: buildConsoleTheme(),

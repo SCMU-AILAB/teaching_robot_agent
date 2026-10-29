@@ -187,6 +187,7 @@ class _RobotConsolePageState extends State<RobotConsolePage> {
               }
               // 窄屏纵向：对话固定高度，观察与动作依次排列。
               return ListView(
+                key: const Key('console_scroll'),
                 children: [
                   SizedBox(height: 440, child: conversationPanel),
                   const SizedBox(height: ConsoleSpace.panelGap),

@@ -155,7 +155,7 @@ class ConsoleSectionHeader extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: Text(title, style: ConsoleText.sectionTitle)),
-        if (trailing != null) trailing!,
+        ?trailing,
       ],
     );
   }
