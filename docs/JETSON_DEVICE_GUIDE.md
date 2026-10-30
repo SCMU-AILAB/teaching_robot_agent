@@ -137,6 +137,13 @@ for c in /sys/class/sound/card*; do
 done
 ```
 
+使用 `SPEECH_OUTPUT_DEVICE=pipewire` 时，PipeWire 的输出音量同时控制上面的硬件音量，还要执行
+`wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0`（2026-10-30 实测：PipeWire 0.40 时声音很小）。
+
+开机后才插入的 USB 声卡，WirePlumber 可能不为它启用输出配置，默认输出只剩 `Dummy Output`。
+`wpctl status` 的 Sinks 中没有 `USB Audio Device Analog Stereo` 时，执行
+`systemctl --user restart wireplumber`。
+
 ---
 
 ## 5. 运行
@@ -168,11 +175,14 @@ journalctl --user -u teaching-robot -f
 ### 5.3 底盘标定（需要人在车旁）
 
 ```bash
-.venv/bin/python -m app.car_calibrate /dev/ttyUSB0 forward --permille 300 --seconds 2
-.venv/bin/python -m app.car_calibrate /dev/ttyUSB0 turn --permille 300 --seconds 2
+.venv/bin/python -m app.car_calibrate /dev/ttyACM0 forward --permille 300 --seconds 2
+.venv/bin/python -m app.car_calibrate /dev/ttyACM0 turn --permille 300 --seconds 2
 ```
 
-按提示输入实测距离或角度，把打印的 `CAR_COUNTS_PER_*` 写入 `robot.env` 后重启服务。
+按提示输入实测距离或角度，把打印的 `CAR_COUNTS_PER_*` 写入 `robot.env` 后重启服务。标定需要独占串口，先停后端。
+
+固件停车时电机滑行、不制动：落地 10 cm/s 停车后还会滑行约 3.3 cm。`CarAdapter` 按遥测测得的速度与
+`CAR_COAST_COUNTS_PER_S2`（默认 2700）提前停车；换车或换地面后若到位误差明显，先重测该值。
 
 ---
 
@@ -244,9 +254,10 @@ python -m unittest discover -s tests
 | 问题 | 现状 |
 |---|---|
 | 缺 PortAudio | 需人工安装 `libportaudio2`（第 3.2 节） |
-| 扬声器默认音量过低 | 14/37（-23 dB），播放前用 `amixer` 拉到 100% |
+| 扬声器默认音量过低 | 14/37（-23 dB）且 PipeWire 0.40；按第 4 节拉到 100% |
 | C-Media 声卡无采集 | 纯输出设备，麦克风必须用 Earpods 那类带采集的设备 |
 | 内存被其他项目占用 | `Go2Agent`、`llama.cpp`、`frp` 已占约 6 GiB，联调时注意别抢资源 |
 | 3080 内存紧张 | GPT-SoVITS 闲置半小时后首句可能需要数十秒；后端只在启动时预热一次 |
-| 底盘未标定 | 里程计常数、到位精度、拔线停车均未实测；里程计看不到打滑 |
+| 底盘标定精度有限 | 2026-10-30 以 10 cm 尺量、30° 目测标定；落地前进 ±20 cm 到位误差 0.4 mm 以内（按里程计）；拔线停车未测；里程计看不到打滑 |
+| 公网 SSH 入口不稳 | 经公网入口的 SSH 会话每隔几分钟断开一次；联调脚本放在 Jetson 本机运行，正式部署用 Jetson 直连 3080 的隧道 |
 | 本指南的部署步骤 | 2026-10-28 编写时 Jetson 不在线，**整套步骤尚未在板子上实际执行过** |

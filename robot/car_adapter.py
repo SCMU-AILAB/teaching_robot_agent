@@ -35,8 +35,8 @@ _COUNTS_PER_PERMILLE = 4.0
 _STATE_MOVING = 1
 _STATE_FAULT = 3
 _I32 = 1 << 32
-# 停车确认期限，秒。
-_HALT_TIMEOUT_S = 1.0
+# 停车确认期限，秒：停车后电机滑行，最高车速（每轮 2400 计数/秒）滑行到静止约 0.9 秒。
+_HALT_TIMEOUT_S = 2.0
 # 单帧（50 ms）编码器增量不超过该值视为静止：正交编码器停在边沿时可能来回跳 1 个计数。
 _STILL_COUNTS = 1
 
@@ -54,6 +54,8 @@ class CarConfig:
         max_permille: 单轴速度千分比上限，限制最高车速.
         position_tolerance_m: 相对移动验收容差，米.
         yaw_tolerance_rad: 转向验收容差，弧度.
+        coast_counts_per_s2: 停车后每轮转速的滑行减速度，计数/秒²；固件占空为 0 时
+            电机两端均为低电平，不短接制动。实测落地 10 cm/s 停车后滑行约 3.3 cm.
     """
 
     port: str
@@ -63,6 +65,7 @@ class CarConfig:
     max_permille: int = 600
     position_tolerance_m: float = 0.02
     yaw_tolerance_rad: float = 0.035
+    coast_counts_per_s2: float = 2700.0
 
     def __post_init__(self) -> None:
         """拒绝非正标定值与越界速度上限."""
@@ -79,6 +82,7 @@ class CarConfig:
         for name, value in (
             ("position_tolerance_m", self.position_tolerance_m),
             ("yaw_tolerance_rad", self.yaw_tolerance_rad),
+            ("coast_counts_per_s2", self.coast_counts_per_s2),
         ):
             if finite_float(value, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -109,6 +113,7 @@ def car_config_from_env() -> CarConfig:
         max_permille=int(os.environ.get("CAR_MAX_PERMILLE", "600")),
         position_tolerance_m=float(os.environ.get("CAR_POSITION_TOLERANCE_M", "0.02")),
         yaw_tolerance_rad=float(os.environ.get("CAR_YAW_TOLERANCE_RAD", "0.035")),
+        coast_counts_per_s2=float(os.environ.get("CAR_COAST_COUNTS_PER_S2", "2700")),
     )
 
 
@@ -157,6 +162,9 @@ class CarAdapter(RobotAdapter):
         self._tick: asyncio.Event = asyncio.Event()
         self._encoders: tuple[int, int, int, int] | None = None
         self._pose: Pose2D = Pose2D()
+        # 车体坐标系速度（前进 m/s、左移 m/s、逆时针 rad/s），按固件时间戳由相邻两帧求得。
+        self._velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._telemetry_ms: int | None = None
         self._fw_state: int = 0
         self._wheels_turning: bool = False
         self._telemetry_at: float = 0.0
@@ -264,6 +272,7 @@ class CarAdapter(RobotAdapter):
     def _on_telemetry(self, frame: Telemetry) -> None:
         """按轮位换算编码器增量并积分里程计；轮位：左前 M4、右前 M1、左后 M3、右后 M2."""
         previous, self._encoders = self._encoders, frame.encoders
+        previous_ms, self._telemetry_ms = self._telemetry_ms, frame.ms
         self._fw_state = frame.state
         self._telemetry_at = time.time()
         self._telemetry_count += 1
@@ -276,14 +285,27 @@ class CarAdapter(RobotAdapter):
             self._wheels_turning = any(
                 abs(item) > _STILL_COUNTS for item in (m1, m2, m3, m4)
             )
-            self._integrate(front_left, front_right, rear_left, rear_right)
+            body = self._integrate(front_left, front_right, rear_left, rear_right)
+            elapsed_ms = (
+                0 if previous_ms is None else _wrap_delta(frame.ms, previous_ms)
+            )
+            if body is not None and elapsed_ms > 0:
+                forward, left, turn = body
+                seconds = elapsed_ms / 1000
+                self._velocity = (forward / seconds, left / seconds, turn / seconds)
         self._signal()
 
-    def _integrate(self, fl: int, fr: int, rl: int, rr: int) -> None:
-        """麦克纳姆正运动学，取半步航向把车体位移转到里程计坐标系."""
+    def _integrate(
+        self, fl: int, fr: int, rl: int, rr: int
+    ) -> tuple[float, float, float] | None:
+        """麦克纳姆正运动学，取半步航向把车体位移转到里程计坐标系.
+
+        Returns:
+            本帧车体位移（前进米、左移米、逆时针弧度）；未标定返回 None.
+        """
         config = self._config
         if config.counts_per_meter is None or config.counts_per_radian is None:
-            return
+            return None
         lateral = config.counts_per_meter_lateral or config.counts_per_meter
         forward = (fl + fr + rl + rr) / 4 / config.counts_per_meter
         left = (-fl + fr + rl - rr) / 4 / lateral
@@ -294,6 +316,33 @@ class CarAdapter(RobotAdapter):
             self._pose.y + forward * math.sin(heading) + left * math.cos(heading),
             self._pose.yaw + turn,
         )
+        return forward, left, turn
+
+    def _calibration(self) -> tuple[float, float]:
+        """返回前进与旋转标定.
+
+        Raises:
+            RuntimeError: 未标定.
+        """
+        config = self._config
+        if config.counts_per_meter is None or config.counts_per_radian is None:
+            raise RuntimeError("Car odometry is not calibrated")
+        return config.counts_per_meter, config.counts_per_radian
+
+    def _coast(self, speed: float, counts_per_unit: float) -> float:
+        """当前速度下停车后的滑行量（与速度同号），单位与 speed 的长度或角度单位一致."""
+        return (
+            speed
+            * abs(speed)
+            * counts_per_unit
+            / (2 * self._config.coast_counts_per_s2)
+        )
+
+    @staticmethod
+    def _arrived(remaining: float, coast: float, tolerance: float) -> bool:
+        """计入停车滑行后到位：预计停点落在容差内，或继续行驶只会冲过目标."""
+        projected = remaining - coast
+        return abs(projected) <= tolerance or projected * remaining < 0
 
     def _signal(self) -> None:
         """唤醒等待下一帧遥测的协程."""
@@ -372,13 +421,16 @@ class CarAdapter(RobotAdapter):
         speed = finite_float(speed_m_s, "speed_m_s")
         if speed <= 0:
             raise ValueError("speed_m_s must be positive")
+        counts_per_meter, _ = self._calibration()
         start = self._pose
         cos_h, sin_h = math.cos(start.yaw), math.sin(start.yaw)
 
         def command(pose: Pose2D) -> tuple[float, float, float] | None:
             dx, dy = pose.x - start.x, pose.y - start.y
             remaining = distance - (dx * cos_h + dy * sin_h)
-            if abs(remaining) <= self.position_tolerance_m / 4:
+            # 停车后还会滑行，按实测速度提前停车。
+            coast = self._coast(self._velocity[0], counts_per_meter)
+            if self._arrived(remaining, coast, self.position_tolerance_m / 4):
                 return None
             lateral = -dx * sin_h + dy * cos_h
             forward = math.copysign(
@@ -399,12 +451,14 @@ class CarAdapter(RobotAdapter):
         speed = finite_float(speed_rad_s, "speed_rad_s")
         if speed <= 0:
             raise ValueError("speed_rad_s must be positive")
+        _, counts_per_radian = self._calibration()
         start = self._pose
         target = start.yaw + angle
 
         def command(pose: Pose2D) -> tuple[float, float, float] | None:
             remaining = target - pose.yaw
-            if abs(remaining) <= self.yaw_tolerance_rad / 4:
+            coast = self._coast(self._velocity[2], counts_per_radian)
+            if self._arrived(remaining, coast, self.yaw_tolerance_rad / 4):
                 return None
             dx, dy = start.x - pose.x, start.y - pose.y
             cos_h, sin_h = math.cos(pose.yaw), math.sin(pose.yaw)
@@ -434,12 +488,11 @@ class CarAdapter(RobotAdapter):
             RuntimeError: 未连接、未标定、底盘故障、命令被拒、遥测中断或超出期限.
         """
         config = self._config
-        if config.counts_per_meter is None or config.counts_per_radian is None:
-            raise RuntimeError("Car odometry is not calibrated")
+        counts_per_meter, counts_per_radian = self._calibration()
         link = self._link
         if link is None or not self._connected():
             raise RuntimeError("Car is not connected")
-        lateral = config.counts_per_meter_lateral or config.counts_per_meter
+        lateral = config.counts_per_meter_lateral or counts_per_meter
         deadline = time.monotonic() + nominal_s * 2 + 3.0
         self._rejected = None
         try:
@@ -460,14 +513,14 @@ class CarAdapter(RobotAdapter):
                     link.next_seq(),
                     round(
                         _clamp(
-                            forward * config.counts_per_meter / _COUNTS_PER_PERMILLE,
+                            forward * counts_per_meter / _COUNTS_PER_PERMILLE,
                             limit,
                         )
                     ),
                     round(_clamp(left * lateral / _COUNTS_PER_PERMILLE, limit)),
                     round(
                         _clamp(
-                            spin * config.counts_per_radian / _COUNTS_PER_PERMILLE,
+                            spin * counts_per_radian / _COUNTS_PER_PERMILLE,
                             limit,
                         )
                     ),

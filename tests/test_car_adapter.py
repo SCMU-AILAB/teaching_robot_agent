@@ -136,6 +136,32 @@ class CarAdapterTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await runtime.close()
 
+    async def test_coasting_car_stops_within_tolerance(self) -> None:
+        """停车后滑行（真车实测标定与滑行减速度）：提前停车，前进与转向都在容差内验收通过."""
+        port = FirmwareSerial(_coast_counts_per_s2=2700.0, _response_s=0.4)
+        car = CarAdapter(
+            CarConfig("/dev/fake", 18120.0, 3350.0), _open_port=lambda _path: port
+        )
+        runtime = ActionManager(car, build_robot_skills(car))
+        await runtime.start()
+        try:
+            steps: tuple[tuple[str, dict[str, object]], ...] = (
+                ("move_relative", {"distance_m": 0.2}),
+                ("turn_relative", {"angle_rad": 0.3}),
+            )
+            for skill, arguments in steps:
+                record = await runtime.submit_action(ActionRequest(1, skill, arguments))
+                result = await runtime.wait_for_action(record.action_id)
+                self.assertEqual(result.status, ActionStatus.SUCCEEDED, result.failure)
+            state = await car.get_state()
+            self.assertAlmostEqual(
+                state.position.x, 0.2, delta=car.position_tolerance_m
+            )
+            self.assertAlmostEqual(state.position.yaw, 0.3, delta=car.yaw_tolerance_rad)
+            self.assertIsNone(runtime.blocked_reason)
+        finally:
+            await runtime.close()
+
     async def test_cancel_mid_move_stops_and_confirms(self) -> None:
         """运动中取消：立即发停止，stop() 由遥测确认四轮静止."""
         port = FirmwareSerial()

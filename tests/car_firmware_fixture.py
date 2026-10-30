@@ -28,8 +28,18 @@ def _mix(vx: int, vy: int, wz: int) -> list[float]:
 class FirmwareSerial:
     """线程安全；读取在工作线程、写入在事件循环线程."""
 
-    def __init__(self, _encoder_offset: int = 0) -> None:
-        """encoder_offset 用于测试 i32 回绕."""
+    def __init__(
+        self,
+        _encoder_offset: int = 0,
+        _coast_counts_per_s2: float | None = None,
+        _response_s: float | None = None,
+    ) -> None:
+        """encoder_offset 用于测试 i32 回绕.
+
+        coast_counts_per_s2 为停车后每轮滑行减速度（计数/秒²），与真车一致：固件占空为 0
+        时电机不制动；None 时停止命令立即使轮子静止。response_s 为落地轮速跟随目标的
+        一阶时间常数（真车 PI 响应约 0.4 秒）；None 时只受固件斜率限制.
+        """
         self._lock: threading.Lock = threading.Lock()
         self._out: bytearray = bytearray(_frame("B,1,1"))
         self._in: bytearray = bytearray()
@@ -45,6 +55,9 @@ class FirmwareSerial:
         self.silent: bool = False
         # 静止时编码器停在边沿来回跳 1 个计数，与真实正交编码器一致。
         self.jitter: bool = False
+        self._coast: float | None = _coast_counts_per_s2
+        self._coasting: bool = False
+        self._response: float | None = _response_s
         self._jitter_phase: int = 0
         self.closed: bool = False
         self.commands: list[str] = []
@@ -120,7 +133,10 @@ class FirmwareSerial:
             self._fault = False
             self._state = 0
             self._target = [0.0] * 4
-            self._speed = [0.0] * 4
+            if self._coast is None:
+                self._speed = [0.0] * 4
+            else:
+                self._coasting = True
         elif name == "V":
             if self._fault:
                 code = 5
@@ -129,6 +145,7 @@ class FirmwareSerial:
                 # 轮位到电机：左前 M4、右前 M1、左后 M3、右后 M2。
                 self._target = [fr, rr, rl, fl]
                 self._state = 1
+                self._coasting = False
                 self._last_motion = now
         elif name != "P":
             code = 3
@@ -145,7 +162,13 @@ class FirmwareSerial:
                 self._target = [0.0] * 4
             for index in range(4):
                 delta = self._target[index] - self._speed[index]
-                limit = _RAMP_PERMILLE_PER_S * step
+                limit = (
+                    self._coast / _FULL_COUNTS_PER_S * 1000 * step
+                    if self._coasting and self._coast is not None
+                    else _RAMP_PERMILLE_PER_S * step
+                )
+                if not self._coasting and self._response is not None:
+                    delta *= min(1.0, step / self._response)
                 self._speed[index] += max(-limit, min(limit, delta))
                 self._encoders[index] += (
                     self._speed[index] / 1000 * _FULL_COUNTS_PER_S * step
