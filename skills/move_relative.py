@@ -18,7 +18,7 @@ class MoveRelativeSkill(RobotSkill):
     name: str = "move_relative"
     parameter_help: str = (
         'arguments={"distance_m": 数值, "speed_m_s": 可选数值}；'
-        + "距离米，范围 [-2,2]，速度 (0,0.5]，默认 0.1。不是目标点导航。"
+        + "距离米，范围 [-2,2]，速度 (0,0.5]，默认 0.2。不是目标点导航。"
     )
     required_capabilities: frozenset[RobotCapability] = frozenset(
         {
@@ -56,7 +56,7 @@ class MoveRelativeSkill(RobotSkill):
         if "distance_m" not in arguments:
             raise ValueError("distance_m is required")
         distance = finite_float(arguments["distance_m"], "distance_m")
-        speed = finite_float(arguments.get("speed_m_s", 0.1), "speed_m_s")
+        speed = finite_float(arguments.get("speed_m_s", 0.2), "speed_m_s")
         if abs(distance) > 2.0:
             raise ValueError("distance_m must be between -2 and 2 meters")
         if self._max_reverse_m is not None and distance < -self._max_reverse_m:

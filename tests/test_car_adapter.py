@@ -139,8 +139,10 @@ class CarAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_coasting_car_stops_within_tolerance(self) -> None:
         """停车后滑行（真车实测标定与滑行减速度）：提前停车，前进与转向都在容差内验收通过."""
         port = FirmwareSerial(_coast_counts_per_s2=2700.0, _response_s=0.4)
+        # 替身转向与直行共用一个滑行减速度，配置与之一致
         car = CarAdapter(
-            CarConfig("/dev/fake", 18120.0, 3350.0), _open_port=lambda _path: port
+            CarConfig("/dev/fake", 18120.0, 3350.0, turn_coast_counts_per_s2=2700.0),
+            _open_port=lambda _path: port,
         )
         runtime = ActionManager(car, build_robot_skills(car))
         await runtime.start()

@@ -56,6 +56,8 @@ class CarConfig:
         yaw_tolerance_rad: 转向验收容差，弧度.
         coast_counts_per_s2: 停车后每轮转速的滑行减速度，计数/秒²；固件占空为 0 时
             电机两端均为低电平，不短接制动。实测落地 10 cm/s 停车后滑行约 3.3 cm.
+        turn_coast_counts_per_s2: 原地转向停车后的滑行减速度；麦克纳姆轮转向时侧滑摩擦大，
+            比直行停得快。实测 0.4–0.6 弧度/秒转 90° 反推约 3400.
     """
 
     port: str
@@ -66,6 +68,7 @@ class CarConfig:
     position_tolerance_m: float = 0.02
     yaw_tolerance_rad: float = 0.035
     coast_counts_per_s2: float = 2700.0
+    turn_coast_counts_per_s2: float = 3400.0
 
     def __post_init__(self) -> None:
         """拒绝非正标定值与越界速度上限."""
@@ -83,6 +86,7 @@ class CarConfig:
             ("position_tolerance_m", self.position_tolerance_m),
             ("yaw_tolerance_rad", self.yaw_tolerance_rad),
             ("coast_counts_per_s2", self.coast_counts_per_s2),
+            ("turn_coast_counts_per_s2", self.turn_coast_counts_per_s2),
         ):
             if finite_float(value, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -114,6 +118,9 @@ def car_config_from_env() -> CarConfig:
         position_tolerance_m=float(os.environ.get("CAR_POSITION_TOLERANCE_M", "0.02")),
         yaw_tolerance_rad=float(os.environ.get("CAR_YAW_TOLERANCE_RAD", "0.035")),
         coast_counts_per_s2=float(os.environ.get("CAR_COAST_COUNTS_PER_S2", "2700")),
+        turn_coast_counts_per_s2=float(
+            os.environ.get("CAR_TURN_COAST_COUNTS_PER_S2", "3400")
+        ),
     )
 
 
@@ -329,14 +336,12 @@ class CarAdapter(RobotAdapter):
             raise RuntimeError("Car odometry is not calibrated")
         return config.counts_per_meter, config.counts_per_radian
 
-    def _coast(self, speed: float, counts_per_unit: float) -> float:
+    @staticmethod
+    def _coast(
+        speed: float, counts_per_unit: float, decel_counts_per_s2: float
+    ) -> float:
         """当前速度下停车后的滑行量（与速度同号），单位与 speed 的长度或角度单位一致."""
-        return (
-            speed
-            * abs(speed)
-            * counts_per_unit
-            / (2 * self._config.coast_counts_per_s2)
-        )
+        return speed * abs(speed) * counts_per_unit / (2 * decel_counts_per_s2)
 
     @staticmethod
     def _arrived(remaining: float, coast: float, tolerance: float) -> bool:
@@ -429,7 +434,9 @@ class CarAdapter(RobotAdapter):
             dx, dy = pose.x - start.x, pose.y - start.y
             remaining = distance - (dx * cos_h + dy * sin_h)
             # 停车后还会滑行，按实测速度提前停车。
-            coast = self._coast(self._velocity[0], counts_per_meter)
+            coast = self._coast(
+                self._velocity[0], counts_per_meter, self._config.coast_counts_per_s2
+            )
             if self._arrived(remaining, coast, self.position_tolerance_m / 4):
                 return None
             lateral = -dx * sin_h + dy * cos_h
@@ -457,7 +464,11 @@ class CarAdapter(RobotAdapter):
 
         def command(pose: Pose2D) -> tuple[float, float, float] | None:
             remaining = target - pose.yaw
-            coast = self._coast(self._velocity[2], counts_per_radian)
+            coast = self._coast(
+                self._velocity[2],
+                counts_per_radian,
+                self._config.turn_coast_counts_per_s2,
+            )
             if self._arrived(remaining, coast, self.yaw_tolerance_rad / 4):
                 return None
             dx, dy = start.x - pose.x, start.y - pose.y

@@ -2,7 +2,6 @@
 """赛题主应用装配：通用任务、感知、设备、知识与单个决策 Agent."""
 
 from collections.abc import Callable
-from dataclasses import replace
 
 from langchain_core.language_models import BaseChatModel
 
@@ -112,10 +111,11 @@ class RobotApplication:
         ):
             return None
         depth = robot.depth
-        # 每段前进后留出守护所需空隙再加 5 厘米，避免刚走就被拦停
-        margin = robot.stop_margin_m(config.speed_m_s) + 0.05
-        if config.stop_distance_m < margin:
-            config = replace(config, stop_distance_m=margin)
+
+        def margin(speed: float) -> float:
+            """每段前进后留出守护在该车速下所需空隙再加 5 厘米，避免刚走就被拦停."""
+            return robot.stop_margin_m(speed) + 0.05
+
         narrator = model_narrator(self._model, config.narration_chars)
 
         def build(task_id: int) -> ExplorationController:
@@ -128,6 +128,7 @@ class RobotApplication:
                 self._knowledge,
                 config,
                 _speak=speak,
+                _margin=margin,
             )
 
         return build

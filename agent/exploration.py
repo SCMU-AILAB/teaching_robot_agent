@@ -37,13 +37,17 @@ class ExplorationConfig:
 
     radius_m: float = 3.0
     max_duration_s: float = 300.0
-    step_m: float = 0.5
+    # 固件起步加速约 0.08 米/秒²、停车只能滑行，短段大半时间在起停；每段走长一些
+    step_m: float = 1.0
     min_step_m: float = 0.15
     # 前进后至少留出的空隙；装配时按避障守护的停车距离与滑行量放大，避免刚走就被拦停
     stop_distance_m: float = 0.4
-    # 本车最高约 0.13 米/秒；转速过快时停车滑行使转角超出验收容差（真车 0.5 弧度/秒两次失败）
-    speed_m_s: float = 0.1
-    turn_speed_rad_s: float = 0.3
+    # 满速约 0.22 米/秒（需 CAR_MAX_PERMILLE=1000）；2026-10-31 实测 0.2 米/秒前进 0.3 米误差 0.4 厘米、
+    # 0.6 弧度/秒转 0.5 弧度误差 0.017 弧度，均在容差内
+    speed_m_s: float = 0.2
+    # 窄处改用慢档：0.1 米/秒时停车余量约 0.45 米，0.2 米/秒时约 0.57 米
+    slow_speed_m_s: float = 0.1
+    turn_speed_rad_s: float = 0.6
     grid_m: float = 0.5
     max_failures: int = 3
     narration_chars: int = 30
@@ -57,6 +61,7 @@ class ExplorationConfig:
             self.min_step_m,
             self.stop_distance_m,
             self.speed_m_s,
+            self.slow_speed_m_s,
             self.turn_speed_rad_s,
             self.grid_m,
         ):
@@ -118,8 +123,9 @@ def wants_exploration(text: str) -> bool:
 
 
 def same_object(first: str, second: str) -> bool:
-    """名称互相包含即视为同一物体，例如“椅子”与“蓝色椅子”."""
-    a, b = first.strip().casefold(), second.strip().casefold()
+    """名称互相包含即视为同一物体，例如“椅子”与“蓝色椅子”；末尾的“子”不计，“凳子”与“木凳”相同."""
+    a = first.strip().casefold().removesuffix("子")
+    b = second.strip().casefold().removesuffix("子")
     return bool(a) and bool(b) and (a in b or b in a)
 
 
@@ -137,8 +143,12 @@ class ExplorationController:
         *,
         _speak: bool = True,
         _clock: Callable[[], float] = time.monotonic,
+        _margin: Callable[[float], float] | None = None,
     ) -> None:
-        """注入网关、深度来源、讲解生成与资料库；构造时不运动."""
+        """注入网关、深度来源、讲解生成与资料库；构造时不运动.
+
+        _margin 按车速给出每段前进后至少留出的前方空隙；缺省为固定的 stop_distance_m。
+        """
         self._gateway: TeamGateway = _gateway
         self._task_id: int = _task_id
         self._depth: ClearanceSource = _depth
@@ -147,6 +157,9 @@ class ExplorationController:
         self._config: ExplorationConfig = _config or ExplorationConfig()
         self._speak_enabled: bool = _speak
         self._clock: Callable[[], float] = _clock
+        self._margin: Callable[[float], float] = _margin or (
+            lambda _speed: self._config.stop_distance_m
+        )
         self.seen: list[str] = []
         self.visited: set[tuple[int, int]] = set()
         # 最近一次动作是否因前方有障碍被守护拦停
@@ -193,7 +206,7 @@ class ExplorationController:
                 turned += abs(angle)
             else:
                 # ========== Step2: 转向所选方向并前进一段 ==========
-                heading, step = choice
+                heading, step, speed = choice
                 ok = True
                 if abs(heading) > 0.02:
                     ok = await self._act(
@@ -203,7 +216,7 @@ class ExplorationController:
                 if ok:
                     ok = await self._act(
                         "move_relative",
-                        {"distance_m": step, "speed_m_s": config.speed_m_s},
+                        {"distance_m": step, "speed_m_s": speed},
                     )
                 if not ok and self._last_blocked:
                     # 被障碍拦停是探索中的正常情况：换个方向，不计入失败
@@ -243,12 +256,19 @@ class ExplorationController:
 
     def _choose(
         self, clearance: Clearance, pose: Pose2D, start: Pose2D
-    ) -> tuple[float, float] | None:
-        """按空隙、新格子与离起点距离给候选方向打分，返回 (相对转角, 前进距离)."""
+    ) -> tuple[float, float, float] | None:
+        """按空隙、新格子与离起点距离给候选方向打分，返回 (相对转角, 前进距离, 车速).
+
+        先按快档车速所需的停车余量算可走距离；不足最小步长时改用慢档，窄处也能走。
+        """
         config = self._config
-        best: tuple[float, tuple[float, float]] | None = None
+        best: tuple[float, tuple[float, float, float]] | None = None
         for angle, clear in clearance.headings:
-            step = min(config.step_m, clear - config.stop_distance_m)
+            speed = config.speed_m_s
+            step = min(config.step_m, clear - self._margin(speed))
+            if step < config.min_step_m:
+                speed = config.slow_speed_m_s
+                step = min(config.step_m, clear - self._margin(speed))
             if step < config.min_step_m:
                 continue
             direction = pose.yaw + angle
@@ -259,7 +279,7 @@ class ExplorationController:
             novelty = 0.0 if self._cell(end_x, end_y) in self.visited else 0.5
             score = min(clear, 1.5) + novelty - 0.1 * abs(angle)
             if best is None or score > best[0]:
-                best = (score, (angle, step))
+                best = (score, (angle, step, speed))
         return None if best is None else best[1]
 
     def _escape_angle(self, pose: Pose2D, start: Pose2D) -> float:

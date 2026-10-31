@@ -218,6 +218,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
     def test_same_object(self) -> None:
         """互相包含视为同一物体."""
         self.assertTrue(same_object("椅子", "蓝色椅子"))
+        self.assertTrue(same_object("凳子", "木凳"))
         self.assertFalse(same_object("椅子", "桌子"))
         self.assertFalse(same_object("", "桌子"))
 
