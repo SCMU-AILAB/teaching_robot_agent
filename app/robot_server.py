@@ -12,6 +12,7 @@ from api.http import ServiceSlot, build_http_app
 from api.preview import CameraPreview
 from api.service import RobotApiService, ServiceStates
 from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
+from app.depth import exploration_from_env, guard_from_env
 from app.perception import build_perception
 from app.robot_application import RobotApplication
 from providers.local_model import answer_chars_from_env, build_local_model
@@ -30,6 +31,7 @@ async def serve_robot(slot: ServiceSlot) -> AsyncGenerator[None]:
     """
     adapter_name = os.environ.get("ROBOT_ADAPTER", "simulated")
     robot = RobotAdapterFactory().create(adapter_name)
+    robot = guard_from_env(robot)
     evidence = EvidenceStore()
     audio_mode = os.environ.get("ROBOT_AUDIO", "off")
     if audio_mode not in {"off", "simulated", "real"}:
@@ -47,6 +49,7 @@ async def serve_robot(slot: ServiceSlot) -> AsyncGenerator[None]:
         _audio=audio,
         _evidence=evidence,
         _answer_max_chars=answer_chars_from_env(),
+        _exploration=exploration_from_env(),
     )
     preview = (
         CameraPreview(perception.camera, evidence)

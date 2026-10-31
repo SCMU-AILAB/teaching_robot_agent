@@ -1,18 +1,27 @@
 # app/robot_application.py
 """赛题主应用装配：通用任务、感知、设备、知识与单个决策 Agent."""
 
+from collections.abc import Callable
+
 from langchain_core.language_models import BaseChatModel
 
 from agent.context import RobotContextBuilder
 from agent.embodied_agent import EmbodiedAgent
+from agent.exploration import (
+    ExplorationConfig,
+    ExplorationController,
+    model_narrator,
+)
 from agent.robot_host import RobotHost, RobotReply
 from agent.tools import ToolAdapter
 from app.audio import AudioAdapters
 from app.team_gateway import TeamGateway, UserInput
 from domain.models import TaskState
+from domain.robot import RobotCapability
 from education.knowledge_service import KnowledgeService, build_home_knowledge
 from perception.interfaces import PerceptionService
 from robot.base import RobotAdapter
+from robot.obstacle_guard import GuardedRobotAdapter
 from runtime.action_manager import ActionManager
 from runtime.events import ActionEventHub
 from skills.robot_registry import build_robot_skills
@@ -35,6 +44,7 @@ class RobotApplication:
         _audio: AudioAdapters | None = None,
         _evidence: EvidenceStore | None = None,
         _answer_max_chars: int | None = None,
+        _exploration: ExplorationConfig | None = None,
     ) -> None:
         """显式注入设备、感知与模型，构造期间不连接外部服务.
 
@@ -46,6 +56,7 @@ class RobotApplication:
             _audio: 可选语音适配器.
             _evidence: 感知与语音共用的证据存储；提供时按任务和语音作业释放证据.
             _answer_max_chars: 最终回答的大致字数上限，None 不限制.
+            _exploration: 探索设置；底盘带深度避障且能前进、转向、定位时才生效.
         """
         self.runtime: ActionManager = ActionManager(_robot, build_robot_skills(_robot))
         self.gateway: TeamGateway = TeamGateway(
@@ -69,17 +80,66 @@ class RobotApplication:
             self.runtime.registry.register(
                 SpeakSkill(self._speech_output, _simulated=_audio.simulated)
             )
+        self._exploration_factory: Callable[[int], ExplorationController] | None = (
+            self._exploration_builder(_robot, _exploration, speak=_audio is not None)
+        )
         self.host: RobotHost = RobotHost(
-            self.gateway, self._build_agent, _speak_replies=_audio is not None
+            self.gateway,
+            self._build_agent,
+            _speak_replies=_audio is not None,
+            _exploration_factory=self._exploration_factory,
         )
         self.events: ActionEventHub = ActionEventHub(self.runtime)
 
+    def _exploration_builder(
+        self,
+        robot: RobotAdapter,
+        config: ExplorationConfig | None,
+        *,
+        speak: bool,
+    ) -> Callable[[int], ExplorationController] | None:
+        """底盘带深度避障且具备前进、转向、定位能力时返回探索控制器工厂."""
+        required = {
+            RobotCapability.MOVE_RELATIVE,
+            RobotCapability.TURN_RELATIVE,
+            RobotCapability.LOCALIZATION,
+        }
+        if (
+            config is None
+            or not isinstance(robot, GuardedRobotAdapter)
+            or not required <= robot.capabilities
+        ):
+            return None
+        depth = robot.depth
+        narrator = model_narrator(self._model, config.narration_chars)
+
+        def build(task_id: int) -> ExplorationController:
+            """按任务创建探索控制器."""
+            return ExplorationController(
+                self.gateway,
+                task_id,
+                depth,
+                narrator,
+                self._knowledge,
+                config,
+                _speak=speak,
+            )
+
+        return build
+
     def _build_agent(self, task_id: int) -> EmbodiedAgent:
         """创建按任务绑定的策略，上下文和工具均不要求课堂会话."""
+        explore = (
+            (lambda: self.host.request_exploration(task_id))
+            if self._exploration_factory is not None
+            else None
+        )
         return EmbodiedAgent(
             self._model,
             RobotContextBuilder(self.gateway),
-            ToolAdapter(task_id, self.gateway, _knowledge=self._knowledge),
+            ToolAdapter(
+                task_id, self.gateway, _knowledge=self._knowledge, _explore=explore
+            ),
             task_id,
             _answer_max_chars=self._answer_max_chars,
         )

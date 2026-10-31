@@ -15,6 +15,8 @@ def build_langchain_tools(adapter: ToolAdapter) -> tuple[BaseTool, ...]:
         StructuredTool.from_function(func=adapter.get_action_status),
         StructuredTool.from_function(coroutine=adapter.cancel_action),
     )
+    if adapter.exploration_enabled:
+        common = (*common, StructuredTool.from_function(func=adapter.start_exploration))
     if adapter.teaching_enabled:
         return (
             *common,

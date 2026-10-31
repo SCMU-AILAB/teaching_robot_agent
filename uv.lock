@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -632,6 +632,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/b9/10243797b942e7475ae21545fde1be484958672ae5c2f377f781c761a375/langsmith-0.14.4.tar.gz", hash = "sha256:a340199fcd2af60358f09dd1d7011bf7282f0d46a98aaa101bc7a521746da764", size = 4968005, upload-time = "2026-10-02T17:16:37.074Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/1f/5c2919fef6e3cf15167699abeb069a371d68da14a0e5cab89eeea11261d7/langsmith-0.14.4-py3-none-any.whl", hash = "sha256:ae0d98c2b0f9292ef7e12451d480937d79a0e7dcf2412ba847de6f053391b44a", size = 813097, upload-time = "2026-10-02T17:16:34.724Z" },
+]
+
+[[package]]
+name = "linuxpy"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/b0/742fb50fd38b473b2d0335f6ec894618baaeb572380968f73c974b130f50/linuxpy-0.25.0.tar.gz", hash = "sha256:7b234291babc6176a1fe239624f8e1907fc89dc5f7397809360e50e0531c7752", size = 457407, upload-time = "2026-08-20T06:55:47.437Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/28/06061c91bda0e992c8fc44de0b69aa7148f2114f130b1fabf5f3dd205cc3/linuxpy-0.25.0-py3-none-any.whl", hash = "sha256:ab94bde0d3902effa0d385e27eee898fcd2253edce1f738fa52abd9f23f0afd0", size = 460752, upload-time = "2026-08-20T06:55:45.502Z" },
 ]
 
 [[package]]
@@ -1283,6 +1292,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "langchain-core" },
     { name = "langchain-ollama" },
+    { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "pydantic" },
@@ -1292,6 +1302,9 @@ dependencies = [
 [package.optional-dependencies]
 car = [
     { name = "pyserial" },
+]
+depth = [
+    { name = "linuxpy" },
 ]
 speech = [
     { name = "av" },
@@ -1326,6 +1339,8 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'speech-server'", specifier = ">=1.2.1" },
     { name = "langchain-core", specifier = ">=1.6.6" },
     { name = "langchain-ollama", specifier = ">=1.1.0" },
+    { name = "linuxpy", marker = "extra == 'depth'", specifier = ">=0.25.0" },
+    { name = "numpy", specifier = ">=2.5" },
     { name = "opencv-python-headless", specifier = ">=5.0.0.93" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "piper-tts", marker = "extra == 'speech-server'", specifier = ">=1.8.0" },
@@ -1337,7 +1352,7 @@ requires-dist = [
     { name = "sounddevice", marker = "extra == 'speech-client'", specifier = ">=0.5.6" },
     { name = "uvicorn", specifier = ">=0.37" },
 ]
-provides-extras = ["car", "speech-client", "speech", "speech-server"]
+provides-extras = ["car", "depth", "speech-client", "speech", "speech-server"]
 
 [package.metadata.requires-dev]
 dev = [

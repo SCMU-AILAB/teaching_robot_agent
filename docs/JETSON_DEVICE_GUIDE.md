@@ -74,7 +74,7 @@
 cd ~ && git clone https://github.com/SCMU-AILAB/teaching_robot_agent.git
 cd ~/teaching_robot_agent
 curl -LsSf https://astral.sh/uv/install.sh | sh        # 安装到 ~/.local/bin，不需要 sudo
-~/.local/bin/uv sync --frozen --extra speech --extra car
+~/.local/bin/uv sync --frozen --extra speech --extra car --extra depth
 ```
 
 锁文件中的原生依赖（sherpa-onnx、onnxruntime、opencv、av）都有 linux aarch64 wheel，不需要编译；
@@ -177,7 +177,7 @@ systemctl --user enable --now teaching-robot-tunnel teaching-robot
 journalctl --user -u teaching-robot -f
 ```
 
-更新代码后：`git pull && ~/.local/bin/uv sync --frozen --extra speech --extra car && systemctl --user restart teaching-robot`。
+更新代码后：`git pull && ~/.local/bin/uv sync --frozen --extra speech --extra car --extra depth && systemctl --user restart teaching-robot`。
 
 ### 5.3 底盘标定（需要人在车旁）
 
@@ -190,6 +190,29 @@ journalctl --user -u teaching-robot -f
 
 固件停车时电机滑行、不制动：落地 10 cm/s 停车后还会滑行约 3.3 cm。`CarAdapter` 按遥测测得的速度与
 `CAR_COAST_COUNTS_PER_S2`（默认 2700）提前停车；换车或换地面后若到位误差明显，先重测该值。
+
+### 5.4 深度避障与自由探索（需要人在车旁）
+
+RealSense 深度节点经 V4L2 直接读取（`linuxpy`，不需要 librealsense 或 sudo）。设计见
+`docs/superpowers/specs/2026-10-31-exploration-obstacle-design.md`。
+
+1. 车放在空地上，前方 1.5 米内没有东西，标定摄像头安装（不需要停后端，车不动）：
+
+   ```bash
+   .venv/bin/python -m app.depth_calibrate mount
+   ```
+
+   把打印的 `DEPTH_CAMERA_HEIGHT_M`、`DEPTH_CAMERA_PITCH_DEG` 写入 `robot.env`，并设 `DEPTH_CAMERA=realsense`。
+   同时打印车前盲区：该距离以内贴地的东西深度相机看不见。四周有椅子挡住地面时会报
+   “No dominant floor plane found”，换到空地再测。
+2. 摆一个纸箱，核对空隙读数：`.venv/bin/python -m app.depth_calibrate watch --seconds 20`。
+3. 重启后端。之后所有前进都经过避障守护：前方空隙小于 `OBSTACLE_STOP_M`（默认 0.4 米）加滑行量、
+   深度超过 0.5 秒未更新、或贴近到读不出距离时停车，动作失败原因为“前方有障碍物”或“看不清前方”。
+   摄像头看不到后方，单次后退限 0.3 米。
+4. 对机器人说“去探索一下吧”：本条回答播完后在后台探索，离起点 `EXPLORE_RADIUS_M` 内、最长
+   `EXPLORE_MAX_S` 秒，发现新物体停下讲一句；说话或停止任务会先停下探索。
+
+D435i 的加速度计在 `/dev/hidraw3`，只有 root 可读；要用它测俯仰需加 udev 规则（需请示）。
 
 ---
 
@@ -266,5 +289,6 @@ python -m unittest discover -s tests
 | 内存被其他项目占用 | `Go2Agent`、`llama.cpp`、`frp` 已占约 6 GiB，联调时注意别抢资源 |
 | 3080 内存紧张 | GPT-SoVITS 闲置半小时后首句可能需要数十秒；后端只在启动时预热一次 |
 | 底盘标定精度有限 | 2026-10-30 以 10 cm 尺量、30° 目测标定；落地前进 ±20 cm 到位误差 0.4 mm 以内（按里程计）；拔线停车未测；里程计看不到打滑 |
+| 深度相机视野 | 摄像头朝上倾斜，车前近处地面不在视野内，贴地矮小物体看不见；深度 0.3 米内无读数 |
 | 公网 SSH 入口不稳 | 经公网入口的 SSH 会话每隔几分钟断开一次；联调改用局域网 SSH，正式部署用 Jetson 直连 3080 的隧道 |
 | 本指南的部署步骤 | 2026-10-28 编写时 Jetson 不在线，**整套步骤尚未在板子上实际执行过** |

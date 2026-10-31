@@ -2,10 +2,12 @@
 """家庭机器人通用任务宿主，不依赖课堂或学生成绩."""
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
+from agent.exploration import ExplorationController
 from agent.interfaces import DecisionAgent
 from app.team_gateway import TeamGateway, UserInput
 from domain.models import ActionStatus, TaskState, TaskStatus
@@ -13,6 +15,8 @@ from domain.services import ObservationRequest
 from domain.validation import positive_int
 from skills.speak import speech_budget_s
 from speech.text import speakable_text
+
+logger = logging.getLogger(__name__)
 
 _INPUT_RETENTION = 4096
 
@@ -38,8 +42,17 @@ class RobotHost:
         _max_actions: int = 3,
         *,
         _speak_replies: bool = False,
+        _exploration_factory: Callable[[int], ExplorationController] | None = None,
     ) -> None:
-        """注入共享服务，采用串行输入与有限动作续接策略."""
+        """注入共享服务，采用串行输入与有限动作续接策略.
+
+        Args:
+            _gateway: 核心网关.
+            _agent_factory: 按任务创建决策策略.
+            _max_actions: 一条输入最多续接的动作数.
+            _speak_replies: 是否播报最终回答.
+            _exploration_factory: 按任务创建探索控制器；None 时不支持探索.
+        """
         self._gateway: TeamGateway = _gateway
         self._factory: Callable[[int], DecisionAgent] = _agent_factory
         self._max_actions: int = positive_int(_max_actions, "max_actions")
@@ -51,6 +64,11 @@ class RobotHost:
         self._stopped: set[int] = set()
         self._closed: bool = False
         self._speak_replies: bool = _speak_replies
+        self._exploration_factory: Callable[[int], ExplorationController] | None = (
+            _exploration_factory
+        )
+        self._explore_requests: set[int] = set()
+        self._explorations: dict[int, asyncio.Task[None]] = {}
 
     async def start(self, task_id: int) -> RobotReply:
         """登记机器人任务，不创建课程或后台输入消费者."""
@@ -59,6 +77,16 @@ class RobotHost:
             if task_id not in self._agents:
                 self._agents[task_id] = self._factory(task_id)
             return await self._reply(task_id, "机器人任务已就绪。")
+
+    def request_exploration(self, task_id: int) -> None:
+        """模型调用探索工具时登记；本条回答结束后在后台开始.
+
+        Raises:
+            ValueError: 未装配探索。
+        """
+        if self._exploration_factory is None:
+            raise ValueError("Exploration is not available")
+        self._explore_requests.add(task_id)
 
     async def process_next(self) -> RobotReply:
         """由应用唯一消费者循环调用，等待动作期间后续输入保留在队列."""
@@ -97,6 +125,9 @@ class RobotHost:
             await self._require_active(item.task_id)
             if item.task_id not in self._agents:
                 raise ValueError("Start the robot before handling input")
+            # 孩子说话先打断探索，等它停下当前动作再处理
+            await self._stop_exploration(item.task_id)
+            self._explore_requests.discard(item.task_id)
             if item.question_id is not None:
                 raise ValueError("Use explicit teaching mode for question answers")
             while len(self._seen) >= _INPUT_RETENTION:
@@ -114,8 +145,12 @@ class RobotHost:
             try:
                 reply = await worker
                 self._replies[item.input_id] = reply
+                if item.task_id in self._explore_requests:
+                    self._explore_requests.discard(item.task_id)
+                    self._start_exploration(item.task_id)
                 return reply
             except Exception:
+                self._explore_requests.discard(item.task_id)
                 # 模型或工具失败只作废本条输入：停止它提交的动作，任务继续接受下一句。
                 if item.task_id in self._stopped or not await self._abandon_turn(
                     item.task_id, before
@@ -138,8 +173,13 @@ class RobotHost:
         worker = self._workers.get(task_id)
         if worker is not None:
             _ = worker.cancel()
+        exploration = self._explorations.pop(task_id, None)
+        if exploration is not None:
+            _ = exploration.cancel()
         result = await self._gateway.cancel_task(task_id)
         _ = self._agents.pop(task_id, None)
+        if exploration is not None:
+            _ = await asyncio.gather(exploration, return_exceptions=True)
         return result
 
     async def finish(self, task_id: int) -> TaskState:
@@ -158,8 +198,44 @@ class RobotHost:
         workers = tuple(self._workers.values())
         for task_id in tuple(self._agents):
             _ = await self.cancel(task_id)
+        for task_id in tuple(self._explorations):
+            await self._stop_exploration(task_id)
         if workers:
             _ = await asyncio.gather(*workers, return_exceptions=True)
+
+    def _start_exploration(self, task_id: int) -> None:
+        """在后台运行探索；同一任务只保留一个."""
+        assert self._exploration_factory is not None
+        controller = self._exploration_factory(task_id)
+        self._explorations[task_id] = asyncio.create_task(
+            self._explore(task_id, controller), name="robot-exploration"
+        )
+
+    async def _explore(self, task_id: int, controller: ExplorationController) -> None:
+        """探索异常只结束探索；执行层锁定时结束任务."""
+        try:
+            _ = await controller.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[RobotHost._explore] 探索中断 task_id=%s", task_id)
+            snapshot = await self._gateway.get_snapshot(task_id)
+            if snapshot.blocked_reason is not None:
+                await self._stop_task(task_id)
+        finally:
+            if self._explorations.get(task_id) is asyncio.current_task():
+                del self._explorations[task_id]
+
+    async def _stop_exploration(self, task_id: int) -> None:
+        """取消探索并等待它停下进行中的动作."""
+        exploration = self._explorations.pop(task_id, None)
+        if exploration is not None:
+            _ = exploration.cancel()
+            _ = await asyncio.gather(exploration, return_exceptions=True)
+
+    def exploring(self, task_id: int) -> bool:
+        """报告任务是否正在探索."""
+        return task_id in self._explorations
 
     async def _stop_task(self, task_id: int) -> None:
         """结束整个任务：用户停止、宿主关闭或设备停止无法确认时使用."""

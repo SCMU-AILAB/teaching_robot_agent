@@ -8,6 +8,7 @@ import sys
 from uuid import uuid4
 
 from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
+from app.depth import exploration_from_env, guard_from_env
 from app.perception import build_perception
 from app.robot_application import RobotApplication
 from domain.models import TaskStatus
@@ -19,6 +20,7 @@ from storage.evidence import EvidenceStore
 async def run_console() -> None:
     """模型和动作运行期间持续接收停止命令，普通请求串行处理."""
     robot = RobotAdapterFactory().create(os.environ.get("ROBOT_ADAPTER", "simulated"))
+    robot = guard_from_env(robot)
     evidence = EvidenceStore()
     audio_mode = os.environ.get("ROBOT_AUDIO", "off")
     if audio_mode not in {"off", "simulated", "real"}:
@@ -36,6 +38,7 @@ async def run_console() -> None:
         _audio=audio,
         _evidence=evidence,
         _answer_max_chars=answer_chars_from_env(),
+        _exploration=exploration_from_env(),
     )
     loop = asyncio.get_running_loop()
     lines: asyncio.Queue[str] = asyncio.Queue()

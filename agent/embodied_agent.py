@@ -343,6 +343,10 @@ class EmbodiedAgent:
                         self._memory.mark_moved()
                         self._moved_in_turn = True
                     return AgentTurn("", result.action_id)
+                if call["name"] == "start_exploration":
+                    # 探索在本条回答后移动机器人：焦点作废，回答说要去走走不算只答应不执行
+                    self._memory.mark_moved()
+                    self._moved_in_turn = True
                 if isinstance(result, SceneBrief):
                     self._memory.set_focus(SceneFocus.from_brief(result))
                     content = result.to_prompt()
