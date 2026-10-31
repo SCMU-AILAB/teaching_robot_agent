@@ -50,3 +50,19 @@ def build_local_model(role: str = "VLM") -> ChatOllama:
         keep_alive=os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
         client_kwargs={"trust_env": False, "timeout": 60.0},
     )
+
+
+def answer_chars_from_env() -> int | None:
+    """读取最终回答的大致字数上限 AGENT_ANSWER_CHARS，默认 40，0 表示不限制.
+
+    Raises:
+        ValueError: 不是非负整数。
+    """
+    raw = os.environ.get("AGENT_ANSWER_CHARS", "40")
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError("AGENT_ANSWER_CHARS must be an integer") from error
+    if value < 0:
+        raise ValueError("AGENT_ANSWER_CHARS must not be negative")
+    return value or None

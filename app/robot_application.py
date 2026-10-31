@@ -34,6 +34,7 @@ class RobotApplication:
         *,
         _audio: AudioAdapters | None = None,
         _evidence: EvidenceStore | None = None,
+        _answer_max_chars: int | None = None,
     ) -> None:
         """显式注入设备、感知与模型，构造期间不连接外部服务.
 
@@ -44,6 +45,7 @@ class RobotApplication:
             _knowledge: 知识服务，缺省使用家庭知识库.
             _audio: 可选语音适配器.
             _evidence: 感知与语音共用的证据存储；提供时按任务和语音作业释放证据.
+            _answer_max_chars: 最终回答的大致字数上限，None 不限制.
         """
         self.runtime: ActionManager = ActionManager(_robot, build_robot_skills(_robot))
         self.gateway: TeamGateway = TeamGateway(
@@ -52,6 +54,7 @@ class RobotApplication:
         self._perception: PerceptionService = _perception
         self._model: BaseChatModel = _model
         self._knowledge: KnowledgeService = _knowledge or build_home_knowledge()
+        self._answer_max_chars: int | None = _answer_max_chars
         self.speech_input: SpeechInputService | None = None
         self._speech_output: SpeechOutputService | None = None
         self.audio: AudioAdapters | None = _audio
@@ -78,6 +81,7 @@ class RobotApplication:
             RobotContextBuilder(self.gateway),
             ToolAdapter(task_id, self.gateway, _knowledge=self._knowledge),
             task_id,
+            _answer_max_chars=self._answer_max_chars,
         )
 
     async def start(self) -> None:

@@ -14,7 +14,7 @@ from api.service import RobotApiService, ServiceStates
 from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
 from app.perception import build_perception
 from app.robot_application import RobotApplication
-from providers.local_model import build_local_model
+from providers.local_model import answer_chars_from_env, build_local_model
 from robot.factory import RobotAdapterFactory
 from storage.evidence import EvidenceStore
 
@@ -46,6 +46,7 @@ async def serve_robot(slot: ServiceSlot) -> AsyncGenerator[None]:
         build_local_model("AGENT"),
         _audio=audio,
         _evidence=evidence,
+        _answer_max_chars=answer_chars_from_env(),
     )
     preview = (
         CameraPreview(perception.camera, evidence)

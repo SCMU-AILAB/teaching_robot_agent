@@ -77,15 +77,31 @@ class SplitTests(unittest.TestCase):
     """切句规则."""
 
     def test_short_text_stays_single_segment(self) -> None:
-        """30 字以内整段合成."""
+        """16 字以内整段合成."""
         self.assertEqual(split_for_speech("你好。我在这里。"), ["你好。我在这里。"])
 
+    def test_first_segment_cut_early_at_clause(self) -> None:
+        """首段在第一个不短于 8 字的逗号或句末处切出；余下太短时不切."""
+        self.assertEqual(
+            split_for_speech("好的，我已经向左转了一点。现在能看到新东西了吗？"),
+            ["好的，我已经向左转了一点。", "现在能看到新东西了吗？"],
+        )
+        self.assertEqual(
+            split_for_speech("我看到前面有个小方桌，右边是蓝色和灰色椅子。"),
+            ["我看到前面有个小方桌，", "右边是蓝色和灰色椅子。"],
+        )
+        self.assertEqual(
+            split_for_speech("我已经向左转了一点点了，好的。"),
+            ["我已经向左转了一点点了，好的。"],
+        )
+
     def test_long_text_splits_at_sentence_ends_and_merges_short_ones(self) -> None:
-        """长文本按句末标点切开，过短的句子并入下一句，拼回原文不丢字."""
+        """长文本首段提前切出，其余按句末标点切开，过短的句子并入下一句，拼回原文不丢字."""
         segments = split_for_speech(LONG)
         self.assertEqual("".join(segments), LONG)
         self.assertGreater(len(segments), 1)
-        self.assertTrue(all(len(item) >= 12 for item in segments[:-1]))
+        self.assertGreaterEqual(len(segments[0]), 8)
+        self.assertTrue(all(len(item) >= 12 for item in segments[1:-1]))
         self.assertTrue(all(item.strip() for item in segments))
 
     def test_long_text_without_sentence_end_stays_whole(self) -> None:

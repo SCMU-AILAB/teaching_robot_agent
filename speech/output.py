@@ -19,10 +19,29 @@ _SENTENCE_END = re.compile(r"(?<=[。！？!?；;])")
 _MIN_SEGMENT_CHARS = 12
 # 不超过该长度的文本整段合成，保持单段播放。
 _PIPELINE_MIN_CHARS = 30
+# 首段在第一个逗号或句末处提前切出，先开口再合成其余部分。GPT-SoVITS 每段约 0.6 秒固定开销、
+# 每字约 0.035 秒，播放约为合成的 2–3 倍（2026-10-31 实测）；首段过短会播完时下一段还没合成好。
+_CLAUSE_END = re.compile(r"[，,。！？!?；;]")
+_FIRST_SEGMENT_MIN_CHARS = 8
+_FIRST_SPLIT_MIN_CHARS = 16
 
 
 def split_for_speech(text: str) -> list[str]:
-    """把朗读文本切成依次合成播放的句段；短文本或没有句末标点时整段返回."""
+    """把朗读文本切成依次合成播放的句段：首段尽早在逗号或句末切出，其余按句切."""
+    if len(text) >= _FIRST_SPLIT_MIN_CHARS:
+        for match in _CLAUSE_END.finditer(text):
+            end = match.end()
+            if end < _FIRST_SEGMENT_MIN_CHARS:
+                continue
+            rest = text[end:]
+            if len(rest.strip()) >= _FIRST_SEGMENT_MIN_CHARS:
+                return [text[:end], *_split_sentences(rest)]
+            break
+    return _split_sentences(text)
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按句末标点切段；短文本或没有句末标点时整段返回."""
     if len(text) <= _PIPELINE_MIN_CHARS:
         return [text]
     segments: list[str] = []

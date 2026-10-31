@@ -11,7 +11,7 @@ from app.audio import AudioAdapters, build_real_audio, build_simulated_audio
 from app.perception import build_perception
 from app.robot_application import RobotApplication
 from domain.models import TaskStatus
-from providers.local_model import build_local_model
+from providers.local_model import answer_chars_from_env, build_local_model
 from robot.factory import RobotAdapterFactory
 from storage.evidence import EvidenceStore
 
@@ -35,6 +35,7 @@ async def run_console() -> None:
         build_local_model("AGENT"),
         _audio=audio,
         _evidence=evidence,
+        _answer_max_chars=answer_chars_from_env(),
     )
     loop = asyncio.get_running_loop()
     lines: asyncio.Queue[str] = asyncio.Queue()
