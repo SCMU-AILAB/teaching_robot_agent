@@ -17,7 +17,8 @@ class TurnRelativeSkill(MoveRelativeSkill):
     name: str = "turn_relative"
     parameter_help: str = (
         'arguments={"angle_rad": 数值, "speed_rad_s": 可选数值}；'
-        + "角度弧度，逆时针为正，范围 [-π,π]；角速度 (0,1]，默认 0.3。"
+        + "angle_rad 单位弧度：左转（逆时针）为正数，右转（顺时针）为负数，"
+        + "例如右转一点是 -0.3、左转 90 度是 1.57；范围 [-π,π]；角速度 (0,1]，默认 0.3。"
     )
     required_capabilities: frozenset[RobotCapability] = frozenset(
         {
