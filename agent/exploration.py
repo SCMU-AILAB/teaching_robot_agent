@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import math
+import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -95,6 +96,23 @@ def model_narrator(model: BaseChatModel, chars: int) -> Narrator:
         return response.text.strip()
 
     return narrate
+
+
+# 明确的探索请求：动作词前带“去、一起、带我、四处”等；问句“什么是探索”不算
+_EXPLORE_INTENT = re.compile(
+    r"(去|来|开始|一起|带我|你自己|自己|随便|四处|到处|在房间里?|房间里)"
+    + r"[^。！？!?，,]{0,4}?(探索|逛逛|逛一逛|转转|转一转|走走|走一走)"
+    + r"|^(探索|逛逛|转转|走走)"
+)
+EXPLORE_REPLY = "好的，我开始探索啦！看到新东西就告诉你，你说话我就停下。"
+
+
+def wants_exploration(text: str) -> bool:
+    """用户原话是否明确要求在房间里探索."""
+    stripped = text.strip()
+    if "什么是" in stripped or "是什么" in stripped:
+        return False
+    return _EXPLORE_INTENT.search(stripped) is not None
 
 
 def same_object(first: str, second: str) -> bool:

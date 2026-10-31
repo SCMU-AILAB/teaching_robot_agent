@@ -27,6 +27,15 @@ class MoveRelativeSkill(RobotSkill):
         }
     )
 
+    def __init__(self, _max_reverse_m: float | None = None) -> None:
+        """设备限制后退距离时写进参数说明，让模型提前知道."""
+        self._max_reverse_m: float | None = _max_reverse_m
+        if _max_reverse_m is not None:
+            self.parameter_help = (
+                type(self).parameter_help
+                + f"后退（负距离）最多 {_max_reverse_m:g} 米，摄像头看不到后方。"
+            )
+
     @override
     def validate(self, args: dict[str, object]) -> None:
         """检查动作参数，非法输入抛出异常."""
@@ -50,6 +59,8 @@ class MoveRelativeSkill(RobotSkill):
         speed = finite_float(arguments.get("speed_m_s", 0.1), "speed_m_s")
         if abs(distance) > 2.0:
             raise ValueError("distance_m must be between -2 and 2 meters")
+        if self._max_reverse_m is not None and distance < -self._max_reverse_m:
+            raise ValueError(f"reverse is limited to {self._max_reverse_m:g} m")
         if not 0 < speed <= 0.5:
             raise ValueError("speed_m_s must be greater than 0 and at most 0.5")
         return distance, speed

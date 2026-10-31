@@ -7,10 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
-from agent.exploration import ExplorationController
+from agent.embodied_agent import AgentTurn
+from agent.exploration import EXPLORE_REPLY, ExplorationController, wants_exploration
 from agent.interfaces import DecisionAgent
 from app.team_gateway import TeamGateway, UserInput
-from domain.models import ActionStatus, TaskState, TaskStatus
+from domain.models import ActionRecord, ActionStatus, TaskState, TaskStatus
 from domain.services import ObservationRequest
 from domain.validation import positive_int
 from skills.speak import speech_budget_s
@@ -30,6 +31,16 @@ class RobotReply:
     task_status: TaskStatus
     action_ids: tuple[int, ...] = ()
     rejected: bool = False
+
+
+def failure_reply(record: ActionRecord) -> str:
+    """动作失败时给孩子的说明；遇障停车说出原因."""
+    failure = record.failure or ""
+    marker = "ObstacleError:"
+    if marker in failure:
+        reason = failure.split(marker, 1)[1].split(";", 1)[0].strip()
+        return f"{reason}，换个方向试试吧。"
+    return f"动作未成功（{record.status.value}），已停下，可以换个说法再试。"
 
 
 class RobotHost:
@@ -310,46 +321,53 @@ class RobotHost:
             rejected,
         )
 
+    async def _say(self, task_id: int, text: str, actions: list[int]) -> RobotReply:
+        """装配语音时播报回答再返回；播报失败保留文字，扬声器停止无法确认时结束任务."""
+        if self._speak_replies and text.strip():
+            # 期限按朗读长度给出，另留清理余量；固定值会让长回答必然超时。
+            record = await self._gateway.submit_action(
+                task_id,
+                "speak",
+                {"text": text},
+                timeout_s=speech_budget_s(speakable_text(text)) + 5.0,
+            )
+            actions.append(record.action_id)
+            spoken = await self._gateway.wait_for_action(task_id, record.action_id)
+            await self._require_active(task_id)
+            if spoken.status != ActionStatus.SUCCEEDED:
+                # 播报失败不影响文字回答；只有扬声器停止无法确认才结束任务。
+                if (
+                    await self._gateway.get_snapshot(task_id)
+                ).blocked_reason is not None:
+                    await self._stop_task(task_id)
+                else:
+                    self._gateway.acknowledge_failures(task_id, (record.action_id,))
+                return await self._reply(
+                    task_id,
+                    text + "（语音播报未完成，文字回答已保留。）",
+                    tuple(actions),
+                )
+        return await self._reply(task_id, text, tuple(actions))
+
     async def _handle(self, item: UserInput) -> RobotReply:
         """处理通用请求，动作完成后按最新快照续接模型."""
         # ========== Step2: 执行一次输入对应的有限动作链 ==========
         agent = self._agents[item.task_id]
-        turn = await agent.decide(item)
+        if self._exploration_factory is not None and wants_exploration(item.text):
+            # 明确的探索请求不经模型：9B 模型常只口头答应而不调用探索工具
+            logger.info("[RobotHost._handle] 识别为探索请求 task_id=%s", item.task_id)
+            self._explore_requests.add(item.task_id)
+            agent.record_exchange(item.text, EXPLORE_REPLY, moved=True)
+            turn = AgentTurn(EXPLORE_REPLY)
+        else:
+            turn = await agent.decide(item)
         actions: list[int] = []
         while True:
             await self._require_active(item.task_id)
             action_id = turn.pending_action_id
             if action_id is None:
-                if self._speak_replies and turn.text.strip():
-                    # 期限按朗读长度给出，另留清理余量；固定值会让长回答必然超时。
-                    record = await self._gateway.submit_action(
-                        item.task_id,
-                        "speak",
-                        {"text": turn.text},
-                        timeout_s=speech_budget_s(speakable_text(turn.text)) + 5.0,
-                    )
-                    actions.append(record.action_id)
-                    spoken = await self._gateway.wait_for_action(
-                        item.task_id, record.action_id
-                    )
-                    await self._require_active(item.task_id)
-                    if spoken.status != ActionStatus.SUCCEEDED:
-                        # 播报失败不影响文字回答；只有扬声器停止无法确认才结束任务。
-                        if (
-                            await self._gateway.get_snapshot(item.task_id)
-                        ).blocked_reason is not None:
-                            await self._stop_task(item.task_id)
-                        else:
-                            self._gateway.acknowledge_failures(
-                                item.task_id, (record.action_id,)
-                            )
-                        return await self._reply(
-                            item.task_id,
-                            turn.text + "（语音播报未完成，文字回答已保留。）",
-                            tuple(actions),
-                        )
                 # 模型文字不是目标达成证据；任务保留，允许澄清和宿主显式验收。
-                return await self._reply(item.task_id, turn.text, tuple(actions))
+                return await self._say(item.task_id, turn.text, actions)
             if action_id in actions or len(actions) >= self._max_actions:
                 raise RuntimeError("Repeated action or robot action limit exceeded")
             actions.append(action_id)
@@ -357,11 +375,11 @@ class RobotHost:
             await self._require_active(item.task_id)
             if result.status != ActionStatus.SUCCEEDED:
                 await self._end_turn(item.task_id)
-                return await self._reply(
-                    item.task_id,
-                    f"动作未成功（{result.status.value}），已停下，可以换个说法再试。",
-                    tuple(actions),
-                )
+                text = failure_reply(result)
+                if item.task_id in self._stopped:
+                    return await self._reply(item.task_id, text, tuple(actions))
+                # 停车原因要说出来，孩子才知道车为什么不动了
+                return await self._say(item.task_id, text, actions)
             if len(actions) == self._max_actions:
                 await self._end_turn(item.task_id)
                 return await self._reply(

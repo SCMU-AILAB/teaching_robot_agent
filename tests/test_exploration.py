@@ -14,7 +14,13 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from agent.exploration import ExplorationConfig, ExplorationController, same_object
+from agent.exploration import (
+    EXPLORE_REPLY,
+    ExplorationConfig,
+    ExplorationController,
+    same_object,
+    wants_exploration,
+)
 from app.robot_application import RobotApplication
 from app.team_gateway import TeamGateway
 from domain.education import KnowledgePoint
@@ -190,6 +196,22 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(abs(first.y), 0.05)
         self.assertLess(first.x, 0.45)
 
+    def test_exploration_intent(self) -> None:
+        """明确的探索请求被识别，概念提问与普通移动不算."""
+        for text in (
+            "我们去探索一下吧！",
+            "在房间里转转，看看有什么。",
+            "带我到处逛逛吧",
+        ):
+            self.assertTrue(wants_exploration(text), text)
+        for text in (
+            "什么是探索？",
+            "向左转一点点。",
+            "往前走二十厘米。",
+            "走到椅子那边",
+        ):
+            self.assertFalse(wants_exploration(text), text)
+
     def test_same_object(self) -> None:
         """互相包含视为同一物体."""
         self.assertTrue(same_object("椅子", "蓝色椅子"))
@@ -221,10 +243,16 @@ class ExploreModel(BaseChatModel):
             reply = AIMessage("我好像看到了新东西。")
         elif isinstance(last, ToolMessage):
             reply = AIMessage("好的，我开始探索啦。")
-        elif "去探索" in last.text:
+        elif "这个房间都有啥" in last.text:
             reply = AIMessage(
                 "",
-                tool_calls=[{"name": "start_exploration", "args": {}, "id": "e1"}],
+                tool_calls=[
+                    {
+                        "name": "start_exploration",
+                        "args": {"plan": "四处看看"},
+                        "id": "e1",
+                    }
+                ],
             )
         else:
             reply = AIMessage("好的。")
@@ -248,14 +276,15 @@ class HostExplorationTests(unittest.IsolatedAsyncioTestCase):
             _exploration=ExplorationConfig(max_duration_s=60),
         )
 
-    async def _start(self) -> int:
+    async def _start(self, text: str = "我们去探索一下吧") -> int:
         """建任务并让机器人开始探索，返回任务编号."""
         await self.app.start()
         task = await self.app.create_task("探索")
         with patch.object(ExploreModel, "bind_tools", return_value=self.model):
-            _ = self.app.gateway.submit_text(task.task_id, "我们去探索一下吧")
+            _ = self.app.gateway.submit_text(task.task_id, text)
             reply = await self.app.process_next()
-        self.assertEqual(reply.text, "好的，我开始探索啦。")
+        expected = EXPLORE_REPLY if wants_exploration(text) else "好的，我开始探索啦。"
+        self.assertEqual(reply.text, expected)
         self.assertTrue(self.app.host.exploring(task.task_id))
         # 等探索真正走起来
         for _ in range(100):
@@ -277,6 +306,15 @@ class HostExplorationTests(unittest.IsolatedAsyncioTestCase):
             snapshot = await self.app.gateway.get_snapshot(task_id)
             self.assertEqual(snapshot.task.status, TaskStatus.RUNNING)
             self.assertTrue(all(a.status.is_terminal for a in snapshot.actions))
+        finally:
+            await self.app.close()
+
+    async def test_model_tool_starts_exploration(self) -> None:
+        """宿主没识别出的说法由模型调用探索工具启动."""
+        self.assertFalse(wants_exploration("我想看看这个房间都有啥"))
+        task_id = await self._start("我想看看这个房间都有啥")
+        try:
+            self.assertTrue(self.app.host.exploring(task_id))
         finally:
             await self.app.close()
 

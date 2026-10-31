@@ -17,6 +17,8 @@ class RobotAdapter(ABC):
     # 相对运动验收容差；模拟器按 1 毫米 / 0.001 弧度，真实设备按自身精度覆盖。
     position_tolerance_m: float = 0.001
     yaw_tolerance_rad: float = 0.001
+    # 单次后退上限，米；None 表示不限制（例如前向摄像头看不到后方时设上限）。
+    max_reverse_m: float | None = None
 
     def validate_state(self, state: RobotState, *, after: float | None = None) -> None:
         """验证遥测新鲜度及命令后反馈，不把旧静止快照视为停止确认."""

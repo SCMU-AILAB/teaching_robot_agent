@@ -14,7 +14,7 @@ def build_robot_skills(robot: RobotAdapter) -> SkillRegistry:
     if RobotCapability.LOCALIZATION not in robot.capabilities:
         return registry
     if RobotCapability.MOVE_RELATIVE in robot.capabilities:
-        registry.register(MoveRelativeSkill())
+        registry.register(MoveRelativeSkill(robot.max_reverse_m))
     if RobotCapability.TURN_RELATIVE in robot.capabilities:
         registry.register(TurnRelativeSkill())
     return registry

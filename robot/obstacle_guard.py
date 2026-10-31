@@ -76,6 +76,7 @@ class GuardedRobotAdapter(RobotAdapter):
         self.telemetry_max_age_s: float = _inner.telemetry_max_age_s
         self.position_tolerance_m: float = _inner.position_tolerance_m
         self.yaw_tolerance_rad: float = _inner.yaw_tolerance_rad
+        self.max_reverse_m: float | None = self._max_reverse_m
 
     @property
     def depth(self) -> DepthSource:

@@ -23,3 +23,7 @@ class DecisionAgent(Protocol):
     def abandon_turn(self) -> None:
         """作废未完成的本轮决策（等待中的动作与工具历史），保留跨轮对话记忆."""
         ...
+
+    def record_exchange(self, user_text: str, reply: str, *, moved: bool) -> None:
+        """宿主不经模型直接作答时记入对话记忆；moved 表示随后会移动，旧焦点作废."""
+        ...

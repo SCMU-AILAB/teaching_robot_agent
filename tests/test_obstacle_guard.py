@@ -8,13 +8,20 @@ import unittest
 from typing import override
 from unittest.mock import patch
 
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+from app.audio import build_simulated_audio
 from app.depth import exploration_from_env, guard_from_env
+from app.robot_application import RobotApplication
 from domain.models import ActionRequest, ActionStatus
 from perception.depth.geometry import Clearance
+from perception.simulated import SimulatedPerception
 from robot.obstacle_guard import GuardedRobotAdapter, ObstacleError
 from robot.simulated import SimulatedAdapter
 from runtime.action_manager import ActionManager
 from skills.robot_registry import build_robot_skills
+from storage.evidence import EvidenceStore
+from tests.test_object_safety_flow import tool_call
 
 
 class FakeDepth:
@@ -165,6 +172,54 @@ class GuardRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(runtime.blocked_reason)
         finally:
             await runtime.close()
+
+    def test_reverse_limit_in_skill_help(self) -> None:
+        """后退上限写进参数说明，超限在提交前就被拒绝."""
+        robot = GuardedRobotAdapter(SimulatedAdapter(), FakeDepth())
+        skill = build_robot_skills(robot).get("move_relative")
+        self.assertIn("后退（负距离）最多 0.3 米", skill.parameter_help)
+        with self.assertRaises(ValueError):
+            skill.validate({"distance_m": -0.5})
+        skill.validate({"distance_m": -0.3})
+
+    async def test_blocked_move_reply_says_why_and_speaks(self) -> None:
+        """遇障失败：回答说出原因并播报，任务继续."""
+        depth = FakeDepth(ahead=0.3)
+        robot = GuardedRobotAdapter(SimulatedAdapter(), depth)
+        evidence = EvidenceStore()
+        model = FakeMessagesListChatModel(
+            responses=[
+                tool_call(
+                    "submit_action",
+                    {"skill": "move_relative", "arguments": {"distance_m": 1.0}},
+                    "m1",
+                )
+            ]
+        )
+        app = RobotApplication(
+            robot,
+            SimulatedPerception(evidence),
+            model,
+            _audio=build_simulated_audio(evidence),
+            _evidence=evidence,
+        )
+        await app.start()
+        try:
+            task = await app.create_task("避障")
+            with patch.object(
+                FakeMessagesListChatModel, "bind_tools", return_value=model
+            ):
+                _ = app.gateway.submit_text(task.task_id, "往前走一米")
+                reply = await app.process_next()
+            self.assertEqual(reply.text, "前方有障碍物，已停下，换个方向试试吧。")
+            snapshot = await app.gateway.get_snapshot(task.task_id)
+            spoken = [
+                a for a in snapshot.actions if a.raw_request.skill_name == "speak"
+            ]
+            self.assertEqual(len(spoken), 1)
+            self.assertEqual(spoken[0].status, ActionStatus.SUCCEEDED)
+        finally:
+            await app.close()
 
 
 class DepthEnvTests(unittest.TestCase):

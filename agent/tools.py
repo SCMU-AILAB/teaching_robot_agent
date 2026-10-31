@@ -52,12 +52,16 @@ class ToolAdapter:
         """报告是否装配了深度避障与探索."""
         return self._explore is not None
 
-    def start_exploration(self) -> str:
-        """在房间里自由探索，孩子想让你四处转转、看看房间、去探索时调用.
+    def start_exploration(self, plan: str) -> str:
+        """在房间里自由探索：孩子想让你四处转转、看看房间、去探索时调用.
 
         本条回答播完后在后台开始：边走边避障，离起点 3 米内、最多 5 分钟，发现新东西会停下讲一句；
         孩子说话会打断探索。调用后用一句话告诉孩子你要开始探索了。
+
+        Args:
+            plan: 用一句话说明要怎么探索，例如“在房间里四处走走看看”；只用于记录。
         """
+        _ = plan
         if self._explore is None:
             raise ValueError("Exploration is not available")
         self._explore()
