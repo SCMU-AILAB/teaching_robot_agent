@@ -83,6 +83,19 @@ class LocalVisionTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(text=text), self.assertRaises(ServiceError):
                 _ = await self._analyze(text)
 
+    async def test_invalid_output_retried_once_with_reason(self) -> None:
+        """首次输出不合约定时附上格式要求重试一次，第二次合法即返回观察."""
+        store = EvidenceStore()
+        request = await self._request(store)
+        bad = '{"summary":"s","objects":[{"label":"杯子","position":"前面"}]}'
+        good = '{"summary":"桌上有杯子","objects":[{"label":"杯子","position":"中间"}]}'
+        model = FakeMessagesListChatModel(responses=[AIMessage(bad), AIMessage(good)])
+        provider = OllamaVisionProvider(model, "test-vlm", store)
+        result = await provider.analyze(request)
+        self.assertEqual(result.objects[0].label, "杯子")
+        # 两条回复都已用过，回放计数回绕为 0
+        self.assertEqual(model.i, 0)
+
     async def test_valid_and_malformed_response(self) -> None:
         """有效文字可用，额外字段、空文本和非 JSON 输出均被拒绝."""
         store = EvidenceStore()
