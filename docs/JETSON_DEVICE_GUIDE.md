@@ -125,6 +125,9 @@ chmod 600 ~/teaching-robot/robot.env
   找不到或同名多个时启动报错，不会退回系统默认。枚举：`.venv/bin/python -m providers.audio.worker devices`。
 - **底盘**：`ROBOT_ADAPTER=car` 时 `CAR_SERIAL_PORT` 必填；`CAR_COUNTS_PER_METER`、`CAR_COUNTS_PER_RADIAN`
   未标定时底盘只连接、不开放运动技能。标定前可先用 `ROBOT_ADAPTER=simulated`。
+- **摄像头**：`PERCEPTION_DEVICE` 是 OpenCV 序号（`/dev/videoN` 的 N）。RealSense D435i 占 `/dev/video0`–`5`，
+  彩色画面是 `/dev/video4`（YUYV 640×480；`video2` 为灰度红外，其余 OpenCV 打不开）；接其他 USB 设备后序号可能变化，
+  用 `cat /sys/class/video4linux/video*/name` 与 `curl -o f.jpg http://127.0.0.1:8090/api/v1/camera/snapshot` 核对。
 - **端口**：`ROBOT_API_PORT=8090` 与前端默认一致，`ROBOT_API_HOST=0.0.0.0` 只用于受控局域网。
 
 ### 播放前必须设音量
@@ -143,6 +146,10 @@ done
 开机后才插入的 USB 声卡，WirePlumber 可能不为它启用输出配置，默认输出只剩 `Dummy Output`。
 `wpctl status` 的 Sinks 中没有 `USB Audio Device Analog Stereo` 时，执行
 `systemctl --user restart wireplumber`。
+
+同时插着 Earpods 时，WirePlumber 可能把 Earpods 选为默认输出，`pipewire` 输出的声音会进耳机。用
+`wpctl set-default <C-Media 输出编号>` 与 `wpctl set-default <Earpods 输入编号>` 指定（编号见 `wpctl status`）。
+2026-10-31 实测：重启后 PipeWire 输出音量回到 0.41，默认设备也要重新核对，每次开机后检查。
 
 ---
 
@@ -254,10 +261,10 @@ python -m unittest discover -s tests
 | 问题 | 现状 |
 |---|---|
 | 缺 PortAudio | 需人工安装 `libportaudio2`（第 3.2 节） |
-| 扬声器默认音量过低 | 14/37（-23 dB）且 PipeWire 0.40；按第 4 节拉到 100% |
+| 扬声器默认音量过低 | 14/37（-23 dB）且 PipeWire 0.40；按第 4 节拉到 100%，重启后 PipeWire 音量会复原，需重设 |
 | C-Media 声卡无采集 | 纯输出设备，麦克风必须用 Earpods 那类带采集的设备 |
 | 内存被其他项目占用 | `Go2Agent`、`llama.cpp`、`frp` 已占约 6 GiB，联调时注意别抢资源 |
 | 3080 内存紧张 | GPT-SoVITS 闲置半小时后首句可能需要数十秒；后端只在启动时预热一次 |
 | 底盘标定精度有限 | 2026-10-30 以 10 cm 尺量、30° 目测标定；落地前进 ±20 cm 到位误差 0.4 mm 以内（按里程计）；拔线停车未测；里程计看不到打滑 |
-| 公网 SSH 入口不稳 | 经公网入口的 SSH 会话每隔几分钟断开一次；联调脚本放在 Jetson 本机运行，正式部署用 Jetson 直连 3080 的隧道 |
+| 公网 SSH 入口不稳 | 经公网入口的 SSH 会话每隔几分钟断开一次；联调改用局域网 SSH，正式部署用 Jetson 直连 3080 的隧道 |
 | 本指南的部署步骤 | 2026-10-28 编写时 Jetson 不在线，**整套步骤尚未在板子上实际执行过** |
