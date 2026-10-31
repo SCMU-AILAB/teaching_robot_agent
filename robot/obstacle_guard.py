@@ -179,16 +179,20 @@ class GuardedRobotAdapter(RobotAdapter):
             raise
         await move
 
+    def stop_margin_m(self, speed_m_s: float) -> float:
+        """按该速度前进时需要的前方空隙：停车距离加滑行量与反应距离."""
+        speed = abs(speed_m_s)
+        return (
+            self._stop_m + speed * speed / (2 * self._decel) + speed * self._latency_s
+        )
+
     def _blocked(
         self, speed: float, previous: Clearance | None, current: Clearance | None
     ) -> str | None:
         """返回停车原因；可以继续前进时为 None."""
         if current is None or time.time() - current.captured_at > self._stale_s:
             return "看不清前方，已停下"
-        margin = (
-            self._stop_m + speed * speed / (2 * self._decel) + speed * self._latency_s
-        )
-        if current.ahead_m < margin:
+        if current.ahead_m < self.stop_margin_m(speed):
             return "前方有障碍物，已停下"
         if (
             previous is not None

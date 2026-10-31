@@ -39,9 +39,11 @@ class ExplorationConfig:
     max_duration_s: float = 300.0
     step_m: float = 0.5
     min_step_m: float = 0.15
+    # 前进后至少留出的空隙；装配时按避障守护的停车距离与滑行量放大，避免刚走就被拦停
     stop_distance_m: float = 0.4
-    speed_m_s: float = 0.15
-    turn_speed_rad_s: float = 0.5
+    # 本车最高约 0.13 米/秒；转速过快时停车滑行使转角超出验收容差（真车 0.5 弧度/秒两次失败）
+    speed_m_s: float = 0.1
+    turn_speed_rad_s: float = 0.3
     grid_m: float = 0.5
     max_failures: int = 3
     narration_chars: int = 30
@@ -147,6 +149,8 @@ class ExplorationController:
         self._clock: Callable[[], float] = _clock
         self.seen: list[str] = []
         self.visited: set[tuple[int, int]] = set()
+        # 最近一次动作是否因前方有障碍被守护拦停
+        self._last_blocked: bool = False
 
     async def run(self) -> str:
         """探索直到时间到、无路可走或连续失败，返回并播报总结.
@@ -162,6 +166,7 @@ class ExplorationController:
         start = await self._pose()
         self.visited.add(self._cell(start.x, start.y))
         failures = 0
+        blocked = 0
         look_failures = 0
         turned = 0.0
         reason = "探索时间到啦"
@@ -200,9 +205,17 @@ class ExplorationController:
                         "move_relative",
                         {"distance_m": step, "speed_m_s": config.speed_m_s},
                     )
+                if not ok and self._last_blocked:
+                    # 被障碍拦停是探索中的正常情况：换个方向，不计入失败
+                    blocked += 1
+                    if blocked >= 2 * config.max_failures:
+                        reason = "前面总有东西挡着，先停下了"
+                        break
+                    continue
                 if ok:
                     turned = 0.0
                     failures = 0
+                    blocked = 0
                     moved = await self._pose()
                     self.visited.add(self._cell(moved.x, moved.y))
                     # ========== Step3: 停下观察，新物体讲一句 ==========
@@ -284,6 +297,7 @@ class ExplorationController:
         except asyncio.CancelledError:
             await asyncio.shield(self._halt(record.action_id))
             raise
+        self._last_blocked = "ObstacleError" in (result.failure or "")
         if result.status == ActionStatus.SUCCEEDED:
             return True
         logger.info(

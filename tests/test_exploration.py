@@ -152,7 +152,10 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
             self.world,
             self.narration,
             build_home_knowledge(),
-            ExplorationConfig(radius_m=radius_m, max_duration_s=max_duration_s),
+            # 与主应用一致：留出守护所需空隙（0.1 米/秒时约 0.45 米）再加 5 厘米
+            ExplorationConfig(
+                radius_m=radius_m, max_duration_s=max_duration_s, stop_distance_m=0.5
+            ),
             _speak=False,
         )
 
@@ -191,7 +194,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
     async def test_obstacle_ahead_picks_open_side(self) -> None:
         """正前方 0.5 米有墙：第一步转向侧面再走."""
         self.world.points = tuple((0.5, y / 10) for y in range(-3, 4))
-        _ = await self.controller(max_duration_s=0.05, radius_m=3.0).run()
+        _ = await self.controller(max_duration_s=0.5, radius_m=3.0).run()
         first = self.inner.stops[0]
         self.assertGreater(abs(first.y), 0.05)
         self.assertLess(first.x, 0.45)
