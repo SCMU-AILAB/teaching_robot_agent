@@ -1,0 +1,14 @@
+{
+  "base_url": "http://127.0.0.1:8000",
+  "window_width": 1280,
+  "window_height": 600,
+  "target_fps": 30,
+  "camera_fps": 3.0,
+  "system_interval_s": 1.0,
+  "http_timeout_s": 8.0,
+  "font_body": "assets/fonts/NotoSansSC.ttf",
+  "font_display": "assets/fonts/Inter-Regular.ttf",
+  "font_mono": "assets/fonts/DejaVuSansMono.ttf",
+  "idle_timeout_s": 60.0,
+  "fullscreen": false
+}
