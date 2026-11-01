@@ -199,6 +199,33 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(abs(first.y), 0.05)
         self.assertLess(first.x, 0.45)
 
+    async def test_rechecks_clearance_after_turning(self) -> None:
+        """侧向扇区高估空隙：转向后按正前方实测重算，不足则不提交前进."""
+        self.world.points = tuple(ring(0.5))
+        true_latest = self.world.latest
+
+        def optimistic() -> Clearance:
+            """侧向扇区报得比实际宽."""
+            reading = true_latest()
+            headings = tuple(
+                (angle, clear if abs(angle) < 1e-6 else 4.0)
+                for angle, clear in reading.headings
+            )
+            return Clearance(
+                reading.captured_at,
+                reading.ahead_m,
+                headings,
+                reading.center_valid_ratio,
+            )
+
+        with patch.object(self.world, "latest", optimistic):
+            summary = await self.controller(max_duration_s=30).run()
+        self.assertTrue(summary.startswith("前面总有东西挡着"))
+        snapshot = await self.gateway.get_snapshot(self.task_id)
+        skills = [action.raw_request.skill_name for action in snapshot.actions]
+        self.assertIn("turn_relative", skills)
+        self.assertNotIn("move_relative", skills)
+
     def test_exploration_intent(self) -> None:
         """明确的探索请求被识别，概念提问与普通移动不算."""
         for text in (

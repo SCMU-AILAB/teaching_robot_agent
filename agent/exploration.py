@@ -220,6 +220,20 @@ class ExplorationController:
                         "turn_relative",
                         {"angle_rad": heading, "speed_rad_s": config.turn_speed_rad_s},
                     )
+                    if ok:
+                        # 侧向扇区的空隙可能大于转正后车身通道的实测值，按转正后读数重算
+                        after_turn = await self._fresh_clearance()
+                        if after_turn is None:
+                            reason = "我看不清前面，先停下了"
+                            break
+                        plan = self._step_for(after_turn.ahead_m)
+                        if plan is None:
+                            blocked += 1
+                            if blocked >= 2 * config.max_failures:
+                                reason = "前面总有东西挡着，先停下了"
+                                break
+                            continue
+                        step, speed = min(step, plan[0]), plan[1]
                 if ok:
                     ok = await self._act(
                         "move_relative",
@@ -271,13 +285,10 @@ class ExplorationController:
         config = self._config
         best: tuple[float, tuple[float, float, float]] | None = None
         for angle, clear in clearance.headings:
-            speed = config.speed_m_s
-            step = min(config.step_m, clear - self._margin(speed))
-            if step < config.min_step_m:
-                speed = config.slow_speed_m_s
-                step = min(config.step_m, clear - self._margin(speed))
-            if step < config.min_step_m:
+            plan = self._step_for(clear)
+            if plan is None:
                 continue
+            step, speed = plan
             direction = pose.yaw + angle
             end_x = pose.x + step * math.cos(direction)
             end_y = pose.y + step * math.sin(direction)
@@ -288,6 +299,15 @@ class ExplorationController:
             if best is None or score > best[0]:
                 best = (score, (angle, step, speed))
         return None if best is None else best[1]
+
+    def _step_for(self, clear: float) -> tuple[float, float] | None:
+        """按空隙给出 (前进距离, 车速)：先试快档，不足最小步长改慢档，仍不足返回 None."""
+        config = self._config
+        for speed in (config.speed_m_s, config.slow_speed_m_s):
+            step = min(config.step_m, clear - self._margin(speed))
+            if step >= config.min_step_m:
+                return step, speed
+        return None
 
     def _escape_angle(self, pose: Pose2D, start: Pose2D) -> float:
         """无路时原地转 90°：靠近边界时转向起点一侧，否则向左."""
