@@ -73,9 +73,25 @@ MOTION_CLAIM_CORRECTION = (
     "宿主：本轮还没有提交任何转向或移动动作，不能说已经或正在转、走。"
     "孩子要求转向或移动就调用 submit_action；做不到就如实说明。"
 )
+# 保证物品或现场安全；“不安全”“注意安全”不算
+_SAFETY_CLAIM = re.compile(
+    r"(都是|都很|都挺|很|挺|非常|十分|完全|绝对|肯定)安全"
+    + r"|(?<![有])没(有|什么)?(什么)?危险|(?<![有])不(会)?(有)?危险|可以放心"
+)
+SAFETY_CLAIM_CORRECTION = (
+    "宿主：图片和资料不能证明东西安全，不要说“很安全”“没有危险”“可以放心”。"
+    "改为说明看到了什么，有资料就依据资料提醒，没有就建议请大人确认。"
+)
+# 移动后声称接近或到达物体；里程计只知道走了多远，不知道离物体多远
+_APPROACH_CLAIM = re.compile(r"(更|越来越)近|靠近了|近了|(走|来|到)到了|已经到|到达")
+APPROACH_CLAIM_CORRECTION = (
+    "宿主：机器人只知道自己转了或走了多少，不知道离物体是否更近、是否到达。"
+    "只说做了什么动作和现在看到了什么。"
+)
 EXPLORATION_CLAIM_CORRECTION = (
     "宿主：本轮还没有提交动作，也没有调用 start_exploration，不能说已经出发、正在走或开始探索。"
-    "孩子要求转向或移动就调用 submit_action，要求探索就调用 start_exploration；做不到就如实说明。"
+    "孩子只想知道周围有什么就调用 observe_scene；要求转向或移动就调用 submit_action，"
+    "明确要求出去探索才调用 start_exploration；做不到就如实说明。"
 )
 
 
@@ -294,23 +310,20 @@ class EmbodiedAgent:
             if not response.tool_calls:
                 if not response.text.strip():
                     raise RuntimeError("Model returned an empty answer")
-                # 声称在动却没有提交运动动作：纠正一次，让模型提交动作或如实回答
-                if (
-                    user_input is not None
-                    and not self._moved_in_turn
-                    and not corrected
-                    and _MOTION_CLAIM.search(response.text)
-                ):
+                # 回答违反硬规则（只答应不执行、保证安全、声称接近物体）：纠正一次后接受
+                correction = (
+                    None
+                    if user_input is None or corrected
+                    else self._correction(
+                        response.text, "start_exploration" in registry
+                    )
+                )
+                if correction is not None:
                     logger.info(
-                        "[EmbodiedAgent._decide] 回答声称移动但未提交动作，要求重答 task_id=%s",
+                        "[EmbodiedAgent._decide] 回答违反规则，要求重答 task_id=%s",
                         self._task_id,
                     )
                     corrected = True
-                    correction = (
-                        EXPLORATION_CLAIM_CORRECTION
-                        if "start_exploration" in registry
-                        else MOTION_CLAIM_CORRECTION
-                    )
                     history.extend([response, HumanMessage(content=correction)])
                     continue
                 # 只记录基于真实用户输入的最终回答；动作、异常和取消均不记录
@@ -386,6 +399,19 @@ class EmbodiedAgent:
                     content = str(result)
                 history.append(ToolMessage(content, tool_call_id=call["id"]))
         raise RuntimeError("Agent tool round limit reached")
+
+    def _correction(self, text: str, exploration: bool) -> str | None:
+        """按回答内容给出纠正要求；多条违规合并为一条，没有违规返回 None."""
+        parts: list[str] = []
+        if not self._moved_in_turn and _MOTION_CLAIM.search(text):
+            parts.append(
+                EXPLORATION_CLAIM_CORRECTION if exploration else MOTION_CLAIM_CORRECTION
+            )
+        if self._moved_in_turn and _APPROACH_CLAIM.search(text):
+            parts.append(APPROACH_CLAIM_CORRECTION)
+        if _SAFETY_CLAIM.search(text):
+            parts.append(SAFETY_CLAIM_CORRECTION)
+        return "\n".join(parts) if parts else None
 
     async def _respond(
         self,

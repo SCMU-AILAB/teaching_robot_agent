@@ -8,7 +8,11 @@ from unittest.mock import patch
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 
-from agent.embodied_agent import MOTION_CLAIM_CORRECTION
+from agent.embodied_agent import (
+    APPROACH_CLAIM_CORRECTION,
+    MOTION_CLAIM_CORRECTION,
+    SAFETY_CLAIM_CORRECTION,
+)
 from app.robot_application import RobotApplication
 from perception.simulated import SimulatedPerception
 from robot.simulated import SimulatedAdapter
@@ -85,6 +89,38 @@ class MotionClaimTests(unittest.IsolatedAsyncioTestCase):
             [AIMessage("椅子是给人坐的，站上去容易摔倒。")], "椅子能站吗"
         )
         self.assertEqual(reply, "椅子是给人坐的，站上去容易摔倒。")
+        self.assertEqual(len(model.seen), 1)
+
+    async def test_safety_guarantee_is_corrected(self) -> None:
+        """保证东西安全时纠正一次，采用重答."""
+        model, _, reply = await self._ask(
+            [AIMessage("这些都是安全的家具。"), AIMessage("我看到椅子和桌子。")],
+            "这些东西能玩吗",
+        )
+        self.assertEqual(reply, "我看到椅子和桌子。")
+        self.assertEqual(model.seen[1][-1].text, SAFETY_CLAIM_CORRECTION)
+
+    async def test_safety_warning_is_not_corrected(self) -> None:
+        """“不安全”“有危险”是提醒，不纠正."""
+        model, _, reply = await self._ask(
+            [AIMessage("插座不安全，刀也有危险，要注意安全。")], "插座能碰吗"
+        )
+        self.assertEqual(reply, "插座不安全，刀也有危险，要注意安全。")
+        self.assertEqual(len(model.seen), 1)
+
+    async def test_approach_claim_after_motion_is_corrected(self) -> None:
+        """移动后声称离物体更近时纠正；没移动时同样说法不按此纠正."""
+        model, _, reply = await self._ask(
+            [
+                turn_call(0.3),
+                AIMessage("我转好了，现在离桌子更近啦。"),
+                AIMessage("我向左转了一点。"),
+            ],
+            "向左转一点",
+        )
+        self.assertEqual(reply, "我向左转了一点。")
+        self.assertEqual(model.seen[-1][-1].text, APPROACH_CLAIM_CORRECTION)
+        model, _, _ = await self._ask([AIMessage("你离桌子更近啦。")], "我离桌子近吗")
         self.assertEqual(len(model.seen), 1)
 
 
