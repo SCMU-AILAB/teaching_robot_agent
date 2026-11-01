@@ -2,10 +2,13 @@
 """深度空隙计算与安装标定：用合成深度图验证去地面、通道判断与俯仰换算."""
 
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
+from perception.depth.camera import find_depth_device, realsense_color_index
 from perception.depth.geometry import (
     HEADINGS_RAD,
     DepthGeometry,
@@ -115,6 +118,33 @@ class MountEstimateTests(unittest.TestCase):
         estimate = estimate_mount(depth, geo)
         self.assertAlmostEqual(estimate.camera_height_m, 0.22, delta=0.01)
         self.assertTrue(np.isfinite(estimate.blind_distance_m))
+
+
+class DeviceLookupTests(unittest.TestCase):
+    """按名称与注册顺序找 RealSense 的深度与彩色节点，编号跳号也能找到."""
+
+    def test_nodes_after_replug(self) -> None:
+        """重插后编号为 0–3、5、6：深度取 video0，彩色取第 5 个即 video5."""
+        with tempfile.TemporaryDirectory() as root:
+            names = {
+                7: "Earpods cam",
+                **{n: "Intel(R) RealSense(TM) Depth Ca" for n in (0, 1, 2, 3, 5, 6)},
+            }
+            for number, name in names.items():
+                node = Path(root) / f"video{number}"
+                node.mkdir()
+                _ = (node / "name").write_text(name, encoding="utf-8")
+            self.assertEqual(find_depth_device(Path(root)), "/dev/video0")
+            self.assertEqual(realsense_color_index(Path(root)), 5)
+
+    def test_incomplete_device_is_rejected(self) -> None:
+        """RealSense 节点不足 6 个时报错."""
+        with tempfile.TemporaryDirectory() as root:
+            node = Path(root) / "video0"
+            node.mkdir()
+            _ = (node / "name").write_text("Intel(R) RealSense(TM)", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                _ = realsense_color_index(Path(root))
 
 
 if __name__ == "__main__":

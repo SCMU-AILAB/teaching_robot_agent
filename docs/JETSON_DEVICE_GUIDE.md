@@ -191,6 +191,22 @@ journalctl --user -u teaching-robot -f
 固件停车时电机滑行、不制动：落地 10 cm/s 停车后还会滑行约 3.3 cm。`CarAdapter` 按遥测测得的速度与
 `CAR_COAST_COUNTS_PER_S2`（默认 2700）提前停车；换车或换地面后若到位误差明显，先重测该值。
 
+### 5.0 一键启动（推荐，不设开机自启）
+
+```bash
+./deploy/jetson/robot.sh start    # 检查设备 → 设扬声器/麦克风与音量 → Jetson 直连 3080 的隧道 → 启动后端
+./deploy/jetson/robot.sh status   # 隧道、后端、3080 模型服务与设备
+./deploy/jetson/robot.sh logs     # 跟踪后端日志
+./deploy/jetson/robot.sh stop     # 停后端（先停车）与隧道
+```
+
+前提：Jetson 能用密钥登录 `MODEL_SERVER_SSH`（`ssh-copy-id`），3080 上已 `model_server.sh start`。隧道与后端以
+临时用户服务运行，断线自动重连，Jetson 重启后需重新执行 `start`。有设备未接好时拒绝启动，`start-anyway` 可跳过检查。
+
+RealSense 必须接在高速（480M 以上）USB 口：2026-11-01 经扩展坞以 12M 全速连接时反复断开重连（内核报
+“not running at top speed”、-71/-75），视频节点编号不停变化，彩色画面读不出。`PERCEPTION_DEVICE=realsense`
+按名称自动找彩色节点，不受编号变化影响。
+
 ### 5.4 深度避障与自由探索（需要人在车旁）
 
 RealSense 深度节点经 V4L2 直接读取（`linuxpy`，不需要 librealsense 或 sudo）。设计见

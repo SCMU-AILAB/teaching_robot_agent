@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from domain.validation import nonempty_string
 from perception.camera import CameraFactory, FileCamera, UsbCamera
+from perception.depth.camera import realsense_color_index
 from perception.interfaces import CameraSource, PerceptionService
 from perception.perception_service import LivePerception
 from perception.scene_store import SceneStore
@@ -57,10 +58,16 @@ def build_live_perception(evidence: EvidenceStore) -> PerceptionAdapters:
         factory.register("file", lambda: FileCamera(evidence, _CAMERA_ID, path))
     else:
         raw_index = os.environ.get("PERCEPTION_DEVICE", "0")
-        try:
-            index = int(raw_index)
-        except ValueError as error:
-            raise ValueError("PERCEPTION_DEVICE must be an integer") from error
+        if raw_index == "realsense":
+            # RealSense 插拔后编号会变，按名称与注册顺序查找彩色节点
+            index = realsense_color_index()
+        else:
+            try:
+                index = int(raw_index)
+            except ValueError as error:
+                raise ValueError(
+                    "PERCEPTION_DEVICE must be an integer or realsense"
+                ) from error
         factory.register("usb", lambda: UsbCamera(evidence, _CAMERA_ID, index))
     camera = factory.create(name)
 

@@ -88,25 +88,44 @@ def _open_device(path: str) -> _Device:
     return device
 
 
-def find_depth_device(root: Path | None = None) -> str:
-    """找 RealSense 的深度节点：名称含 RealSense 的节点中编号最小的一个.
+def realsense_nodes(root: Path | None = None) -> list[int]:
+    """按编号升序列出名称含 RealSense 的视频节点编号.
 
-    D435i 依次暴露深度、深度元数据、红外、红外元数据、彩色、彩色元数据，深度在最前。
-
-    Raises:
-        RuntimeError: 没有 RealSense 视频节点。
+    D435i 依次注册深度、深度元数据、红外、红外元数据、彩色、彩色元数据；重新插拔后编号可能整体变化或跳号。
     """
-    nodes: list[tuple[int, str]] = []
+    nodes: list[int] = []
     for entry in (root or _SYSFS_VIDEO).glob("video*"):
         try:
             name = (entry / "name").read_text(encoding="utf-8")
         except OSError:
             continue
         if "RealSense" in name and entry.name[5:].isdigit():
-            nodes.append((int(entry.name[5:]), f"/dev/{entry.name}"))
+            nodes.append(int(entry.name[5:]))
+    return sorted(nodes)
+
+
+def find_depth_device(root: Path | None = None) -> str:
+    """找 RealSense 的深度节点：RealSense 节点中编号最小的一个.
+
+    Raises:
+        RuntimeError: 没有 RealSense 视频节点。
+    """
+    nodes = realsense_nodes(root)
     if not nodes:
         raise RuntimeError("No RealSense video node found")
-    return min(nodes)[1]
+    return f"/dev/video{nodes[0]}"
+
+
+def realsense_color_index(root: Path | None = None) -> int:
+    """找 RealSense 的彩色节点编号：RealSense 节点中的第 5 个.
+
+    Raises:
+        RuntimeError: RealSense 节点不足 6 个（设备未完整识别）。
+    """
+    nodes = realsense_nodes(root)
+    if len(nodes) < 6:
+        raise RuntimeError("RealSense color node not found")
+    return nodes[4]
 
 
 def frame_to_depth(raw: bytes) -> NDArray[np.uint16]:
