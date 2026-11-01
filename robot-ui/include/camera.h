@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "api_client.h"
+#include "state.h"
 
 typedef struct CameraView {
     Texture2D live;
@@ -12,7 +13,7 @@ typedef struct CameraView {
     double live_updated_at;
     double evidence_updated_at;
     char error[256];
-    char evidence_id[64];
+    char evidence_id[UI_ID_CAP];
 } CameraView;
 
 void camera_init(CameraView *camera);

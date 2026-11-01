@@ -28,6 +28,8 @@ struct EventClient {
     size_t count;
     bool stopping;
     bool running;
+    /* 收到 stream.reset 后线程退出，等界面读完快照再以新游标启动 */
+    bool finished;
 };
 
 typedef struct SseParser {
@@ -118,6 +120,9 @@ static void dispatch_event(SseParser *parser) {
         update_cursor(parser->client, parser->id);
     }
     if (strcmp(parser->event, "stream.reset") == 0) {
+        pthread_mutex_lock(&parser->client->mutex);
+        parser->client->finished = true;
+        pthread_mutex_unlock(&parser->client->mutex);
         push_notification(parser->client, EVENT_RESET, json, "事件流需要重新同步");
         parser->abort_stream = true;
     } else {
@@ -263,10 +268,21 @@ static void run_stream(EventClient *client) {
     curl_easy_cleanup(curl);
 }
 
+static bool is_finished(EventClient *client) {
+    bool finished;
+    pthread_mutex_lock(&client->mutex);
+    finished = client->finished;
+    pthread_mutex_unlock(&client->mutex);
+    return finished;
+}
+
 static void *event_main(void *argument) {
     EventClient *client = argument;
     while (!is_stopping(client)) {
         run_stream(client);
+        if (is_finished(client)) {
+            break;
+        }
         if (!is_stopping(client)) {
             struct timespec delay;
             push_notification(client, EVENT_STATUS, NULL, "事件流已断开，正在重连");
@@ -307,11 +323,24 @@ bool event_client_start(EventClient *client, int64_t task_id, const char *cursor
     client->task_id = task_id;
     text_copy(client->cursor, sizeof(client->cursor), cursor);
     client->stopping = false;
+    client->finished = false;
     if (pthread_create(&client->thread, NULL, event_main, client) != 0) {
         return false;
     }
     client->running = true;
     return true;
+}
+
+bool event_client_streaming(EventClient *client, int64_t task_id) {
+    bool streaming;
+    if (client == NULL) {
+        return false;
+    }
+    pthread_mutex_lock(&client->mutex);
+    streaming = client->running && !client->finished && !client->stopping &&
+                client->task_id == task_id;
+    pthread_mutex_unlock(&client->mutex);
+    return streaming;
 }
 
 void event_client_update_cursor(EventClient *client, const char *cursor) {

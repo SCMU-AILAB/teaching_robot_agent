@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
     bool explicit_config = false;
     ScreenId initial_screen = SCREEN_DASHBOARD;
     bool screen_given = false;
+    bool backend_given = false;
     int index;
     config_defaults(&app.config);
     for (index = 1; index < argc; index++) {
@@ -30,6 +31,7 @@ int main(int argc, char **argv) {
             explicit_config = true;
         } else if (strcmp(argv[index], "--backend") == 0 && index + 1 < argc) {
             text_copy(app.config.base_url, sizeof(app.config.base_url), argv[++index]);
+            backend_given = true;
         } else if (strcmp(argv[index], "--fullscreen") == 0) {
             app.config.fullscreen = true;
         } else if (strcmp(argv[index], "--screenshot") == 0 && index + 1 < argc) {
@@ -59,7 +61,7 @@ int main(int argc, char **argv) {
         AppConfig overrides = app.config;
         if (config_load(config_path, &from_file, error, sizeof(error))) {
             app.config = from_file;
-            if (strcmp(overrides.base_url, "http://127.0.0.1:8000") != 0) {
+            if (backend_given) {
                 text_copy(app.config.base_url, sizeof(app.config.base_url), overrides.base_url);
             }
             if (overrides.fullscreen) {

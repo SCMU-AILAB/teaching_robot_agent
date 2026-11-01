@@ -159,6 +159,27 @@ bool state_apply_system(UiState *state, const cJSON *data) {
     return changed;
 }
 
+/* 追加一条消息；满额时淘汰最旧的一条，保证最新记录总能显示。 */
+static MessageRecord *append_message(UiState *state) {
+    if (state->message_count == UI_MAX_MESSAGES) {
+        memmove(&state->messages[0], &state->messages[1],
+                sizeof(state->messages[0]) * (UI_MAX_MESSAGES - 1));
+        state->message_count--;
+        state->truncated_messages = true;
+    }
+    return &state->messages[state->message_count++];
+}
+
+static ActionRecord *append_action(UiState *state) {
+    if (state->action_count == UI_MAX_ACTIONS) {
+        memmove(&state->actions[0], &state->actions[1],
+                sizeof(state->actions[0]) * (UI_MAX_ACTIONS - 1));
+        state->action_count--;
+        state->truncated_actions = true;
+    }
+    return &state->actions[state->action_count++];
+}
+
 bool state_apply_snapshot(UiState *state, const cJSON *data) {
     const cJSON *messages;
     const cJSON *actions;
@@ -170,14 +191,14 @@ bool state_apply_snapshot(UiState *state, const cJSON *data) {
     apply_task(&state->task, cJSON_GetObjectItemCaseSensitive(data, "task"));
     messages = cJSON_GetObjectItemCaseSensitive(data, "messages");
     cJSON_ArrayForEach(item, messages) {
-        if (state->message_count < UI_MAX_MESSAGES && cJSON_IsObject(item)) {
-            apply_message(&state->messages[state->message_count++], item);
+        if (cJSON_IsObject(item)) {
+            apply_message(append_message(state), item);
         }
     }
     actions = cJSON_GetObjectItemCaseSensitive(data, "actions");
     cJSON_ArrayForEach(item, actions) {
-        if (state->action_count < UI_MAX_ACTIONS && cJSON_IsObject(item)) {
-            apply_action(&state->actions[state->action_count++], item);
+        if (cJSON_IsObject(item)) {
+            apply_action(append_action(state), item);
         }
     }
     item = cJSON_GetObjectItemCaseSensitive(data, "latest_observation");
@@ -191,8 +212,8 @@ bool state_apply_snapshot(UiState *state, const cJSON *data) {
         state->has_recording = true;
     }
     truncated = cJSON_GetObjectItemCaseSensitive(data, "truncated");
-    state->truncated_messages = json_boolean(truncated, "messages");
-    state->truncated_actions = json_boolean(truncated, "actions");
+    state->truncated_messages = state->truncated_messages || json_boolean(truncated, "messages");
+    state->truncated_actions = state->truncated_actions || json_boolean(truncated, "actions");
     copy_json_string(state->event_cursor, sizeof(state->event_cursor), data, "event_cursor");
     {
         const char *colon = strrchr(state->event_cursor, ':');
@@ -211,9 +232,7 @@ static void upsert_message(UiState *state, const cJSON *payload) {
             return;
         }
     }
-    if (state->message_count < UI_MAX_MESSAGES) {
-        apply_message(&state->messages[state->message_count++], payload);
-    }
+    apply_message(append_message(state), payload);
 }
 
 static void upsert_action(UiState *state, const cJSON *payload) {
@@ -225,9 +244,7 @@ static void upsert_action(UiState *state, const cJSON *payload) {
             return;
         }
     }
-    if (state->action_count < UI_MAX_ACTIONS) {
-        apply_action(&state->actions[state->action_count++], payload);
-    }
+    apply_action(append_action(state), payload);
 }
 
 void state_add_event(UiState *state, const char *kind, const char *text, double occurred_at) {
@@ -326,18 +343,22 @@ SpeechPhase state_speech_phase(const UiState *state) {
     if (state_has_pending_message(state)) {
         return SPEECH_PROCESSING;
     }
-    if (state->has_recording && strcmp(state->recording.status, "failed") == 0) {
-        return SPEECH_FAILED;
-    }
-    for (index = state->message_count; index > 0; index--) {
-        if (state->messages[index - 1].error[0] != '\0') {
+    /* 只看最近一轮：之前失败过、后来又正常对话的，不再显示失败 */
+    {
+        const MessageRecord *latest =
+            state->message_count > 0 ? &state->messages[state->message_count - 1] : NULL;
+        if (state->has_recording && strcmp(state->recording.status, "failed") == 0 &&
+            (latest == NULL || state->recording.ended_at >= latest->created_at)) {
+            return SPEECH_FAILED;
+        }
+        if (latest != NULL && latest->error[0] != '\0') {
             return SPEECH_FAILED;
         }
     }
     for (index = state->action_count; index > 0; index--) {
-        if (strcmp(state->actions[index - 1].skill_name, "speak") == 0 &&
-            strcmp(state->actions[index - 1].status, "failed") == 0) {
-            return SPEECH_FAILED;
+        if (strcmp(state->actions[index - 1].skill_name, "speak") == 0) {
+            return strcmp(state->actions[index - 1].status, "failed") == 0 ? SPEECH_FAILED
+                                                                            : SPEECH_IDLE;
         }
     }
     return SPEECH_IDLE;

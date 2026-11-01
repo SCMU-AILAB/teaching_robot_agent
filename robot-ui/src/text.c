@@ -62,10 +62,11 @@ bool utf8_backspace(char *buffer) {
     if (length == 0) {
         return false;
     }
+    /* 退到最后一个字符的首字节再截断，删中文时不留下半个字 */
     do {
         length--;
-        buffer[length] = '\0';
     } while (length > 0 && (((unsigned char)buffer[length] & 0xC0U) == 0x80U));
+    buffer[length] = '\0';
     return true;
 }
 

@@ -128,7 +128,9 @@ void app_toggle_recording(App *app) {
     cJSON *body;
     char request_id[128];
     char path[192];
-    if (app->pending_recording || !state_task_active(&app->state)) {
+    if (app->pending_recording || !state_task_active(&app->state) ||
+        (app->state.has_recording &&
+         strcmp(app->state.recording.status, "transcribing") == 0)) {
         return;
     }
     if (app->state.has_recording &&
@@ -228,6 +230,12 @@ static void handle_snapshot(App *app, const ApiResponse *response) {
         }
         app->message_follow = true;
     } else {
+        if (response->api_code == 40401 && response->task_id == app->state.task.task_id) {
+            /* 任务已被后端清理：丢弃本地任务，事件流已在 stream.reset 后退出 */
+            event_client_stop(app->events);
+            state_clear_task(&app->state);
+            app->state.system.active_task_id = 0;
+        }
         app_notice(app, response->error[0] != '\0' ? response->error : "任务快照读取失败");
     }
     cJSON_Delete(root);
@@ -261,7 +269,9 @@ static void handle_command(App *app, const ApiResponse *response) {
         app->input_text[0] = '\0';
         app->message_follow = true;
     }
-    app_request_snapshot(app);
+    if (!event_client_streaming(app->events, app->state.task.task_id)) {
+        app_request_snapshot(app);
+    }
     cJSON_Delete(root);
 }
 
@@ -275,6 +285,11 @@ static void process_responses(App *app) {
         } else if (response->kind == API_CAMERA || response->kind == API_EVIDENCE) {
             if (response->kind == API_EVIDENCE) {
                 app->evidence_pending = false;
+                if (!response_ok(response) && response->api_code != 40401) {
+                    /* 临时失败：清掉已登记的编号，3 秒后重试；已清理的证据不再重试 */
+                    app->camera.evidence_id[0] = '\0';
+                    app->evidence_retry_at = GetTime() + 3.0;
+                }
             }
             if (response_ok(response)) {
                 (void)camera_accept(&app->camera, response, GetTime());
@@ -293,6 +308,8 @@ static void process_events(App *app) {
     EventNotification notification;
     while (event_client_poll(app->events, &notification)) {
         if (notification.type == EVENT_RESET) {
+            /* 事件流线程已退出；快照这次读不到时，系统轮询会按未加载状态继续重试 */
+            app->state.snapshot_loaded = false;
             app_request_snapshot(app);
         } else if (notification.type == EVENT_RESOURCE && notification.json != NULL) {
             cJSON *root = cJSON_Parse(notification.json);
@@ -327,7 +344,8 @@ static void schedule_requests(App *app) {
     }
     if (app->state.has_observation && app->state.observation.frame_evidence_id[0] != '\0' &&
         strcmp(app->camera.evidence_id, app->state.observation.frame_evidence_id) != 0 &&
-        !app->evidence_pending && !api_client_busy(app->api, API_EVIDENCE)) {
+        !app->evidence_pending && now >= app->evidence_retry_at &&
+        !api_client_busy(app->api, API_EVIDENCE)) {
         (void)snprintf(path, sizeof(path), "/api/v1/evidence/%s",
                        app->state.observation.frame_evidence_id);
         app->evidence_pending = api_client_submit(app->api, API_EVIDENCE, API_GET, path,
@@ -356,16 +374,27 @@ void app_set_standby(App *app, bool standby) {
     }
 }
 
-/* 用户是否在本帧操作过屏幕：点击、触摸、滚轮或按键。 */
+/* 用户是否在本帧操作过屏幕：点击、触摸、滚轮或按键。
+ * 不能调用 GetKeyPressed/GetCharPressed：它们会从队列取走按键，输入框就收不到字。 */
 static bool user_touched(void) {
-    return IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT) ||
-           IsMouseButtonDown(MOUSE_BUTTON_LEFT) || GetMouseWheelMove() != 0.0f ||
-           GetKeyPressed() != 0 || GetCharPressed() != 0;
+    int key;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT) ||
+        IsMouseButtonDown(MOUSE_BUTTON_LEFT) || GetMouseWheelMove() != 0.0f) {
+        return true;
+    }
+    for (key = KEY_SPACE; key <= KEY_KB_MENU; key++) {
+        if (IsKeyDown(key)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* 语音链路在工作、设置打开或输入框有内容时，不应进入待机。 */
 static bool keeps_awake(const App *app) {
-    return state_speech_phase(&app->state) != SPEECH_IDLE || app->settings_open ||
+    SpeechPhase phase = state_speech_phase(&app->state);
+    /* 失败只是提示，不是进行中的工作，不应让屏幕一直亮着 */
+    return (phase != SPEECH_IDLE && phase != SPEECH_FAILED) || app->settings_open ||
            app->pending_create || app->pending_message || app->pending_recording ||
            (app->input_focused && app->input_text[0] != '\0');
 }

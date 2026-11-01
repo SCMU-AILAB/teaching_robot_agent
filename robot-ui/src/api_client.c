@@ -33,24 +33,39 @@ typedef struct Buffer {
     bool overflow;
 } Buffer;
 
+/* 摄像头与证据图片走单独通道：它们可能长时间占用连接，不能挡住停止任务等命令。 */
+#define API_LANE_CONTROL 0
+#define API_LANE_MEDIA 1
+#define API_LANE_COUNT 2
+
+typedef struct ApiLane {
+    struct ApiClient *client;
+    pthread_t thread;
+    bool started;
+    ApiRequest *request_head;
+    ApiRequest *request_tail;
+    size_t request_count;
+    ApiKind active_kind;
+    bool active_valid;
+} ApiLane;
+
 struct ApiClient {
     char base_url[256];
     double timeout_s;
-    pthread_t thread;
     pthread_mutex_t mutex;
     pthread_cond_t condition;
-    ApiRequest *request_head;
-    ApiRequest *request_tail;
+    ApiLane lanes[API_LANE_COUNT];
     ResponseNode *response_head;
     ResponseNode *response_tail;
-    size_t request_count;
     size_t response_count;
     uint64_t next_id;
-    ApiKind active_kind;
-    bool active_valid;
     bool started;
     bool stopping;
 };
+
+static int lane_for(ApiKind kind) {
+    return kind == API_CAMERA || kind == API_EVIDENCE ? API_LANE_MEDIA : API_LANE_CONTROL;
+}
 
 static void free_request(ApiRequest *request) {
     if (request != NULL) {
@@ -228,31 +243,32 @@ static void push_response(ApiClient *client, ApiResponse *response) {
 }
 
 static void *worker_main(void *argument) {
-    ApiClient *client = argument;
+    ApiLane *lane = argument;
+    ApiClient *client = lane->client;
     for (;;) {
         ApiRequest *request;
         ApiResponse *response;
         pthread_mutex_lock(&client->mutex);
-        while (client->request_head == NULL && !client->stopping) {
+        while (lane->request_head == NULL && !client->stopping) {
             pthread_cond_wait(&client->condition, &client->mutex);
         }
         if (client->stopping) {
             pthread_mutex_unlock(&client->mutex);
             break;
         }
-        request = client->request_head;
-        client->request_head = request->next;
-        if (client->request_head == NULL) {
-            client->request_tail = NULL;
+        request = lane->request_head;
+        lane->request_head = request->next;
+        if (lane->request_head == NULL) {
+            lane->request_tail = NULL;
         }
-        client->request_count--;
-        client->active_kind = request->kind;
-        client->active_valid = true;
+        lane->request_count--;
+        lane->active_kind = request->kind;
+        lane->active_valid = true;
         pthread_mutex_unlock(&client->mutex);
         response = perform_request(client, request);
         push_response(client, response);
         pthread_mutex_lock(&client->mutex);
-        client->active_valid = false;
+        lane->active_valid = false;
         pthread_mutex_unlock(&client->mutex);
         free_request(request);
     }
@@ -267,6 +283,9 @@ ApiClient *api_client_create(const char *base_url, double timeout_s) {
     text_copy(client->base_url, sizeof(client->base_url), base_url);
     client->timeout_s = timeout_s;
     client->next_id = 1;
+    for (int index = 0; index < API_LANE_COUNT; index++) {
+        client->lanes[index].client = client;
+    }
     if (pthread_mutex_init(&client->mutex, NULL) != 0) {
         free(client);
         return NULL;
@@ -283,8 +302,13 @@ bool api_client_start(ApiClient *client) {
     if (client == NULL || client->started) {
         return false;
     }
-    if (pthread_create(&client->thread, NULL, worker_main, client) != 0) {
-        return false;
+    for (int index = 0; index < API_LANE_COUNT; index++) {
+        ApiLane *lane = &client->lanes[index];
+        if (pthread_create(&lane->thread, NULL, worker_main, lane) != 0) {
+            api_client_stop(client);
+            return false;
+        }
+        lane->started = true;
     }
     client->started = true;
     return true;
@@ -294,6 +318,7 @@ bool api_client_submit(ApiClient *client, ApiKind kind, ApiMethod method,
                        const char *path, const char *body, int64_t task_id,
                        uint64_t *request_id) {
     ApiRequest *request;
+    ApiLane *lane;
     bool accepted = false;
     if (client == NULL || !client->started || path == NULL || strlen(path) >= 256) {
         return false;
@@ -314,20 +339,22 @@ bool api_client_submit(ApiClient *client, ApiKind kind, ApiMethod method,
         }
     }
     pthread_mutex_lock(&client->mutex);
-    if (!client->stopping && client->request_count < API_QUEUE_LIMIT) {
+    lane = &client->lanes[lane_for(kind)];
+    if (!client->stopping && lane->request_count < API_QUEUE_LIMIT) {
         request->request_id = client->next_id++;
-        if (client->request_tail != NULL) {
-            client->request_tail->next = request;
+        if (lane->request_tail != NULL) {
+            lane->request_tail->next = request;
         } else {
-            client->request_head = request;
+            lane->request_head = request;
         }
-        client->request_tail = request;
-        client->request_count++;
+        lane->request_tail = request;
+        lane->request_count++;
         if (request_id != NULL) {
             *request_id = request->request_id;
         }
         accepted = true;
-        pthread_cond_signal(&client->condition);
+        /* 两个通道共用条件变量，广播才能确保唤醒对应通道的线程 */
+        pthread_cond_broadcast(&client->condition);
     }
     pthread_mutex_unlock(&client->mutex);
     if (!accepted) {
@@ -362,12 +389,14 @@ bool api_client_poll(ApiClient *client, ApiResponse **response) {
 bool api_client_busy(const ApiClient *client, ApiKind kind) {
     bool busy = false;
     ApiRequest *request;
+    const ApiLane *lane;
     if (client == NULL) {
         return false;
     }
+    lane = &client->lanes[lane_for(kind)];
     pthread_mutex_lock((pthread_mutex_t *)&client->mutex);
-    busy = client->active_valid && client->active_kind == kind;
-    for (request = client->request_head; !busy && request != NULL; request = request->next) {
+    busy = lane->active_valid && lane->active_kind == kind;
+    for (request = lane->request_head; !busy && request != NULL; request = request->next) {
         busy = request->kind == kind;
     }
     pthread_mutex_unlock((pthread_mutex_t *)&client->mutex);
@@ -375,28 +404,35 @@ bool api_client_busy(const ApiClient *client, ApiKind kind) {
 }
 
 void api_client_stop(ApiClient *client) {
-    ApiRequest *request;
+    ApiRequest *requests[API_LANE_COUNT];
     ResponseNode *node;
     if (client == NULL) {
         return;
     }
     pthread_mutex_lock(&client->mutex);
     client->stopping = true;
-    request = client->request_head;
-    client->request_head = NULL;
-    client->request_tail = NULL;
-    client->request_count = 0;
+    for (int index = 0; index < API_LANE_COUNT; index++) {
+        ApiLane *lane = &client->lanes[index];
+        requests[index] = lane->request_head;
+        lane->request_head = NULL;
+        lane->request_tail = NULL;
+        lane->request_count = 0;
+    }
     pthread_cond_broadcast(&client->condition);
     pthread_mutex_unlock(&client->mutex);
-    while (request != NULL) {
-        ApiRequest *next = request->next;
-        free_request(request);
-        request = next;
+    for (int index = 0; index < API_LANE_COUNT; index++) {
+        ApiRequest *request = requests[index];
+        while (request != NULL) {
+            ApiRequest *next = request->next;
+            free_request(request);
+            request = next;
+        }
+        if (client->lanes[index].started) {
+            pthread_join(client->lanes[index].thread, NULL);
+            client->lanes[index].started = false;
+        }
     }
-    if (client->started) {
-        pthread_join(client->thread, NULL);
-        client->started = false;
-    }
+    client->started = false;
     pthread_mutex_lock(&client->mutex);
     node = client->response_head;
     client->response_head = NULL;

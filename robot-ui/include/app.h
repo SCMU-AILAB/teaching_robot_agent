@@ -31,6 +31,7 @@ typedef struct App {
     bool pending_recording;
     bool snapshot_pending;
     bool evidence_pending;
+    double evidence_retry_at;
     double last_system_request;
     double last_camera_request;
     double last_instance_check;

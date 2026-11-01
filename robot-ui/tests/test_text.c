@@ -16,6 +16,12 @@ int main(void) {
     assert(utf8_backspace(text));
     assert(strcmp(text, "A") == 0);
     assert(!utf8_append(text, 2, 0x4E2D));
+    text_copy(text, sizeof(text), "你好");
+    assert(utf8_backspace(text));
+    assert(strcmp(text, "你") == 0);
+    assert(utf8_backspace(text));
+    assert(text[0] == '\0');
+    assert(!utf8_backspace(text));
     format_time(0, time_text);
     assert(strcmp(time_text, "--") == 0);
     format_duration(65.0, time_text);

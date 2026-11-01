@@ -22,6 +22,8 @@ typedef struct EventClient EventClient;
 
 EventClient *event_client_create(const char *base_url);
 bool event_client_start(EventClient *client, int64_t task_id, const char *cursor);
+/* 事件流线程正在推送该任务的事件（未停止、未因 stream.reset 退出）。 */
+bool event_client_streaming(EventClient *client, int64_t task_id);
 void event_client_update_cursor(EventClient *client, const char *cursor);
 void event_client_stop(EventClient *client);
 void event_client_destroy(EventClient *client);

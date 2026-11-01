@@ -10,6 +10,50 @@ static cJSON *parse(const char *text) {
     return root;
 }
 
+static void apply_message_event(UiState *state, uint64_t sequence, const char *id,
+                                const char *role, const char *status, const char *error,
+                                double created_at) {
+    char json[1024];
+    cJSON *event;
+    char error_json[128];
+    if (error != NULL) {
+        (void)snprintf(error_json, sizeof(error_json), "{\"code\":50002,\"message\":\"%s\"}",
+                       error);
+    } else {
+        (void)snprintf(error_json, sizeof(error_json), "null");
+    }
+    (void)snprintf(json, sizeof(json),
+                   "{\"instance_id\":\"i\",\"sequence\":%llu,\"task_id\":7,"
+                   "\"occurred_at\":%f,\"type\":\"message.updated\",\"payload\":{"
+                   "\"message_id\":\"%s\",\"task_id\":7,\"role\":\"%s\",\"text\":\"t\","
+                   "\"source\":\"text\",\"status\":\"%s\",\"reply_to\":null,"
+                   "\"speech_action_id\":null,\"error\":%s,\"created_at\":%f}}",
+                   (unsigned long long)sequence, created_at, id, role, status, error_json,
+                   created_at);
+    event = parse(json);
+    assert(state_apply_event(state, event));
+    cJSON_Delete(event);
+}
+
+/* 存满后淘汰最旧的消息；失败状态只看最近一轮。 */
+static void check_eviction_and_latest_failure(void) {
+    static UiState state;
+    char id[32];
+    uint64_t sequence;
+    state_init(&state);
+    apply_message_event(&state, 1, "bad", "user", "rejected", "模型服务不可用", 1.0);
+    assert(state_speech_phase(&state) == SPEECH_FAILED);
+    for (sequence = 2; sequence <= UI_MAX_MESSAGES + 10; sequence++) {
+        (void)snprintf(id, sizeof(id), "m%llu", (unsigned long long)sequence);
+        apply_message_event(&state, sequence, id, "user", "answered", NULL, (double)sequence);
+    }
+    assert(state.message_count == UI_MAX_MESSAGES);
+    assert(state.truncated_messages);
+    (void)snprintf(id, sizeof(id), "m%d", UI_MAX_MESSAGES + 10);
+    assert(strcmp(state.messages[UI_MAX_MESSAGES - 1].message_id, id) == 0);
+    assert(state_speech_phase(&state) == SPEECH_IDLE);
+}
+
 int main(void) {
     UiState state;
     cJSON *system = parse("{\"instance_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"active_task_id\":7,\"simulated\":false,\"robot\":{\"connected\":true,\"moving\":false,\"x\":1.0,\"y\":2.0,\"yaw\":0.3,\"updated_at\":100.0},\"camera\":{\"available\":true,\"last_frame_at\":99.0,\"error\":null},\"audio\":{\"available\":true,\"recording\":false,\"playing\":false},\"services\":{\"agent\":\"ready\",\"vlm\":\"ready\",\"asr\":\"ready\",\"tts\":\"ready\"}}");
@@ -32,6 +76,7 @@ int main(void) {
     cJSON_Delete(system);
     cJSON_Delete(snapshot);
     cJSON_Delete(event);
+    check_eviction_and_latest_failure();
     (void)puts("test_state: OK");
     return 0;
 }
