@@ -2,7 +2,7 @@
 
 `robot-ui/` 是 `teaching_robot_agent` 的板端显示前端。应用使用纯 C11、Raylib、raygui、libcurl、cJSON 和 pthread，面向 Jetson Ubuntu Desktop 的 7 英寸触摸屏，默认以 1280×600 窗口化运行。
 
-它不是独立演示：所有状态、对话、语音、摄像头和任务事件均来自仓库现有 `API_CONTRACT.md` v1.0 HTTP/SSE 接口。接口审计见 [docs/INTERFACE_AUDIT.md](docs/INTERFACE_AUDIT.md)，完整实测记录见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)。
+它不是独立演示：所有状态、对话、语音、摄像头和任务事件均来自仓库现有 `API_CONTRACT.md` v1.0 HTTP/SSE 接口。接口审计见 [docs/INTERFACE_AUDIT.md](docs/INTERFACE_AUDIT.md)，完整实测记录见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)，接手开发请先读 [docs/HANDOVER.md](docs/HANDOVER.md)。
 
 ## 功能
 
