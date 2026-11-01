@@ -9,5 +9,6 @@
   "font_body": "assets/fonts/NotoSansSC.ttf",
   "font_display": "assets/fonts/Inter-Regular.ttf",
   "font_mono": "assets/fonts/DejaVuSansMono.ttf",
+  "idle_timeout_s": 60.0,
   "fullscreen": false
 }

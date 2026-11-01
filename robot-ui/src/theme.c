@@ -40,6 +40,15 @@ static Font load_cjk_font(const AppConfig *config, bool *owned) {
     for (value = 32; value <= 126; value++) {
         codepoints[count++] = value;
     }
+    /* Latin-1 补充区含间隔号 · 和乘号 ×。 */
+    for (value = 0xA0; value <= 0xFF; value++) {
+        codepoints[count++] = value;
+    }
+    /* 常用标点区含 – … 等；再补不等号 ≠。 */
+    for (value = 0x2010; value <= 0x2027; value++) {
+        codepoints[count++] = value;
+    }
+    codepoints[count++] = 0x2260;
     for (value = 0x3000; value <= 0x303F; value++) {
         codepoints[count++] = value;
     }

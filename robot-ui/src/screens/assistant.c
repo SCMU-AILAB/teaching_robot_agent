@@ -41,7 +41,7 @@ static void draw_messages(App *app, Rectangle area) {
             break;
         }
         DrawRectangleRounded((Rectangle){x, y, width, height - 8}, 0.08f, 6,
-                             assistant ? COLOR_PANEL_ALT : (Color){25, 65, 77, 255});
+                             assistant ? COLOR_PANEL_ALT : COLOR_USER_BUBBLE);
         (void)snprintf(meta, sizeof(meta), "%s · %s%s%s", assistant ? "ROBOT" : "YOU",
                        message->source, message->status[0] != '\0' ? " · " : "", message->status);
         ui_text(&app->theme, meta, (Vector2){x + 12, y + 8}, 11,

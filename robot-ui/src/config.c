@@ -27,6 +27,7 @@ void config_defaults(AppConfig *config) {
               "assets/fonts/Inter-Regular.ttf");
     text_copy(config->font_mono, sizeof(config->font_mono),
               "assets/fonts/DejaVuSansMono.ttf");
+    config->idle_timeout_s = 60.0;
     config->fullscreen = false;
 }
 
@@ -46,6 +47,12 @@ bool config_validate(const AppConfig *config, char *error, unsigned long error_s
         config->system_interval_s < 0.2 || config->system_interval_s > 10.0 ||
         config->http_timeout_s < 1.0 || config->http_timeout_s > 30.0) {
         set_error(error, error_size, "刷新率或超时配置超出允许范围");
+        return false;
+    }
+    /* 0 表示禁用待机；其余取值限定在 5 秒到 1 小时。 */
+    if (config->idle_timeout_s != 0.0 &&
+        (config->idle_timeout_s < 5.0 || config->idle_timeout_s > 3600.0)) {
+        set_error(error, error_size, "idle_timeout_s 必须为 0 或 5–3600 秒");
         return false;
     }
     return true;
@@ -114,6 +121,7 @@ bool config_load(const char *path, AppConfig *config, char *error, unsigned long
     read_double(root, "camera_fps", &config->camera_fps);
     read_double(root, "system_interval_s", &config->system_interval_s);
     read_double(root, "http_timeout_s", &config->http_timeout_s);
+    read_double(root, "idle_timeout_s", &config->idle_timeout_s);
     if (cJSON_IsBool(cJSON_GetObjectItemCaseSensitive(root, "fullscreen"))) {
         config->fullscreen = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "fullscreen"));
     }

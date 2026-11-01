@@ -16,6 +16,7 @@ typedef struct AppConfig {
     char font_body[CONFIG_PATH_CAP];
     char font_display[CONFIG_PATH_CAP];
     char font_mono[CONFIG_PATH_CAP];
+    double idle_timeout_s;
     bool fullscreen;
 } AppConfig;
 

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "face.h"
 #include "screens/assistant.h"
 #include "screens/dashboard.h"
 #include "screens/monitor.h"
@@ -316,7 +317,7 @@ static void schedule_requests(App *app) {
     if (now - app->last_system_request >= app->config.system_interval_s) {
         request_system(app);
     }
-    if (app->state.backend_connected && app->state.system.camera_available &&
+    if (!app->standby && app->state.backend_connected && app->state.system.camera_available &&
         (app->router.current == SCREEN_DASHBOARD || app->router.current == SCREEN_VISION) &&
         now - app->last_camera_request >= 1.0 / app->config.camera_fps &&
         !api_client_busy(app->api, API_CAMERA)) {
@@ -342,11 +343,69 @@ static void schedule_requests(App *app) {
     }
 }
 
+void app_set_standby(App *app, bool standby) {
+    if (app->standby == standby) {
+        return;
+    }
+    app->standby = standby;
+    app->last_activity = GetTime();
+    if (standby) {
+        /* 进入待机时收起设置抽屉并取消输入焦点，唤醒后回到干净状态。 */
+        app->settings_open = false;
+        app->input_focused = false;
+    }
+}
+
+/* 用户是否在本帧操作过屏幕：点击、触摸、滚轮或按键。 */
+static bool user_touched(void) {
+    return IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT) ||
+           IsMouseButtonDown(MOUSE_BUTTON_LEFT) || GetMouseWheelMove() != 0.0f ||
+           GetKeyPressed() != 0 || GetCharPressed() != 0;
+}
+
+/* 语音链路在工作、设置打开或输入框有内容时，不应进入待机。 */
+static bool keeps_awake(const App *app) {
+    return state_speech_phase(&app->state) != SPEECH_IDLE || app->settings_open ||
+           app->pending_create || app->pending_message || app->pending_recording ||
+           (app->input_focused && app->input_text[0] != '\0');
+}
+
+static void update_standby(App *app, bool touched) {
+    double now = GetTime();
+    float target = app->standby ? 1.0f : 0.0f;
+    float step = GetFrameTime() / 0.35f;
+    if (app->config.idle_timeout_s <= 0.0) {
+        app_set_standby(app, false);
+        target = 0.0f;
+    } else if (!app->standby) {
+        if (touched || keeps_awake(app)) {
+            app->last_activity = now;
+        } else if (now - app->last_activity >= app->config.idle_timeout_s) {
+            app_set_standby(app, true);
+            target = 1.0f;
+        }
+    }
+    if (app->standby_blend < target) {
+        app->standby_blend = fminf(target, app->standby_blend + step);
+    } else if (app->standby_blend > target) {
+        app->standby_blend = fmaxf(target, app->standby_blend - step);
+    }
+}
+
+/* 待机画面：只显示宣传片里的机器人表情，没有任何控件。 */
+static void draw_standby(const App *app) {
+    face_draw((Rectangle){240, 50, 800, 500}, state_speech_phase(&app->state),
+              app->state.backend_connected, GetTime(), false, app->standby_blend);
+}
+
 static void draw_top_bar(App *app) {
     DrawRectangle(0, 0, 1280, 58, COLOR_PANEL);
     DrawLine(0, 57, 1280, 57, COLOR_BORDER);
-    ui_text(&app->theme, "ROBOT OS", (Vector2){18, 16}, 23, COLOR_ACCENT);
-    ui_text(&app->theme, router_title(app->router.current), (Vector2){154, 19}, 16, COLOR_MUTED);
+    face_draw((Rectangle){14, 7, 64, 44}, state_speech_phase(&app->state),
+              app->state.backend_connected, GetTime(), true, 1.0f);
+    ui_text(&app->theme, "ROBOT OS", (Vector2){92, 16}, 23, COLOR_TEXT);
+    DrawRectangle(240, 21, 2, 16, COLOR_ACCENT);
+    ui_text(&app->theme, router_title(app->router.current), (Vector2){254, 19}, 16, COLOR_MUTED);
     ui_badge(&app->theme, (Rectangle){590, 13, 158, 32},
              app->state.system.robot_connected ? "ROBOT · ONLINE" : "ROBOT · OFFLINE",
              app->state.system.robot_connected ? COLOR_SUCCESS : COLOR_ERROR);
@@ -367,8 +426,8 @@ static void draw_top_bar(App *app) {
 static bool draw_nav_button(App *app, Rectangle bounds, const char *label, bool active) {
     Vector2 mouse = app_mouse_position(app);
     bool hovered = CheckCollisionPointRec(mouse, bounds);
-    Color fill = active ? (Color){31, 74, 87, 255} :
-                 hovered ? (Color){32, 42, 52, 255} : COLOR_PANEL_ALT;
+    Color fill = active ? COLOR_ACCENT_DIM :
+                 hovered ? COLOR_HOVER : COLOR_PANEL_ALT;
     Color border = active ? COLOR_ACCENT : COLOR_BORDER;
     Color text = active ? COLOR_ACCENT : hovered ? COLOR_TEXT : COLOR_MUTED;
     Vector2 size;
@@ -433,6 +492,13 @@ static void draw_frame(App *app) {
     BeginDrawing();
     ClearBackground(COLOR_BACKGROUND);
     BeginMode2D(view);
+    if (app->standby) {
+        /* 待机期间不绘制任何控件，避免点击穿透到按钮。 */
+        draw_standby(app);
+        EndMode2D();
+        EndDrawing();
+        return;
+    }
     draw_top_bar(app);
     switch (app->router.current) {
         case SCREEN_DASHBOARD: dashboard_render(app, content); break;
@@ -444,14 +510,18 @@ static void draw_frame(App *app) {
     draw_bottom_nav(app);
     if (app->notice[0] != '\0' && GetTime() < app->notice_until) {
         Rectangle notice = {230, 488, 820, 42};
-        DrawRectangleRounded(notice, 0.15f, 5, (Color){63, 42, 34, 245});
+        DrawRectangleRounded(notice, 0.15f, 5, COLOR_NOTICE_FILL);
         DrawRectangleRoundedLinesEx(notice, 0.15f, 5, 1, COLOR_WARNING);
         ui_text(&app->theme, app->notice, (Vector2){246, 500}, 14, COLOR_TEXT);
     }
     draw_settings(app);
+    if (app->standby_blend > 0.0f) {
+        /* 刚唤醒：待机黑场淡出，界面渐显。 */
+        DrawRectangle(0, 0, 1280, 600, Fade(COLOR_BACKGROUND, app->standby_blend));
+    }
     if (app->router.transition_remaining > 0.0) {
         unsigned char alpha = (unsigned char)fmin(160.0, app->router.transition_remaining / 0.18 * 160.0);
-        DrawRectangle(0, 58, 1280, 484, (Color){16, 20, 25, alpha});
+        DrawRectangle(0, 58, 1280, 484, (Color){14, 14, 15, alpha});
     }
     EndMode2D();
     EndDrawing();
@@ -490,9 +560,9 @@ bool app_init(App *app) {
     GuiSetFont(app->theme.body);
     GuiSetStyle(DEFAULT, TEXT_SIZE, 15);
     GuiSetStyle(BUTTON, BASE_COLOR_NORMAL, ColorToInt(COLOR_PANEL_ALT));
-    GuiSetStyle(BUTTON, BASE_COLOR_FOCUSED, ColorToInt((Color){37, 74, 86, 255}));
-    GuiSetStyle(BUTTON, BASE_COLOR_PRESSED, ColorToInt((Color){44, 98, 113, 255}));
-    GuiSetStyle(BUTTON, BASE_COLOR_DISABLED, ColorToInt((Color){22, 28, 35, 255}));
+    GuiSetStyle(BUTTON, BASE_COLOR_FOCUSED, ColorToInt(COLOR_ACCENT_DIM));
+    GuiSetStyle(BUTTON, BASE_COLOR_PRESSED, ColorToInt(COLOR_ACCENT_STRONG));
+    GuiSetStyle(BUTTON, BASE_COLOR_DISABLED, ColorToInt(COLOR_DISABLED_FILL));
     GuiSetStyle(BUTTON, TEXT_COLOR_NORMAL, ColorToInt(COLOR_TEXT));
     GuiSetStyle(BUTTON, TEXT_COLOR_FOCUSED, ColorToInt(COLOR_ACCENT));
     GuiSetStyle(BUTTON, TEXT_COLOR_PRESSED, ColorToInt(COLOR_TEXT));
@@ -518,6 +588,10 @@ bool app_init(App *app) {
         }
     }
     app->running = true;
+    /* 默认以待机画面启动；idle_timeout_s 为 0 时不使用待机。 */
+    app->standby = app->config.idle_timeout_s > 0.0;
+    app->standby_blend = app->standby ? 1.0f : 0.0f;
+    app->last_activity = GetTime();
     request_system(app);
     TraceLog(LOG_INFO, "[robot_ui] UI ready backend=%s", app->config.base_url);
     return true;
@@ -525,15 +599,18 @@ bool app_init(App *app) {
 
 void app_run(App *app) {
     while (app->running && !WindowShouldClose()) {
+        bool touched = user_touched();
         router_update(&app->router, GetFrameTime());
         if (IsKeyPressed(KEY_F11)) {
             ToggleFullscreen();
         }
-        if (IsKeyPressed(KEY_ONE)) app_switch_screen(app, SCREEN_DASHBOARD);
-        if (IsKeyPressed(KEY_TWO)) app_switch_screen(app, SCREEN_ASSISTANT);
-        if (IsKeyPressed(KEY_THREE)) app_switch_screen(app, SCREEN_VISION);
-        if (IsKeyPressed(KEY_FOUR)) app_switch_screen(app, SCREEN_MONITOR);
-        if (IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
+        if (!app->standby) {
+            if (IsKeyPressed(KEY_ONE)) app_switch_screen(app, SCREEN_DASHBOARD);
+            if (IsKeyPressed(KEY_TWO)) app_switch_screen(app, SCREEN_ASSISTANT);
+            if (IsKeyPressed(KEY_THREE)) app_switch_screen(app, SCREEN_VISION);
+            if (IsKeyPressed(KEY_FOUR)) app_switch_screen(app, SCREEN_MONITOR);
+            if (IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
+        }
         if (IsKeyPressed(KEY_F12)) {
             TakeScreenshot("robot_ui_capture.png");
             app_notice(app, "截图已保存为 robot_ui_capture.png");
@@ -541,7 +618,12 @@ void app_run(App *app) {
         process_responses(app);
         process_events(app);
         schedule_requests(app);
+        update_standby(app, touched);
         draw_frame(app);
+        /* 唤醒放在绘制之后：触发唤醒的那次点击不会被刚出现的按钮接收。 */
+        if (app->standby && touched && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            app_set_standby(app, false);
+        }
         if (app->screenshot_path[0] != '\0' && GetTime() >= app->screenshot_after) {
             TakeScreenshot(app->screenshot_path);
             app->running = false;

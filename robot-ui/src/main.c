@@ -8,7 +8,7 @@
 static void usage(const char *program) {
     (void)printf("用法：%s [--config PATH] [--backend URL] [--fullscreen] [--screen NAME]\n", program);
     (void)printf("           [--screenshot FILE] [--screenshot-delay SEC]\n");
-    (void)printf("页面：dashboard / assistant / vision / monitor；F11 全屏，F12 截图。\n");
+    (void)printf("页面：dashboard / assistant / vision / monitor；F11 全屏，F12 截图。\n默认显示待机表情，点击或触摸后进入界面；指定 --screen 时直接进入。\n");
 }
 
 int main(int argc, char **argv) {
@@ -17,6 +17,7 @@ int main(int argc, char **argv) {
     char error[256];
     bool explicit_config = false;
     ScreenId initial_screen = SCREEN_DASHBOARD;
+    bool screen_given = false;
     int index;
     config_defaults(&app.config);
     for (index = 1; index < argc; index++) {
@@ -38,6 +39,7 @@ int main(int argc, char **argv) {
             app.screenshot_after = strtod(argv[++index], NULL);
         } else if (strcmp(argv[index], "--screen") == 0 && index + 1 < argc) {
             const char *name = argv[++index];
+            screen_given = true;
             if (strcmp(name, "dashboard") == 0) initial_screen = SCREEN_DASHBOARD;
             else if (strcmp(name, "assistant") == 0) initial_screen = SCREEN_ASSISTANT;
             else if (strcmp(name, "vision") == 0) initial_screen = SCREEN_VISION;
@@ -87,6 +89,11 @@ int main(int argc, char **argv) {
     }
     if (initial_screen != SCREEN_DASHBOARD) {
         app_switch_screen(&app, initial_screen);
+    }
+    if (screen_given) {
+        /* 明确指定页面时直接进入界面，便于验收和截图。 */
+        app_set_standby(&app, false);
+        app.standby_blend = 0.0f;
     }
     app_run(&app);
     app_close(&app);

@@ -60,6 +60,7 @@ add_executable(robot_ui
     src/main.c
     src/app.c
     src/camera.c
+    src/face.c
     src/router.c
     src/theme.c
     src/ui_common.c

@@ -19,6 +19,9 @@ typedef struct App {
     UiState state;
     bool running;
     bool settings_open;
+    bool standby;
+    float standby_blend;
+    double last_activity;
     bool backend_failure_logged;
     bool input_focused;
     char input_text[UI_TEXT_CAP];
@@ -46,6 +49,7 @@ bool app_init(App *app);
 void app_run(App *app);
 void app_close(App *app);
 void app_switch_screen(App *app, ScreenId screen);
+void app_set_standby(App *app, bool standby);
 Vector2 app_mouse_position(const App *app);
 void app_notice(App *app, const char *message);
 void app_start_task(App *app);
