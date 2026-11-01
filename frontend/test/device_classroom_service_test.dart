@@ -144,6 +144,51 @@ void main() {
   DeviceClassroomService build(MockClient client) =>
       DeviceClassroomService(baseUrl: 'http://device.test', client: client);
 
+  test('设置：读取映射字段，修改只提交给出的字段', () async {
+    final List<Map<String, dynamic>> patches = <Map<String, dynamic>>[];
+    Map<String, Object?> settings({
+      String prompt = '',
+      bool handsFree = false,
+    }) => <String, Object?>{
+      'scenario_prompt': prompt,
+      'hands_free': handsFree,
+      'proactive': false,
+      'hands_free_available': true,
+      'proactive_available': false,
+      'updated_at': 1.0,
+    };
+    final MockClient client = MockClient((http.Request request) async {
+      if (request.url.path != '/api/v1/settings') return jsonResp('');
+      if (request.method == 'GET') return jsonResp(envelope(settings()));
+      final Map<String, dynamic> body =
+          jsonDecode(request.body) as Map<String, dynamic>;
+      patches.add(body);
+      return jsonResp(
+        envelope(
+          settings(
+            prompt: body['scenario_prompt']?.toString() ?? '',
+            handsFree: body['hands_free'] == true,
+          ),
+        ),
+      );
+    });
+    final DeviceClassroomService service = build(client);
+    addTearDown(service.dispose);
+    final RobotSettings loaded = await service.loadSettings();
+    expect(loaded.handsFreeAvailable, isTrue);
+    expect(loaded.proactiveAvailable, isFalse);
+    final RobotSettings saved = await service.updateSettings(
+      scenarioPrompt: '孩子叫乐乐',
+      handsFree: true,
+    );
+    expect(patches.single, <String, dynamic>{
+      'scenario_prompt': '孩子叫乐乐',
+      'hands_free': true,
+    });
+    expect(saved.scenarioPrompt, '孩子叫乐乐');
+    expect(saved.handsFree, isTrue);
+  });
+
   test('统一响应错误包装为 ClassroomFailure', () async {
     final MockClient client = MockClient(
       (http.Request request) async => jsonResp(

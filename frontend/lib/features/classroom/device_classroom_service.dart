@@ -655,6 +655,34 @@ class DeviceClassroomService implements ClassroomService {
     _emit();
   }
 
+  @override
+  Future<RobotSettings> loadSettings() async {
+    final dynamic data = await _get(ApiPaths.settings);
+    if (data is! Map<String, dynamic>) {
+      throw const ClassroomFailure('设置响应格式不合法。');
+    }
+    return RobotSettings.fromJson(data);
+  }
+
+  @override
+  Future<RobotSettings> updateSettings({
+    String? scenarioPrompt,
+    bool? handsFree,
+    bool? proactive,
+  }) async {
+    final Map<String, dynamic> body = <String, dynamic>{
+      'scenario_prompt': ?scenarioPrompt,
+      'hands_free': ?handsFree,
+      'proactive': ?proactive,
+    };
+    if (body.isEmpty) return loadSettings();
+    final dynamic data = await _sendJson('PATCH', ApiPaths.settings, body);
+    if (data is! Map<String, dynamic>) {
+      throw const ClassroomFailure('设置响应格式不合法。');
+    }
+    return RobotSettings.fromJson(data);
+  }
+
   /// v1.0 的观察由机器人发起：以一句提问请机器人重新看一看。
   @override
   Future<void> refreshObservation({String question = '请看看现在桌上有什么。'}) =>

@@ -310,6 +310,36 @@ class MockClassroomService implements ClassroomService {
   @override
   void setScenario(DemoScenario scenario) => _scenario = scenario;
 
+  /// 测试替身的设置只保存在内存；两项能力都视为可用。
+  RobotSettings _settings = const RobotSettings(
+    handsFreeAvailable: true,
+    proactiveAvailable: true,
+  );
+
+  @override
+  Future<RobotSettings> loadSettings() async {
+    _requireOnline();
+    return _settings;
+  }
+
+  @override
+  Future<RobotSettings> updateSettings({
+    String? scenarioPrompt,
+    bool? handsFree,
+    bool? proactive,
+  }) async {
+    _requireOnline();
+    commands.add('update_settings');
+    _settings = RobotSettings(
+      scenarioPrompt: scenarioPrompt?.trim() ?? _settings.scenarioPrompt,
+      handsFree: handsFree ?? _settings.handsFree,
+      proactive: proactive ?? _settings.proactive,
+      handsFreeAvailable: true,
+      proactiveAvailable: true,
+    );
+    return _settings;
+  }
+
   @override
   Uri? cameraSnapshotUrl({int? maxWidth}) => null;
 

@@ -1,7 +1,7 @@
 // frontend/lib/features/classroom/classroom_service.dart
 import 'session_model.dart';
 
-/// 页面内部的数据源边界；网络语义以根目录 API_CONTRACT.md v1.0 为准。
+/// 页面内部的数据源边界；网络语义以根目录 API_CONTRACT.md v1.1 为准。
 ///
 /// 实现有两路：MockClassroomService（测试替身）与 DeviceClassroomService
 /// （机器人后端 /api/v1）。kind/question_id 为课堂演示保留，v1.0 不使用；
@@ -42,6 +42,16 @@ abstract interface class ClassroomService {
 
   /// 请机器人重新观察；v1.0 的观察由机器人发起，实现为一句提问。
   Future<void> refreshObservation({String question = '请描述画面中的物体及其相对位置。'});
+
+  /// 读取运行设置（合同 GET /settings）。
+  Future<RobotSettings> loadSettings();
+
+  /// 修改运行设置（合同 PATCH /settings）；只提交非空参数，返回修改后的设置。
+  Future<RobotSettings> updateSettings({
+    String? scenarioPrompt,
+    bool? handsFree,
+    bool? proactive,
+  });
 
   /// 断线后重新拉取快照并恢复事件流。
   Future<void> reconnect();

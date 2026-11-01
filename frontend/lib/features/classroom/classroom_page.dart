@@ -19,6 +19,7 @@ import 'widgets/observation_panel.dart';
 import 'widgets/record_toggle_button.dart';
 import 'widgets/rolling_text.dart';
 import 'widgets/send_button.dart';
+import 'widgets/settings_dialog.dart';
 import 'widgets/status_label.dart';
 import 'widgets/task_toggle_button.dart';
 
@@ -156,6 +157,25 @@ class _ClassroomPageState extends State<ClassroomPage> {
     _switchEndpoint(address);
   }
 
+  Future<void> _openRobotSettings() async {
+    final RobotSettings? saved = await showDialog<RobotSettings>(
+      context: context,
+      builder: (BuildContext context) => SettingsDialog(
+        load: _controller.loadSettings,
+        save: _controller.saveSettings,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '设置已保存：免按键对话${saved.handsFree ? '开' : '关'}，'
+          '主动观察${saved.proactive ? '开' : '关'}',
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _sendMorphing.dispose();
@@ -239,6 +259,14 @@ class _ClassroomPageState extends State<ClassroomPage> {
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 8),
+          IconButton(
+            key: const Key('robot-settings'),
+            tooltip: '机器人设置',
+            onPressed: _controller.connected
+                ? () => unawaited(_openRobotSettings())
+                : null,
+            icon: const Icon(Symbols.tune_rounded, size: 20),
+          ),
           if (_ownsController)
             IconButton(
               tooltip: '设备地址 · $_baseUrl',

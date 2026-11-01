@@ -281,6 +281,20 @@ class ClassroomController extends ChangeNotifier {
 
   void disconnect() => _service.disconnect();
 
+  /// 读取运行设置；失败抛出 [ClassroomFailure]，由设置面板显示。
+  Future<RobotSettings> loadSettings() => _service.loadSettings();
+
+  /// 保存运行设置；失败抛出 [ClassroomFailure]，由设置面板显示。
+  Future<RobotSettings> saveSettings({
+    String? scenarioPrompt,
+    bool? handsFree,
+    bool? proactive,
+  }) => _service.updateSettings(
+    scenarioPrompt: scenarioPrompt,
+    handsFree: handsFree,
+    proactive: proactive,
+  );
+
   @override
   void dispose() {
     _disposed = true;

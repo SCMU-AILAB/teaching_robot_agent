@@ -109,6 +109,34 @@ enum DemoScenario {
 enum DeviceConnection { connecting, connected, disconnected }
 
 /// 用于模拟数据源与页面之间的明确失败。
+/// 机器人运行设置（合同 SettingsResponse）：场景提示词与免按键对话、主动观察开关。
+class RobotSettings {
+  const RobotSettings({
+    this.scenarioPrompt = '',
+    this.handsFree = false,
+    this.proactive = false,
+    this.handsFreeAvailable = false,
+    this.proactiveAvailable = false,
+  });
+
+  factory RobotSettings.fromJson(Map<String, dynamic> json) => RobotSettings(
+    scenarioPrompt: json['scenario_prompt']?.toString() ?? '',
+    handsFree: json['hands_free'] == true,
+    proactive: json['proactive'] == true,
+    handsFreeAvailable: json['hands_free_available'] == true,
+    proactiveAvailable: json['proactive_available'] == true,
+  );
+
+  /// 场景提示词上限（合同 0–500 字）。
+  static const int maxPromptChars = 500;
+
+  final String scenarioPrompt;
+  final bool handsFree;
+  final bool proactive;
+  final bool handsFreeAvailable;
+  final bool proactiveAvailable;
+}
+
 class ClassroomFailure implements Exception {
   const ClassroomFailure(this.message);
   final String message;
