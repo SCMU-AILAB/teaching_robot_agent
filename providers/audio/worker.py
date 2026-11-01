@@ -112,7 +112,11 @@ def resolve_device(driver: _DeviceQuery, text: str, *, output: bool) -> int | No
 
 
 def run_audio(mode: str, device: str, rate: int, duration: float) -> None:
-    """采集或播放 PCM；READY 代表设备已启动，完成代表驱动已停止."""
+    """采集、流式采集或播放 PCM；READY 代表设备已启动，完成代表驱动已停止.
+
+    stream 模式在 READY 之后持续向标准输出写入原始十六位 PCM，每块 20 毫秒，收到 SIGINT 后停止并正常退出；
+    不设时长上限，由免按键收音按需启停。
+    """
     driver = import_module("sounddevice")
     if mode == "devices":
         print(cast(Callable[[], object], driver.query_devices)())
@@ -147,18 +151,25 @@ def run_audio(mode: str, device: str, rate: int, duration: float) -> None:
             samplerate=rate, channels=1, dtype="int16", device=device_index
         )
     chunks: list[bytes] = []
+    streaming = mode == "stream"
     cancelled = False
     try:
         stream.start()
         print("READY", flush=True)
         if audio is None:
             deadline = time.monotonic() + duration
-            while not stopping and time.monotonic() < deadline:
+            while not stopping and (streaming or time.monotonic() < deadline):
                 data, overflow = stream.read(max(1, rate // 50))
-                if overflow:
+                if overflow and not streaming:
                     raise RuntimeError("Audio input overflow")
                 # sounddevice 返回 CFFI buffer，在边界实际转换而不传播未知类型。
-                chunks.append(bytes(memoryview(cast(bytes, data))))
+                block = bytes(memoryview(cast(bytes, data)))
+                if streaming:
+                    # 读取方短暂处理不及时会丢一小段输入，持续收音不因此中断
+                    _ = sys.stdout.buffer.write(block)
+                    _ = sys.stdout.buffer.flush()
+                else:
+                    chunks.append(block)
         else:
             step = max(1, audio.sample_rate // 50) * audio.channels * 2
             for offset in range(0, len(audio.frames), step):
@@ -175,6 +186,8 @@ def run_audio(mode: str, device: str, rate: int, duration: float) -> None:
     if cancelled:
         print("STOPPED", flush=True)
         raise SystemExit(2)
+    if streaming:
+        return
     if audio is None:
         _ = sys.stdout.buffer.write(encode_wav(PcmAudio(b"".join(chunks), rate, 1)))
         _ = sys.stdout.buffer.flush()
@@ -185,7 +198,7 @@ def run_audio(mode: str, device: str, rate: int, duration: float) -> None:
 def main() -> None:
     """解析受控参数，错误仅输出类型，不输出音频或设备敏感路径."""
     parser = argparse.ArgumentParser()
-    _ = parser.add_argument("mode", choices=("record", "play", "devices"))
+    _ = parser.add_argument("mode", choices=("record", "stream", "play", "devices"))
     _ = parser.add_argument("--device", default="")
     _ = parser.add_argument("--rate", type=int, default=16000)
     _ = parser.add_argument("--duration", type=float, default=15)

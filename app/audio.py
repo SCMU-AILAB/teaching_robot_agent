@@ -3,6 +3,7 @@
 
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -11,6 +12,7 @@ from domain.validation import finite_float
 from providers.asr.mock import MockASRProvider
 from providers.asr.resident import ASREngine, ResidentASRProvider
 from providers.asr.sensevoice_engine import SenseVoiceEngine
+from providers.asr.silero_vad import SileroDetector
 from providers.asr.whisper_engine import WhisperEngine
 from providers.audio.mock import MockAudioRecorder
 from providers.audio.player import MockAudioPlayer
@@ -20,6 +22,7 @@ from providers.tts.gpt_sovits import GPTSoVITSProvider, VoiceProfile
 from providers.tts.mock import MockTTSProvider
 from providers.tts.system import SystemTTSProvider
 from speech.interfaces import ASRProvider, AudioPlayer, AudioRecorder, TTSProvider
+from speech.listener import PcmSource, VoiceDetector, WorkerPcmSource
 from speech.resources import AudioDeviceLease
 from storage.evidence import EvidenceStore
 
@@ -37,6 +40,18 @@ class AudioLifecycle(Protocol):
 
 
 @dataclass(frozen=True)
+class HandsFreeAudio:
+    """免按键收音所需：流式音源、语音检测，以及与录音器、播放器共用的设备租约."""
+
+    source_factory: Callable[[], PcmSource]
+    detector: VoiceDetector
+    lease: AudioDeviceLease
+    evidence: EvidenceStore
+    sample_rate: int = 16000
+    wake_word: str = ""
+
+
+@dataclass(frozen=True)
 class AudioAdapters:
     """应用拥有的录音、识别、合成和播放依赖，模拟标记必须显式传入."""
 
@@ -49,6 +64,8 @@ class AudioAdapters:
     lifecycle: tuple[AudioLifecycle, ...] = ()
     max_duration_s: float = 15.0
     timeout_s: float = 30.0
+    # 配置了语音检测模型时提供，主应用据此装配免按键收音
+    hands_free: HandsFreeAudio | None = None
 
 
 def build_simulated_audio(
@@ -154,6 +171,18 @@ def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
     tts, tts_lifecycle = build_tts(evidence)
     device = AudioDeviceLease()
     asr = ResidentASRProvider(evidence, build_asr_engine())
+    input_device = os.environ.get("SPEECH_INPUT_DEVICE", "")
+    hands_free: HandsFreeAudio | None = None
+    vad_model = os.environ.get("SPEECH_VAD_MODEL_PATH", "").strip()
+    if vad_model:
+        hands_free = HandsFreeAudio(
+            lambda: WorkerPcmSource(input_device, rate),
+            SileroDetector(vad_model, rate),
+            device,
+            evidence,
+            rate,
+            os.environ.get("HANDS_FREE_WAKE_WORD", ""),
+        )
     return AudioAdapters(
         PortAudioRecorder(
             evidence, device, os.environ.get("SPEECH_INPUT_DEVICE", ""), rate
@@ -165,4 +194,5 @@ def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
         lifecycle=(asr, *tts_lifecycle),
         max_duration_s=duration,
         timeout_s=timeout,
+        hands_free=hands_free,
     )

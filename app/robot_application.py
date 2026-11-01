@@ -12,12 +12,14 @@ from agent.exploration import (
     ExplorationController,
     model_narrator,
 )
+from agent.proactive import ProactiveConfig, ProactiveWatcher
 from agent.robot_host import RobotHost, RobotReply
 from agent.tools import ToolAdapter
 from app.audio import AudioAdapters
 from app.team_gateway import TeamGateway, UserInput
-from domain.models import TaskState
+from domain.models import TaskState, TaskStatus
 from domain.robot import RobotCapability
+from domain.settings import RobotSettings
 from education.knowledge_service import KnowledgeService, build_home_knowledge
 from perception.interfaces import PerceptionService
 from robot.base import RobotAdapter
@@ -27,6 +29,7 @@ from runtime.events import ActionEventHub
 from skills.robot_registry import build_robot_skills
 from skills.speak import SpeakSkill
 from speech.input import SpeechInputService
+from speech.listener import GatedPlayer, GatedRecorder, HandsFreeListener
 from speech.output import SpeechOutputService
 from storage.evidence import EvidenceStore
 
@@ -45,6 +48,7 @@ class RobotApplication:
         _evidence: EvidenceStore | None = None,
         _answer_max_chars: int | None = None,
         _exploration: ExplorationConfig | None = None,
+        _proactive: ProactiveConfig | None = None,
     ) -> None:
         """显式注入设备、感知与模型，构造期间不连接外部服务.
 
@@ -57,6 +61,7 @@ class RobotApplication:
             _evidence: 感知与语音共用的证据存储；提供时按任务和语音作业释放证据.
             _answer_max_chars: 最终回答的大致字数上限，None 不限制.
             _exploration: 探索设置；底盘带深度避障且能前进、转向、定位时才生效.
+            _proactive: 主动观察设置；需要语音播报，感知应为真实摄像头.
         """
         self.runtime: ActionManager = ActionManager(_robot, build_robot_skills(_robot))
         self.gateway: TeamGateway = TeamGateway(
@@ -66,16 +71,36 @@ class RobotApplication:
         self._model: BaseChatModel = _model
         self._knowledge: KnowledgeService = _knowledge or build_home_knowledge()
         self._answer_max_chars: int | None = _answer_max_chars
+        self.settings: RobotSettings = RobotSettings()
         self.speech_input: SpeechInputService | None = None
         self._speech_output: SpeechOutputService | None = None
         self.audio: AudioAdapters | None = _audio
+        self.listener: HandsFreeListener | None = None
         if _audio is not None:
+            recorder, player = _audio.recorder, _audio.player
+            hands_free = _audio.hands_free
+            if hands_free is not None:
+                self.listener = HandsFreeListener(
+                    hands_free.source_factory,
+                    hands_free.detector,
+                    _audio.asr,
+                    self.gateway,
+                    hands_free.evidence,
+                    hands_free.lease,
+                    _enabled=lambda: self.settings.hands_free,
+                    _active_task=self.active_task_id,
+                    _sample_rate=hands_free.sample_rate,
+                    _wake_word=hands_free.wake_word,
+                )
+                # 按键录音与播报占用麦克风前先让免按键收音停下
+                recorder = GatedRecorder(recorder, self.listener)
+                player = GatedPlayer(player, self.listener)
             self.speech_input = SpeechInputService(
-                _audio.recorder, _audio.asr, self.gateway, _evidence=_evidence
+                recorder, _audio.asr, self.gateway, _evidence=_evidence
             )
             self.gateway.register_task_resource(self.speech_input)
             self._speech_output = SpeechOutputService(
-                _audio.tts, _audio.player, _evidence=_evidence
+                _audio.tts, player, _evidence=_evidence
             )
             self.runtime.registry.register(
                 SpeakSkill(self._speech_output, _simulated=_audio.simulated)
@@ -90,6 +115,33 @@ class RobotApplication:
             _exploration_factory=self._exploration_factory,
         )
         self.events: ActionEventHub = ActionEventHub(self.runtime)
+        self.watcher: ProactiveWatcher | None = None
+        if _proactive is not None and _audio is not None:
+            self.watcher = ProactiveWatcher(
+                self.gateway,
+                self._knowledge,
+                model_narrator(self._model, 30, self._scenario_prompt),
+                _enabled=lambda: self.settings.proactive,
+                _active_task=self.active_task_id,
+                _idle=self._idle,
+                _config=_proactive,
+            )
+
+    def active_task_id(self) -> int | None:
+        """宿主已登记且尚未结束的最新任务；对外同时只有一个进行中的任务."""
+        for task_id in sorted(self.host.task_ids, reverse=True):
+            status = self.gateway.get_task(task_id).status
+            if status in {TaskStatus.PENDING, TaskStatus.RUNNING}:
+                return task_id
+        return None
+
+    def _idle(self, task_id: int) -> bool:
+        """宿主没在处理输入或探索、没有排队输入、孩子也没说到一半."""
+        return (
+            self.host.idle(task_id)
+            and not self.gateway.has_pending_input()
+            and not (self.listener is not None and self.listener.hearing)
+        )
 
     def _exploration_builder(
         self,
@@ -116,7 +168,9 @@ class RobotApplication:
             """每段前进后留出守护在该车速下所需空隙再加 5 厘米，避免刚走就被拦停."""
             return robot.stop_margin_m(speed) + 0.05
 
-        narrator = model_narrator(self._model, config.narration_chars)
+        narrator = model_narrator(
+            self._model, config.narration_chars, self._scenario_prompt
+        )
 
         def build(task_id: int) -> ExplorationController:
             """按任务创建探索控制器."""
@@ -148,7 +202,12 @@ class RobotApplication:
             ),
             task_id,
             _answer_max_chars=self._answer_max_chars,
+            _scenario=self._scenario_prompt,
         )
+
+    def _scenario_prompt(self) -> str:
+        """当前场景提示词."""
+        return self.settings.scenario_prompt
 
     async def start(self) -> None:
         """连接设备并启动 Runtime，再加载常驻语音资源；感知资源由其服务自身管理."""
@@ -158,6 +217,10 @@ class RobotApplication:
             # 识别模型等常驻资源在启动时加载一次，加载失败直接报错，不退回模拟。
             for resource in self.audio.lifecycle:
                 await resource.start()
+        if self.listener is not None:
+            self.listener.start()
+        if self.watcher is not None:
+            self.watcher.start()
 
     async def create_task(self, target: str) -> TaskState:
         """创建独立机器人任务，交由宿主登记而非自动开课."""
@@ -196,7 +259,11 @@ class RobotApplication:
         return await self.host.finish(task_id)
 
     async def close(self) -> None:
-        """先取消机器人任务，再关闭感知和设备，异常时仍释放设备."""
+        """先停主动观察与免按键收音，再取消机器人任务，最后关闭感知和设备."""
+        if self.watcher is not None:
+            await self.watcher.close()
+        if self.listener is not None:
+            await self.listener.close()
         try:
             await self.host.close()
         finally:

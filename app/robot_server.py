@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 
+from agent.proactive import ProactiveConfig
 from api.http import ServiceSlot, build_http_app
 from api.preview import CameraPreview
 from api.service import RobotApiService, ServiceStates
@@ -50,6 +51,8 @@ async def serve_robot(slot: ServiceSlot) -> AsyncGenerator[None]:
         _evidence=evidence,
         _answer_max_chars=answer_chars_from_env(),
         _exploration=exploration_from_env(),
+        # 主动观察要真实摄像头与语音；开关在设置接口中，默认关闭
+        _proactive=None if perception.simulated or audio is None else ProactiveConfig(),
     )
     preview = (
         CameraPreview(perception.camera, evidence)

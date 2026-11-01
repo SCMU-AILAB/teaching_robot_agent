@@ -26,6 +26,7 @@ from api.schemas import (
     JsonObject,
     MessageRecord,
     RecordingRecord,
+    UpdateSettingsRequest,
     action_payload,
     dump_json,
     observation_payload,
@@ -214,6 +215,8 @@ class RobotApiService:
                 "available": self._app.speech_input is not None,
                 "recording": recording,
                 "playing": playing,
+                "listening": self._app.listener is not None
+                and self._app.listener.listening,
             },
             "services": {
                 "agent": self._services.agent,
@@ -222,6 +225,48 @@ class RobotApiService:
                 "tts": self._services.tts,
             },
         }
+
+    # ========== 设置 ==========
+
+    def settings(self) -> JsonObject:
+        """SettingsResponse."""
+        settings = self._app.settings
+        return {
+            "scenario_prompt": settings.scenario_prompt,
+            "hands_free": settings.hands_free,
+            "proactive": settings.proactive,
+            "hands_free_available": self._app.listener is not None,
+            "proactive_available": self._app.watcher is not None,
+            "updated_at": settings.updated_at,
+        }
+
+    def update_settings(self, request: UpdateSettingsRequest) -> JsonObject:
+        """PATCH /settings；能力未装配时开启返回 50002."""
+        if request.hands_free and self._app.listener is None:
+            raise ApiError(
+                ErrorCode.UNAVAILABLE, "未配置免按键收音（缺少语音检测模型或麦克风）"
+            )
+        if request.proactive and self._app.watcher is None:
+            raise ApiError(
+                ErrorCode.UNAVAILABLE, "未配置主动观察（需要真实摄像头与语音）"
+            )
+        try:
+            self._app.settings.update(
+                scenario_prompt=request.scenario_prompt,
+                hands_free=request.hands_free,
+                proactive=request.proactive,
+            )
+        except ValueError as error:
+            raise ApiError(
+                ErrorCode.INVALID_ARGUMENT, "场景提示词不能超过 500 字"
+            ) from error
+        logger.info(
+            "[RobotApiService.update_settings] 设置已更新 hands_free=%s proactive=%s prompt_chars=%d",
+            self._app.settings.hands_free,
+            self._app.settings.proactive,
+            len(self._app.settings.scenario_prompt),
+        )
+        return self.settings()
 
     # ========== 任务 ==========
 
@@ -469,6 +514,23 @@ class RobotApiService:
                 text=text,
                 speech_action_id=speech_action_id or reply.speech_action_id,
             )
+
+    def _record_proactive(self, task_id: int, text: str, speech_action_id: int) -> None:
+        """登记机器人主动说的话：source=proactive、reply_to 为空."""
+        view = self._view(task_id)
+        self._linked_speech.add(speech_action_id)
+        message = MessageRecord(
+            uuid4().hex,
+            task_id,
+            "assistant",
+            text,
+            "proactive",
+            "final",
+            time.time(),
+            speech_action_id=speech_action_id,
+        )
+        view.messages[message.message_id] = message
+        view.log.publish("message.updated", message.payload())
 
     # ========== 录音 ==========
 
@@ -718,10 +780,13 @@ class RobotApiService:
         if (
             record.raw_request.skill_name == "speak"
             and action_id not in self._linked_speech
-            and message_id is not None
             and isinstance(text, str)
         ):
-            self._record_reply(view.messages[message_id], text, action_id)
+            if message_id is not None:
+                self._record_reply(view.messages[message_id], text, action_id)
+            else:
+                # 没有处理中的用户消息：主动提醒、探索讲解等机器人主动说的话
+                self._record_proactive(task_id, text, action_id)
         self._refresh_task(task_id)
 
     # ========== 内部辅助 ==========

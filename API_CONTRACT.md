@@ -1,4 +1,4 @@
-# 接口文档 v1.0
+# 接口文档 v1.1
 
 状态：**生效**。2026-10-23 项目负责人指示：仓库对外接口统一规范并最小化，以本文为唯一依据，前端按本文实现。本文取代 v0.1 草案与 `feature/speech-output-lifecycle` 分支上的 v0.2 草案；两者与本文冲突处一律以本文为准。
 
@@ -64,7 +64,7 @@
 | runtime_blocked_reason | string/null | 非空时禁止一切新动作（对应 50004） |
 | robot | object | `connected:bool`、`moving:bool`、`x:float`、`y:float`、`yaw:float`、`updated_at:float` |
 | camera | object | `available:bool`、`last_frame_at:float/null`、`error:string/null`；`available=false` 时 `error` 必须非空 |
-| audio | object | `available:bool`、`recording:bool`、`playing:bool` |
+| audio | object | `available:bool`、`recording:bool`、`playing:bool`、`listening:bool`（免按键收音正在采集；机器人说话、按键录音或关闭免按键时为 false） |
 | services | object | `agent`、`vlm`、`asr`、`tts` 各为 `ready`、`unavailable` 或 `not_configured`；首版只反映装配配置（`ready` 表示已配置），不主动探测，调用失败体现在对应消息或录音的 error（模型服务连不上为 50002） |
 
 ### TaskResponse
@@ -83,9 +83,9 @@ status：`pending`、`running`、`cancelling`、`completed`、`failed`、`cancel
 | task_id | integer | 所属任务 |
 | role | string | `user` 或 `assistant` |
 | text | string | 用户原话或机器人回答文本（纯文本） |
-| source | string | 用户消息为 `text` 或 `speech`；机器人消息为 `agent` |
+| source | string | 用户消息为 `text` 或 `speech`（按键录音与免按键收音都是 `speech`）；机器人消息为 `agent`（回答用户消息）或 `proactive`（机器人主动说的话：主动观察提醒、探索讲解与总结） |
 | status | string | 用户消息：`accepted`、`processing`、`answered`、`rejected`、`cancelled`（任务停止时未处理完）；机器人消息恒为 `final` |
-| reply_to | string/null | 机器人消息对应的用户消息编号 |
+| reply_to | string/null | 机器人消息对应的用户消息编号；`proactive` 消息为 null |
 | speech_action_id | integer/null | 机器人回答的播报动作；未启用语音时为 null |
 | error | ResourceError/null | 用户消息被拒绝或处理失败的原因 |
 | created_at | float | 创建时间 |
@@ -124,6 +124,19 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 ### ResourceError
 
 `code:int`、`message:string`。code 取第 1 节错误码。
+
+### SettingsResponse
+
+机器人运行设置，进程内全局生效（不随任务结束清除，后端重启恢复默认）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| scenario_prompt | string | 场景提示词，0–500 字；接在系统提示之后，作用于回答、探索讲解与主动提醒，不能覆盖系统提示中的安全规则。默认空 |
+| hands_free | boolean | 免按键对话：有进行中的任务时持续收音，检测到一句话说完即识别并作为语音消息提交。默认 false |
+| proactive | boolean | 主动观察：有进行中的任务且机器人空闲时定期观察，发现未提过且资料库有安全条目的物体就主动提醒。默认 false |
+| hands_free_available | boolean | 是否装配了真实麦克风与语音检测；为 false 时 `hands_free` 不能设为 true |
+| proactive_available | boolean | 是否装配了真实感知与语音；为 false 时 `proactive` 不能设为 true |
+| updated_at | float | 最近一次修改时间 |
 
 ### TaskSnapshotResponse
 
@@ -234,6 +247,24 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 
 错误码：40001、50002。
 
+### GET /api/v1/settings
+
+用途：读取机器人运行设置。
+
+响应 200：SettingsResponse。
+
+### PATCH /api/v1/settings
+
+用途：修改场景提示词、免按键对话与主动观察开关；只修改请求中出现的字段，下一次模型调用即生效，进行中的回答不受影响。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| scenario_prompt | string | 否 | 0–500 字，首尾空白去除；空字符串表示清除 |
+| hands_free | boolean | 否 | 开启或关闭免按键对话 |
+| proactive | boolean | 否 | 开启或关闭主动观察 |
+
+响应 200：SettingsResponse。字段越界、未知字段或请求体为空返回 40001；对应能力未装配时开启返回 50002。
+
 ### GET /api/v1/evidence/{evidence_id}
 
 用途：读取观察画面。
@@ -256,7 +287,7 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 | type | payload | 触发时机 |
 | --- | --- | --- |
 | task.updated | TaskResponse | 任务状态变化 |
-| message.updated | MessageResponse | 用户消息创建或状态变化；机器人回答生成 |
+| message.updated | MessageResponse | 用户消息创建或状态变化；机器人回答生成；机器人主动说话（`source=proactive`）开始播报时 |
 | action.updated | ActionResponse | 动作状态变化（含 `speak` 播报） |
 | observation.created | ObservationResponse | 一次观察完成 |
 | recording.updated | RecordingResponse | 录音状态变化 |
@@ -321,4 +352,5 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 - 2026-10-01：v0.1 草案。
 - 2026-10-20：v0.2 草案（设备状态、摄像头预览、会话快照），未批准。
 - 2026-10-23：v1.0 生效。按项目负责人指示统一规范并最小化仓库接口，合并 v0.1/v0.2，补充底盘串口协议、外部服务约定与部署形态。
+- 2026-11-01：v1.1，按项目负责人指示新增免按键对话、主动观察与场景提示词：新增 SettingsResponse 与 `GET/PATCH /api/v1/settings`；MessageResponse 的 `source` 新增 `proactive`（机器人主动说的话，`reply_to` 为 null）；SystemResponse.audio 新增 `listening`。原有接口与字段不变。
 - 2026-10-23：v1.0.1，HTTP/SSE 服务端实现（`api/`、`app/robot_server.py`）。只补充实现说明与歧义澄清，接口与字段无增删：后端启动方式；未定义查询参数忽略；缺少事件游标返回 40001；`stream.reset` 不占序号、不带 id 及 reason 取值；证据接口只公开观察画面；services 只反映配置；任务记录保留上限；录音到时自动进入识别。

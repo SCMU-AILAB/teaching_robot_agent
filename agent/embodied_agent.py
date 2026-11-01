@@ -4,7 +4,7 @@
 import asyncio
 import logging
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from typing import cast
 
@@ -31,6 +31,7 @@ from domain.education import KnowledgePoint
 from domain.models import ActionRecord, TaskStatus
 from domain.robot import MOTION_SKILLS, RobotCapability
 from domain.services import ObservationResult
+from domain.settings import scenario_block
 from domain.validation import finite_float, positive_int
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ class EmbodiedAgent:
         _task_id: int,
         _max_rounds: int = 4,
         _answer_max_chars: int | None = None,
+        _scenario: Callable[[], str] | None = None,
     ) -> None:
         """固定任务并限制单次决策的模型调用次数.
 
@@ -137,6 +139,7 @@ class EmbodiedAgent:
             _max_rounds: 单次决策的模型调用上限.
             _answer_max_chars: 最终回答的大致字数上限；None 不限制。篇幅要求写进系统提示会让模型
                 少调用动作工具，因此只在文字回答超长时追加要求并重新生成。
+            _scenario: 读取最新场景提示词；每次调用模型时读取，修改后下一句生效.
         """
         if _tools.task_id != _task_id:
             raise ValueError("Tools belong to another task")
@@ -150,6 +153,7 @@ class EmbodiedAgent:
         self._input: UserInput | None = None
         self._pending: tuple[int, str] | None = None
         self._memory: DialogueMemory = DialogueMemory()
+        self._scenario: Callable[[], str] = _scenario or (lambda: "")
         # 本条用户输入是否已提交运动动作；用于拦截只答应不执行的回答
         self._moved_in_turn: bool = False
         self._answer_instruction: str | None = None
@@ -271,7 +275,10 @@ class EmbodiedAgent:
             response = await self._respond(
                 model,
                 [
-                    SystemMessage(content=system_prompt),
+                    # 场景提示词每轮读取，负责人修改后下一次调用即生效
+                    SystemMessage(
+                        content=system_prompt + scenario_block(self._scenario())
+                    ),
                     *memory_messages,
                     HumanMessage(content=f"宿主提供的本轮状态：{context}"),
                     *retrieval_messages,

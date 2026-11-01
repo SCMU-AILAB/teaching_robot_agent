@@ -18,6 +18,7 @@ from api.schemas import (
     CreateRecordingRequest,
     CreateTaskRequest,
     UpdateRecordingRequest,
+    UpdateSettingsRequest,
     UpdateTaskRequest,
     dump_json,
     validation_message,
@@ -120,7 +121,7 @@ def build_http_app(
 
     app = FastAPI(
         title="家庭学习陪伴与安全教育机器人 API",
-        version="1.0",
+        version="1.1",
         docs_url=f"{PREFIX}/docs",
         openapi_url=f"{PREFIX}/openapi.json",
         redoc_url=None,
@@ -132,6 +133,16 @@ def build_http_app(
     async def get_system() -> Response:
         """设备与服务状态."""
         return success(await slot.require().system())
+
+    @app.get(f"{PREFIX}/settings")
+    async def get_settings() -> Response:
+        """运行设置."""
+        return success(slot.require().settings())
+
+    @app.patch(f"{PREFIX}/settings")
+    async def update_settings(body: UpdateSettingsRequest) -> Response:
+        """修改场景提示词、免按键对话与主动观察开关."""
+        return success(slot.require().update_settings(body))
 
     @app.post(f"{PREFIX}/tasks", status_code=201)
     async def create_task(body: CreateTaskRequest) -> Response:

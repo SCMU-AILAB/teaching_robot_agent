@@ -244,6 +244,15 @@ class RobotHost:
             _ = exploration.cancel()
             _ = await asyncio.gather(exploration, return_exceptions=True)
 
+    @property
+    def task_ids(self) -> tuple[int, ...]:
+        """已登记、尚未释放策略的任务."""
+        return tuple(self._agents)
+
+    def idle(self, task_id: int) -> bool:
+        """没有在处理输入，也没有在探索."""
+        return not self._lock.locked() and task_id not in self._explorations
+
     def exploring(self, task_id: int) -> bool:
         """报告任务是否正在探索."""
         return task_id in self._explorations

@@ -1,6 +1,6 @@
 // frontend/lib/core/constants/api_paths.dart
 
-/// 后端 HTTP 路径，唯一依据为仓库根目录 API_CONTRACT.md v1.0。
+/// 后端 HTTP 路径，唯一依据为仓库根目录 API_CONTRACT.md v1.1。
 ///
 /// 只包含相对 base URL 的路径；base URL 由运行时设置提供，不得硬编码主机地址。
 abstract final class ApiPaths {
@@ -12,6 +12,9 @@ abstract final class ApiPaths {
 
   /// POST：创建任务.
   static const String tasks = '$prefix/tasks';
+
+  /// GET：读取运行设置；PATCH：修改场景提示词、免按键对话与主动观察开关.
+  static const String settings = '$prefix/settings';
 
   /// GET：摄像头最近一帧 JPEG.
   static const String cameraSnapshot = '$prefix/camera/snapshot';

@@ -284,6 +284,10 @@ class TeamGateway:
         self._transcripts[key] = item
         return item
 
+    def has_pending_input(self) -> bool:
+        """输入队列中还有未处理的输入."""
+        return not self._inputs.empty()
+
     async def next_input(self, *, include_terminal: bool = False) -> UserInput:
         """单个教学消费者读取输入，跳过已经取消任务的排队内容."""
         while True:

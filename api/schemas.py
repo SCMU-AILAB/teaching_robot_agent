@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.errors import ErrorCode
 from domain.models import ActionRecord, TaskState
@@ -67,6 +67,29 @@ class UpdateRecordingRequest(_Request):
     """PATCH /tasks/{task_id}/recordings/{recording_id}."""
 
     status: Literal["transcribing", "cancelled"]
+
+
+class UpdateSettingsRequest(BaseModel):
+    """PATCH /settings；scenario_prompt 允许空字符串（清除），至少给出一个字段."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid", strict=True, frozen=True
+    )
+
+    scenario_prompt: Annotated[str, Field(max_length=500)] | None = None
+    hands_free: bool | None = None
+    proactive: bool | None = None
+
+    @model_validator(mode="after")
+    def _require_field(self) -> "UpdateSettingsRequest":
+        """请求体不能为空."""
+        if (
+            self.scenario_prompt is None
+            and self.hands_free is None
+            and self.proactive is None
+        ):
+            raise ValueError("at least one setting is required")
+        return self
 
 
 def validation_message(errors: Sequence[Mapping[str, object]]) -> str:
@@ -157,7 +180,7 @@ class MessageRecord:
     task_id: int
     role: Literal["user", "assistant"]
     text: str
-    source: Literal["text", "speech", "agent"]
+    source: Literal["text", "speech", "agent", "proactive"]
     status: Literal[
         "accepted", "processing", "answered", "rejected", "cancelled", "final"
     ]
