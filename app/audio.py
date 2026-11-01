@@ -41,11 +41,10 @@ class AudioLifecycle(Protocol):
 
 @dataclass(frozen=True)
 class HandsFreeAudio:
-    """免按键收音所需：流式音源、语音检测，以及与录音器、播放器共用的设备租约."""
+    """免按键收音所需：流式音源、语音检测与句段音频的临时存储."""
 
     source_factory: Callable[[], PcmSource]
     detector: VoiceDetector
-    lease: AudioDeviceLease
     evidence: EvidenceStore
     sample_rate: int = 16000
     wake_word: str = ""
@@ -178,7 +177,6 @@ def build_real_audio(evidence: EvidenceStore) -> AudioAdapters:
         hands_free = HandsFreeAudio(
             lambda: WorkerPcmSource(input_device, rate),
             SileroDetector(vad_model, rate),
-            device,
             evidence,
             rate,
             os.environ.get("HANDS_FREE_WAKE_WORD", ""),

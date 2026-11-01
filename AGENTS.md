@@ -333,3 +333,25 @@
 - **转向滑行**：0.4–0.6 弧度/秒转 90° 一律欠转 0.016–0.051 弧度（0.6 时超出 0.035 容差），按直行滑行减速度预估过早停车。新增 `CAR_TURN_COAST_COUNTS_PER_S2`（默认 3400，由实测反推），复测 0.6 弧度/秒转 90° 误差 0.002–0.017 弧度。
 - **真车探索复测三**：转向全部到位，90° 用时约 4.2 秒（原 6.5 秒）；讲解 3 句与画面一致。车处于人、凳子、背包之间，60 秒后“周围都走不通了”结束，需在更空的地方验收。“凳子”与“木凳”被当成两个物体，名称比较改为去掉末尾“子”。
 - 432 项 unittest 通过，Ruff、格式检查通过，basedpyright 0/0/0。
+
+## 2026-11-01：陪伴模式（免按键对话、主动观察、场景提示词，API v1.1）
+
+按负责人要求实现“自然、实时观察和行动、可加提示词”，设计见 `docs/superpowers/specs/2026-11-01-companion-mode-design.md`。
+
+- **接口 v1.1**（负责人确认）：
+  - 新增 `GET/PATCH /api/v1/settings`，字段为 `scenario_prompt`（≤500 字）、`hands_free`、`proactive`，以及两项 `*_available`；
+  - 机器人主动说的话（主动提醒、探索讲解与总结）以 `source=proactive`、`reply_to=null` 的消息出现，解决了探索讲解不进聊天的问题；
+  - `SystemResponse.audio.listening`。
+- **场景提示词**：`domain/settings.py` `RobotSettings`，以“场景要求（负责人设置，不能违反上面的规则）”接在系统提示末尾，回答、探索讲解、主动提醒都读取最新值。真机验证：设“你叫小安，孩子叫乐乐”后，回答为“乐乐你好！我叫小安”。
+- **免按键对话**（`speech/listener.py`、`providers/asr/silero_vad.py`）：
+  - 工作进程 `stream` 模式持续采集；Silero VAD（`models/silero_vad.onnx`，`SPEECH_VAD_MODEL_PATH`）切句；常驻 SenseVoice 识别；经 `submit_transcript` 作为 `speech` 输入提交；
+  - 播报与按键录音期间静音（`GatedPlayer`、`GatedRecorder`），不重启采集进程，结束 0.5 秒后恢复。
+  - 真机修复了三处问题：
+    - 零散读取拿到奇数字节，采样错位，识别成乱码，改为整块读取；
+    - 句尾被检测判成静音而吞字，改为句段前补 0.3 秒、后补 0.6 秒；
+    - 阈值降到 0.4 时底噪被判成语音，一句拖到时长上限才切出，阈值保持 0.5。
+  - 扬声器播合成语音模拟说话时，“你好呀，你叫什么名字？”转写一字不差。之后麦克风被挪离扬声器，播放时输入电平仅约 233（原约 4800），回环测试失效，**真人说话验收待做**。
+- **主动观察**（`agent/proactive.py`）：任务进行中、宿主空闲、孩子没在说话时，每 10 秒观察一次；只提资料库有条目、且本任务没提过的物体；两次间隔不少于 30 秒；孩子开口则放弃本次。**真机待验收**，需要摆放资料库里有的道具。
+- **一键启动**：`deploy/jetson/robot.sh start|stop|status|logs`，负责人要求不设开机自启。`PERCEPTION_DEVICE=realsense` 按名称自动找彩色节点。RealSense 须接 480M 以上的 USB 口：经扩展坞以 12M 连接时反复断开重连。
+- **前端**：机器人设置面板（提示词、两个开关），`ApiPaths.settings`；110 项 flutter test 通过，analyze 无问题。
+- **验证**：Ruff、格式检查通过，basedpyright 0/0/0，445 项 unittest 通过（新增 `tests/test_companion.py`）。

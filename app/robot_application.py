@@ -86,13 +86,12 @@ class RobotApplication:
                     _audio.asr,
                     self.gateway,
                     hands_free.evidence,
-                    hands_free.lease,
                     _enabled=lambda: self.settings.hands_free,
                     _active_task=self.active_task_id,
                     _sample_rate=hands_free.sample_rate,
                     _wake_word=hands_free.wake_word,
                 )
-                # 按键录音与播报占用麦克风前先让免按键收音停下
+                # 按键录音与播报期间免按键收音静音，不录到机器人自己的声音
                 recorder = GatedRecorder(recorder, self.listener)
                 player = GatedPlayer(player, self.listener)
             self.speech_input = SpeechInputService(

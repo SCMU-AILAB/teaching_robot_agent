@@ -1,5 +1,5 @@
 # speech/listener.py
-"""免按键收音：持续采集，按语音检测切句，识别后作为语音输入提交；机器人说话或按键录音时让出麦克风."""
+"""免按键收音：持续采集，按语音检测切句，识别后作为语音输入提交；机器人说话或按键录音时静音."""
 
 import asyncio
 import logging
@@ -15,7 +15,6 @@ from app.team_gateway import TeamGateway
 from domain.services import AudioReference, PlaybackState, TranscriptResult
 from providers.audio.wav import PcmAudio, encode_wav, save_wav
 from speech.interfaces import ASRProvider, AudioPlayer, AudioRecorder
-from speech.resources import AudioDeviceLease
 from storage.evidence import EvidenceStore
 
 logger = logging.getLogger(__name__)
@@ -107,14 +106,15 @@ class WorkerPcmSource:
             raise
 
     async def read(self) -> bytes:
-        """读取下一块 PCM；进程退出时抛出 EOFError."""
+        """读取下一块 PCM（整 20 毫秒，字节数为偶数）；进程退出时抛出 EOFError."""
         process = self._process
         if process is None or process.stdout is None:
             raise EOFError
-        block = await process.stdout.read(self._rate // 50 * 2)
-        if not block:
-            raise EOFError
-        return block
+        try:
+            # 必须按整块读：零散读取可能拿到奇数字节，之后的采样整体错位成噪声
+            return await process.stdout.readexactly(self._rate // 50 * 2)
+        except asyncio.IncompleteReadError as error:
+            raise EOFError from error
 
     async def stop(self) -> None:
         """发 SIGINT 让工作进程正常关闭设备；3 秒内不退出则强制结束."""
@@ -138,7 +138,11 @@ class WorkerPcmSource:
 
 
 class HandsFreeListener:
-    """监督循环每 0.2 秒对齐一次：开关打开、有进行中的任务且无人占用麦克风时采集."""
+    """监督循环每 0.2 秒对齐一次：开关打开且有进行中的任务时保持采集.
+
+    机器人说话或按键录音期间不停采集进程，只丢弃这段时间的声音（静音），结束后很快恢复；
+    这要求麦克风允许与播放、按键录音同时打开（Jetson 上经 PipeWire 满足），因此不占用设备租约。
+    """
 
     def __init__(
         self,
@@ -147,15 +151,14 @@ class HandsFreeListener:
         _asr: ASRProvider,
         _gateway: TeamGateway,
         _evidence: EvidenceStore,
-        _lease: AudioDeviceLease,
         *,
         _enabled: Callable[[], bool],
         _active_task: Callable[[], int | None],
         _sample_rate: int = 16000,
         _wake_word: str = "",
-        _resume_delay_s: float = 0.8,
+        _resume_delay_s: float = 0.5,
     ) -> None:
-        """注入采集、语音检测、识别、网关与设备租约，以及读取开关和当前任务的回调.
+        """注入采集、语音检测、识别与网关，以及读取开关和当前任务的回调.
 
         Args:
             _source_factory: 每次开始采集时新建音源.
@@ -163,19 +166,17 @@ class HandsFreeListener:
             _asr: 常驻识别.
             _gateway: 语音输入提交入口.
             _evidence: 句段音频的临时存储，识别后释放.
-            _lease: 与录音器、播放器共用的设备租约.
             _enabled: 免按键对话开关.
             _active_task: 当前进行中的任务，没有时为 None.
             _sample_rate: 采样率.
             _wake_word: 非空时原话须以它开头，提交时去掉.
-            _resume_delay_s: 机器人说完后等待回声消散、也让分句播报的下一句接上，再恢复采集，秒.
+            _resume_delay_s: 机器人说完后等待回声消散、也让分句播报的下一句接上，再恢复收音，秒.
         """
         self._source_factory: Callable[[], PcmSource] = _source_factory
         self._detector: VoiceDetector = _detector
         self._asr: ASRProvider = _asr
         self._gateway: TeamGateway = _gateway
         self._evidence: EvidenceStore = _evidence
-        self._lease: AudioDeviceLease = _lease
         self._enabled: Callable[[], bool] = _enabled
         self._active_task: Callable[[], int | None] = _active_task
         self._rate: int = _sample_rate
@@ -191,13 +192,18 @@ class HandsFreeListener:
         self.submitted: int = 0
 
     @property
+    def muted(self) -> bool:
+        """机器人在说话、正在按键录音，或刚说完等待回声消散."""
+        return bool(self._holders) or time.monotonic() < self._resume_at
+
+    @property
     def listening(self) -> bool:
-        """正在采集."""
-        return self._stream is not None and not self._stream.done()
+        """正在采集且没有静音."""
+        return self._stream is not None and not self._stream.done() and not self.muted
 
     @property
     def hearing(self) -> bool:
-        """正在采集且检测到有人说到一半."""
+        """正在收音且检测到有人说到一半."""
         return self.listening and self._detector.speaking
 
     def start(self) -> None:
@@ -209,7 +215,7 @@ class HandsFreeListener:
             ]
 
     async def close(self) -> None:
-        """停止采集与后台协程，释放麦克风."""
+        """停止采集与后台协程."""
         self._closed = True
         await self._stop_stream()
         workers, self._workers = self._workers, []
@@ -218,70 +224,65 @@ class HandsFreeListener:
         _ = await asyncio.gather(*workers, return_exceptions=True)
 
     async def pause(self, owner: object) -> None:
-        """播报或按键录音前调用：停止采集并释放麦克风，返回后设备租约已空出."""
+        """播报或按键录音前调用：之后采到的声音全部丢弃，说到一半的句子作废."""
         self._holders.add(owner)
-        await self._stop_stream()
+        self._detector.reset()
 
     def resume(self, owner: object) -> None:
-        """对应 pause；所有占用方都结束、回声消散后由监督循环恢复采集."""
+        """对应 pause；所有占用方都结束、回声消散后恢复收音."""
         self._holders.discard(owner)
         if not self._holders:
             self._resume_at = time.monotonic() + self._resume_delay_s
 
     async def _supervise(self) -> None:
-        """对齐期望状态：该采集时开始，不该采集或任务变化时停止."""
+        """对齐期望状态：开关打开且有任务时采集，否则或任务变化时停止."""
         while not self._closed:
             task_id = self._active_task()
-            wanted = (
-                self._enabled()
-                and task_id is not None
-                and not self._holders
-                and time.monotonic() >= self._resume_at
-            )
-            if self.listening and (not wanted or task_id != self._stream_task_id):
+            wanted = self._enabled() and task_id is not None
+            running = self._stream is not None and not self._stream.done()
+            if running and (not wanted or task_id != self._stream_task_id):
                 await self._stop_stream()
-            elif wanted and not self.listening and not self._lease.busy:
+            elif wanted and not running:
                 assert task_id is not None
                 await self._start_stream(task_id)
             await asyncio.sleep(_SUPERVISE_S)
 
     async def _start_stream(self, task_id: int) -> None:
-        """取得设备租约并启动音源；麦克风打不开只记日志，下一轮重试."""
-        owner = object()
-        self._lease.acquire(owner)
+        """启动音源；麦克风打不开只记日志，稍后重试."""
         source = self._source_factory()
         try:
             await source.start()
         except Exception:
-            self._lease.release(owner)
             logger.exception("[HandsFreeListener._start_stream] 麦克风打不开")
             await asyncio.sleep(2.0)
             return
         self._stream_task_id = task_id
         self._detector.reset()
         self._stream = asyncio.create_task(
-            self._pump(source, task_id, owner), name="hands-free-stream"
+            self._pump(source, task_id), name="hands-free-stream"
         )
 
-    async def _pump(self, source: PcmSource, task_id: int, owner: object) -> None:
-        """读取 PCM 交给语音检测，完成的句段排队识别；结束时释放设备."""
+    async def _pump(self, source: PcmSource, task_id: int) -> None:
+        """读取 PCM 交给语音检测，完成的句段排队识别；静音期间丢弃声音."""
         try:
             while True:
                 block = await source.read()
+                if self.muted:
+                    self._detector.reset()
+                    continue
                 for segment in self._detector.accept(block):
                     self._segments.put_nowait((task_id, segment, time.time()))
         except EOFError:
             logger.warning("[HandsFreeListener._pump] 采集进程意外结束")
         finally:
             await source.stop()
-            self._lease.release(owner)
 
     async def _stop_stream(self) -> None:
-        """停止采集并等待设备释放；未说完的半句丢弃."""
+        """停止采集；未说完的半句丢弃."""
         stream, self._stream = self._stream, None
         if stream is None:
             return
-        # 取消采集协程，由它的收尾停止音源并释放设备租约
+        # 取消采集协程，由它的收尾停止音源
         _ = stream.cancel()
         _ = await asyncio.gather(stream, return_exceptions=True)
         self._detector.reset()

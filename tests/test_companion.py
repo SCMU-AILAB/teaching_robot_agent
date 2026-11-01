@@ -1,11 +1,14 @@
 # tests/test_companion.py
 """陪伴模式：免按键收音、主动观察、场景提示词与设置接口、机器人主动消息."""
 
+import array
 import asyncio
+import math
 import unittest
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import override
 from unittest.mock import patch
 
@@ -27,15 +30,16 @@ from domain.services import (
 )
 from education.knowledge_service import build_home_knowledge
 from perception.simulated import SimulatedPerception
+from providers.asr.silero_vad import SileroDetector
 from robot.simulated import SimulatedAdapter
 from runtime.action_manager import ActionManager
 from skills.robot_registry import build_robot_skills
 from speech.listener import GatedPlayer, HandsFreeListener, accepted_text
-from speech.resources import AudioDeviceLease
 from storage.evidence import EvidenceStore
 from tests.test_http_api import call, dig, items
 from tests.test_object_safety_flow import ObjectPerception, RecordingChatModel
 
+VAD_MODEL = "models/silero_vad.onnx"
 SCISSORS_TIP = "右边好像有剪刀，很锋利，要请大人帮忙拿哦。"
 
 
@@ -115,7 +119,6 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.task_id: int = self.gateway.create_task("陪伴").task_id
         self.feed: asyncio.Queue[bytes] = asyncio.Queue()
         self.log: list[str] = []
-        self.lease: AudioDeviceLease = AudioDeviceLease()
         self.enabled: bool = True
         self.asr: FakeASR = FakeASR([])
         self.listener: HandsFreeListener = HandsFreeListener(
@@ -124,7 +127,6 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             self.asr,
             self.gateway,
             EvidenceStore(),
-            self.lease,
             _enabled=lambda: self.enabled,
             _active_task=lambda: self.task_id,
             _resume_delay_s=0.05,
@@ -132,16 +134,15 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
 
     @override
     async def asyncTearDown(self) -> None:
-        """关闭后释放麦克风."""
+        """关闭后采集停止."""
         await self.listener.close()
-        self.assertFalse(self.lease.busy)
+        self.assertEqual(self.log.count("start"), self.log.count("stop"))
 
     async def test_utterance_submitted_as_speech(self) -> None:
         """说完一句：识别后作为语音输入提交到当前任务."""
         self.asr.texts = ["你好呀，看看前面有什么？"]
         self.listener.start()
         await wait_until(lambda: self.listener.listening)
-        self.assertTrue(self.lease.busy)
         self.feed.put_nowait(b"\x00\x00" * 160)
         self.feed.put_nowait(SEGMENT)
         item = await asyncio.wait_for(self.gateway.next_input(), 2)
@@ -160,21 +161,23 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item.text, "你好")
         self.assertEqual(self.listener.submitted, 1)
 
-    async def test_pause_releases_microphone_and_resume_restarts(self) -> None:
-        """播报前暂停：采集停止、租约空出；恢复后重新采集."""
+    async def test_pause_mutes_and_resume_keeps_stream(self) -> None:
+        """机器人说话期间的声音丢弃；恢复后照常提交，采集进程不重启."""
+        self.asr.texts = ["我说完了"]
         self.listener.start()
         await wait_until(lambda: self.listener.listening)
         owner = object()
         await self.listener.pause(owner)
         self.assertFalse(self.listener.listening)
-        self.assertFalse(self.lease.busy)
-        self.lease.acquire(owner)
-        self.lease.release(owner)
+        self.feed.put_nowait(SEGMENT)
         await asyncio.sleep(0.3)
-        self.assertFalse(self.listener.listening)
+        self.assertEqual(self.listener.submitted, 0)
         self.listener.resume(owner)
         await wait_until(lambda: self.listener.listening)
-        self.assertEqual(self.log, ["start", "stop", "start"])
+        self.feed.put_nowait(SEGMENT)
+        item = await asyncio.wait_for(self.gateway.next_input(), 2)
+        self.assertEqual(item.text, "我说完了")
+        self.assertEqual(self.log, ["start"])
 
     async def test_disabled_or_no_task_does_not_listen(self) -> None:
         """开关关闭时不采集；打开后开始；采集进程意外结束会重新开始."""
@@ -404,6 +407,31 @@ class SettingsAndProactiveTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIsNone(await busy.check_once())
             self.assertEqual(c.perception.observe_count, 0)
+
+
+@unittest.skipUnless(Path(VAD_MODEL).is_file(), "需要 models/silero_vad.onnx")
+class SileroAlignmentTests(unittest.TestCase):
+    """零散块（含奇数字节）喂入时，切出的句段与整块喂入一致."""
+
+    def test_odd_sized_blocks_keep_alignment(self) -> None:
+        """不成对字节留到下一块，采样不错位."""
+        rate = 16000
+        tone = array.array(
+            "h",
+            (
+                int(8000 * math.sin(2 * math.pi * 300 * i / rate))
+                for i in range(rate * 2)
+            ),
+        ).tobytes()
+        silence = b"\x00\x00" * rate
+        data = silence + tone + silence
+        whole = SileroDetector(VAD_MODEL).accept(data)
+        detector = SileroDetector(VAD_MODEL)
+        pieces: list[bytes] = []
+        for offset in range(0, len(data), 641):
+            pieces += detector.accept(data[offset : offset + 641])
+        self.assertEqual([len(p) for p in pieces], [len(p) for p in whole])
+        self.assertEqual(pieces, whole)
 
 
 if __name__ == "__main__":
