@@ -3,6 +3,7 @@
 
 import array
 import asyncio
+import importlib.util
 import math
 import unittest
 from collections.abc import AsyncGenerator, Callable
@@ -409,7 +410,10 @@ class SettingsAndProactiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(c.perception.observe_count, 0)
 
 
-@unittest.skipUnless(Path(VAD_MODEL).is_file(), "需要 models/silero_vad.onnx")
+@unittest.skipUnless(
+    Path(VAD_MODEL).is_file() and importlib.util.find_spec("sherpa_onnx") is not None,
+    "需要 models/silero_vad.onnx 与 speech 依赖组（sherpa-onnx）",
+)
 class SileroAlignmentTests(unittest.TestCase):
     """零散块（含奇数字节）喂入时，切出的句段与整块喂入一致."""
 
