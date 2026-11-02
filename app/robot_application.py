@@ -129,7 +129,11 @@ class RobotApplication:
     def active_task_id(self) -> int | None:
         """宿主已登记且尚未结束的最新任务；对外同时只有一个进行中的任务."""
         for task_id in sorted(self.host.task_ids, reverse=True):
-            status = self.gateway.get_task(task_id).status
+            try:
+                status = self.gateway.get_task(task_id).status
+            except KeyError:
+                # 记录已按保留上限清理的任务不再是进行中的任务
+                continue
             if status in {TaskStatus.PENDING, TaskStatus.RUNNING}:
                 return task_id
         return None

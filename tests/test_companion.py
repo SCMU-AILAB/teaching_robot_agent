@@ -122,6 +122,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.log: list[str] = []
         self.enabled: bool = True
         self.asr: FakeASR = FakeASR([])
+        self.current_task: Callable[[], int | None] = lambda: self.task_id
         self.listener: HandsFreeListener = HandsFreeListener(
             lambda: FakeSource(self.feed, self.log),
             FakeDetector(),
@@ -129,7 +130,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             self.gateway,
             EvidenceStore(),
             _enabled=lambda: self.enabled,
-            _active_task=lambda: self.task_id,
+            _active_task=lambda: self.current_task(),
             _resume_delay_s=0.05,
         )
 
@@ -192,6 +193,36 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         await wait_until(lambda: self.log.count("start") == 2)
         self.enabled = False
         await wait_until(lambda: not self.listener.listening)
+
+    async def test_backlog_keeps_at_most_one_utterance(self) -> None:
+        """机器人忙时已有一句排队，后面的句子丢弃."""
+        self.asr.texts = ["第一句话", "第二句话"]
+        self.listener.start()
+        await wait_until(lambda: self.listener.listening)
+        self.feed.put_nowait(SEGMENT)
+        self.feed.put_nowait(SEGMENT)
+        await wait_until(lambda: not self.asr.texts)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.listener.submitted, 1)
+        item = await asyncio.wait_for(self.gateway.next_input(), 2)
+        self.assertEqual(item.text, "第一句话")
+        self.assertFalse(self.gateway.has_pending_input())
+
+    async def test_supervisor_survives_errors(self) -> None:
+        """读取当前任务出错时只记日志，恢复后照常收音."""
+        failing = True
+
+        def active() -> int:
+            if failing:
+                raise KeyError("task")
+            return self.task_id
+
+        self.current_task = active
+        self.listener.start()
+        await asyncio.sleep(0.5)
+        self.assertFalse(self.listener.listening)
+        failing = False
+        await wait_until(lambda: self.listener.listening)
 
     def test_accepted_text(self) -> None:
         """短文本丢弃；唤醒词须在开头并去掉."""

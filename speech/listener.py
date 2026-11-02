@@ -235,17 +235,29 @@ class HandsFreeListener:
             self._resume_at = time.monotonic() + self._resume_delay_s
 
     async def _supervise(self) -> None:
-        """对齐期望状态：开关打开且有任务时采集，否则或任务变化时停止."""
+        """对齐期望状态：开关打开且有任务时采集，否则或任务变化时停止.
+
+        单轮出错只记日志：循环一旦退出，免按键对话就悄无声息地失效。
+        """
         while not self._closed:
-            task_id = self._active_task()
-            wanted = self._enabled() and task_id is not None
-            running = self._stream is not None and not self._stream.done()
-            if running and (not wanted or task_id != self._stream_task_id):
-                await self._stop_stream()
-            elif wanted and not running:
-                assert task_id is not None
-                await self._start_stream(task_id)
+            try:
+                await self._align()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[HandsFreeListener._supervise] 收音状态对齐失败")
             await asyncio.sleep(_SUPERVISE_S)
+
+    async def _align(self) -> None:
+        """按开关与当前任务启动或停止采集."""
+        task_id = self._active_task()
+        wanted = self._enabled() and task_id is not None
+        running = self._stream is not None and not self._stream.done()
+        if running and (not wanted or task_id != self._stream_task_id):
+            await self._stop_stream()
+        elif wanted and not running:
+            assert task_id is not None
+            await self._start_stream(task_id)
 
     async def _start_stream(self, task_id: int) -> None:
         """启动音源；麦克风打不开只记日志，稍后重试."""
@@ -313,6 +325,10 @@ class HandsFreeListener:
             logger.info("[HandsFreeListener._submit] 忽略 text=%r", result.text)
             return
         if not self._enabled() or self._active_task() != task_id:
+            return
+        if self._gateway.has_pending_input():
+            # 已有一句在排队：机器人忙时最多积压一句，避免事后逐条回答过时的话
+            logger.info("[HandsFreeListener._submit] 已有输入排队，丢弃 text=%s", text)
             return
         _ = self._gateway.submit_transcript(
             task_id, f"hands-free-{uuid4().hex}", TranscriptResult(text)
