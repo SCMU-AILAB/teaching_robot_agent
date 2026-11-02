@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -18,6 +19,7 @@ from agent.exploration import (
     EXPLORE_REPLY,
     ExplorationConfig,
     ExplorationController,
+    model_narrator,
     same_object,
     wants_exploration,
 )
@@ -225,6 +227,23 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         skills = [action.raw_request.skill_name for action in snapshot.actions]
         self.assertIn("turn_relative", skills)
         self.assertNotIn("move_relative", skills)
+
+    async def test_narration_never_guarantees_safety(self) -> None:
+        """讲解保证安全时重写一次；仍然保证就不说."""
+        fixed = model_narrator(
+            FakeMessagesListChatModel(
+                responses=[AIMessage("椅子很安全。"), AIMessage("好像有把椅子。")]
+            ),
+            30,
+        )
+        self.assertEqual(await fixed((("椅子", "中间"),), ()), "好像有把椅子。")
+        stubborn = model_narrator(
+            FakeMessagesListChatModel(
+                responses=[AIMessage("没有危险。"), AIMessage("都是安全的。")]
+            ),
+            30,
+        )
+        self.assertEqual(await stubborn((("椅子", "中间"),), ()), "")
 
     def test_exploration_intent(self) -> None:
         """明确的探索请求被识别，概念提问与普通移动不算."""

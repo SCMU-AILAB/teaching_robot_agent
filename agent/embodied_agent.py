@@ -82,6 +82,13 @@ SAFETY_CLAIM_CORRECTION = (
     "宿主：图片和资料不能证明东西安全，不要说“很安全”“没有危险”“可以放心”。"
     "改为说明看到了什么，有资料就依据资料提醒，没有就建议请大人确认。"
 )
+
+
+def claims_safety(text: str) -> bool:
+    """回答是否在保证物品或现场安全."""
+    return _SAFETY_CLAIM.search(text) is not None
+
+
 # 移动后声称接近或到达物体；里程计只知道走了多远，不知道离物体多远
 _APPROACH_CLAIM = re.compile(r"(更|越来越)近|靠近了|近了|(走|来|到)到了|已经到|到达")
 APPROACH_CLAIM_CORRECTION = (
@@ -409,7 +416,7 @@ class EmbodiedAgent:
             )
         if self._moved_in_turn and _APPROACH_CLAIM.search(text):
             parts.append(APPROACH_CLAIM_CORRECTION)
-        if _SAFETY_CLAIM.search(text):
+        if claims_safety(text):
             parts.append(SAFETY_CLAIM_CORRECTION)
         return "\n".join(parts) if parts else None
 
