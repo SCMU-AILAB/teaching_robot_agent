@@ -1,0 +1,15 @@
+# .dockerignore
+# 镜像只需要 Dockerfile 中 COPY 的后端源码与锁文件
+.git
+.venv
+**/__pycache__
+.ruff_cache
+.env
+.env.*
+models
+frontend
+robot-ui
+firmware
+docs
+tests
+tools

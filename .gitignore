@@ -24,3 +24,6 @@ Thumbs.db
 firmware/backup/
 target/
 firmware/**/*.bin
+
+# Docker 部署的本机配置（由 deploy/docker/backend.env.example 复制）
+/deploy/docker/backend.env

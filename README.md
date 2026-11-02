@@ -79,6 +79,7 @@ uv run python -m app.classroom_demo
 - [接口文档 v1.0](API_CONTRACT.md)：仓库全部对外接口（HTTP API、底盘串口协议、外部推理服务）的唯一依据，前端按此实现；后端由 `uv run python -m app.robot_server` 启动，调试页面 `/api/v1/docs`。
 - [Jetson 原生交互终端](robot-ui/README.md)：板端 1280×600 触摸屏的纯 C11/Raylib 前端，通过 API v1.0 连接机器人后端。
 - [Jetson 设备端部署指南](docs/JETSON_DEVICE_GUIDE.md)：Jetson 上安装、配置（`deploy/jetson/robot.env.example`）、到 3080 的 SSH 隧道与 systemd 常驻服务（`deploy/jetson/*.service`）、验收清单。
+- [Docker 部署后端](deploy/docker/README.md)：`docker compose up -d --build` 即可用模拟设备启动；叠加 `deploy/docker/compose.robot.yaml` 接真车、摄像头、麦克风与到 3080 的隧道。
 - `model_server.sh`：按需启停 3080 上的 GPT-SoVITS 与 Ollama（不开机自启，用前 `start`、用完 `stop`），`status` 查看显存与已加载模型，`tunnel` 在本机打开 21435/29881 隧道；需先设置 `MODEL_SERVER_SSH=<用户>@<3080 地址>`。
 - [编码规范](docs/CODING_SPEC.md)：代码由负责人审核；当前按用户指示直接在 main 修改。
 

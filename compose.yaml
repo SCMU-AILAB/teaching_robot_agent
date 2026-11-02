@@ -1,0 +1,28 @@
+# compose.yaml
+# 机器人后端（Docker）。默认模拟底盘与感知，只需一个能访问的 Ollama：
+#   cp deploy/docker/backend.env.example deploy/docker/backend.env   # 填 OLLAMA_BASE_URL
+#   docker compose up -d --build
+# 接真车、摄像头与麦克风时叠加 deploy/docker/compose.robot.yaml，见 deploy/docker/README.md。
+services:
+  backend:
+    build: .
+    image: teaching-robot-backend
+    env_file: deploy/docker/backend.env
+    environment:
+      # 容器内固定监听 0.0.0.0:8090；对外地址由下面的端口映射决定
+      ROBOT_API_HOST: 0.0.0.0
+      ROBOT_API_PORT: "8090"
+    ports:
+      # 只在受控局域网开放，不得映射到公网
+      - "8090:8090"
+    extra_hosts:
+      # 后端连宿主机上的 Ollama 时用 http://host.docker.internal:11434
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # 识别与语音检测模型（仓库 models/，不进镜像）
+      - ./models:/app/models:ro
+    # 回收录音、播放子进程
+    init: true
+    # 退出时先停车、释放设备
+    stop_grace_period: 20s
+    restart: unless-stopped

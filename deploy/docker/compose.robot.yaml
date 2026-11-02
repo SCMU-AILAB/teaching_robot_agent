@@ -1,0 +1,50 @@
+# deploy/docker/compose.robot.yaml
+# 真车叠加配置（在 Jetson 上，仓库根目录执行）：
+#   docker compose -f compose.yaml -f deploy/docker/compose.robot.yaml up -d --build
+# 底盘串口、RealSense、宿主音频服务与到 3080 的 SSH 隧道交给容器；宿主不再需要 robot.sh。
+services:
+  backend:
+    # host 网络：经隧道访问 127.0.0.1:21435/29881，前端直接连 Jetson 的 8090
+    network_mode: host
+    ports: !reset []
+    extra_hosts: !reset []
+    environment:
+      # 声音经宿主 PipeWire（pulse 兼容套接字）进出，设备留空即用宿主默认输入输出；
+      # 默认设备在宿主上设置（robot.sh 中 setup_audio 的 wpctl 步骤）
+      PULSE_SERVER: unix:/run/pulse/native
+      SPEECH_INPUT_DEVICE: ""
+      SPEECH_OUTPUT_DEVICE: ""
+      OLLAMA_BASE_URL: http://127.0.0.1:21435
+      SPEECH_GPTSOVITS_URL: http://127.0.0.1:29881
+    volumes:
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:/run/pulse/native
+      # 整个 /dev 挂入，RealSense 与底盘拔插后编号变化仍可见；访问权限只放开下面三类设备
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 81:* rmw" # video4linux（RealSense 彩色与深度）
+      - "c 166:* rmw" # ttyACM（底盘）
+      - "c 188:* rmw" # ttyUSB
+    depends_on:
+      - tunnel
+
+  tunnel:
+    # 3080 的 Ollama 与 GPT-SoVITS 只监听本机，经 SSH 转到 Jetson 本机 21435/29881。
+    # 使用宿主 ~/.ssh 的密钥与 known_hosts（只读，不读其中的 config），MODEL_SERVER_SSH 写在 backend.env。
+    image: teaching-robot-backend
+    # 镜像由 backend 构建，不去仓库拉取
+    pull_policy: never
+    network_mode: host
+    env_file: deploy/docker/backend.env
+    volumes:
+      - ${HOME}/.ssh:/root/.ssh:ro
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        exec ssh -N -F none -o BatchMode=yes -o ExitOnForwardFailure=yes
+        -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+        -L 127.0.0.1:21435:127.0.0.1:11435 -L 127.0.0.1:29881:127.0.0.1:9881
+        "$$MODEL_SERVER_SSH"
+    healthcheck:
+      disable: true
+    restart: always
