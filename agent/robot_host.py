@@ -9,9 +9,10 @@ from uuid import uuid4
 
 from agent.embodied_agent import AgentTurn
 from agent.exploration import EXPLORE_REPLY, ExplorationController, wants_exploration
+from agent.homing import Homing, wants_return
 from agent.interfaces import DecisionAgent
 from app.team_gateway import TeamGateway, UserInput
-from domain.models import ActionRecord, ActionStatus, TaskState, TaskStatus
+from domain.models import ActionRecord, ActionStatus, Pose2D, TaskState, TaskStatus
 from domain.services import ObservationRequest
 from domain.validation import positive_int
 from skills.speak import speech_budget_s
@@ -72,6 +73,7 @@ class RobotHost:
         *,
         _speak_replies: bool = False,
         _exploration_factory: Callable[[int], ExplorationController] | None = None,
+        _homing: bool = False,
     ) -> None:
         """注入共享服务，采用串行输入与有限动作续接策略.
 
@@ -81,6 +83,7 @@ class RobotHost:
             _max_actions: 一条输入最多续接的动作数.
             _speak_replies: 是否播报最终回答.
             _exploration_factory: 按任务创建探索控制器；None 时不支持探索.
+            _homing: 底盘能前进、转向、定位时为 True，孩子叫“回来”时走回出发点.
         """
         self._gateway: TeamGateway = _gateway
         self._factory: Callable[[int], DecisionAgent] = _agent_factory
@@ -98,6 +101,9 @@ class RobotHost:
         )
         self._explore_requests: set[int] = set()
         self._explorations: dict[int, asyncio.Task[None]] = {}
+        self._homing: bool = _homing
+        # 陪伴开始时的位姿：孩子叫“回来”就回到这里
+        self._homes: dict[int, Pose2D] = {}
 
     async def start(self, task_id: int) -> RobotReply:
         """登记机器人任务，不创建课程或后台输入消费者."""
@@ -105,6 +111,9 @@ class RobotHost:
             await self._require_active(task_id)
             if task_id not in self._agents:
                 self._agents[task_id] = self._factory(task_id)
+                if self._homing:
+                    snapshot = await self._gateway.get_snapshot(task_id)
+                    self._homes[task_id] = snapshot.robot.position
             return await self._reply(task_id, "机器人任务已就绪。")
 
     def request_exploration(self, task_id: int) -> None:
@@ -195,6 +204,7 @@ class RobotHost:
                 status = (await self._gateway.get_snapshot(item.task_id)).task.status
                 if status not in {TaskStatus.PENDING, TaskStatus.RUNNING}:
                     _ = self._agents.pop(item.task_id, None)
+                    _ = self._homes.pop(item.task_id, None)
 
     async def cancel(self, task_id: int) -> TaskState:
         """停止不等待消费锁或模型返回，执行层负责确认设备停止."""
@@ -207,6 +217,7 @@ class RobotHost:
             _ = exploration.cancel()
         result = await self._gateway.cancel_task(task_id)
         _ = self._agents.pop(task_id, None)
+        _ = self._homes.pop(task_id, None)
         if exploration is not None:
             _ = await asyncio.gather(exploration, return_exceptions=True)
         return result
@@ -219,6 +230,7 @@ class RobotHost:
             await self._require_active(task_id)
             result = self._gateway.finish_interaction(task_id)
             _ = self._agents.pop(task_id, None)
+            _ = self._homes.pop(task_id, None)
             return result
 
     async def close(self) -> None:
@@ -386,6 +398,14 @@ class RobotHost:
             self._explore_requests.add(item.task_id)
             agent.record_exchange(item.text, EXPLORE_REPLY, moved=True)
             turn = AgentTurn(EXPLORE_REPLY)
+        elif item.task_id in self._homes and wants_return(item.text):
+            # 回出发点要按里程计算转角和距离，模型算不准，也常只口头答应不动
+            logger.info("[RobotHost._handle] 识别为回到出发点 task_id=%s", item.task_id)
+            text = await Homing(
+                self._gateway, item.task_id, self._homes[item.task_id]
+            ).run()
+            agent.record_exchange(item.text, text, moved=True)
+            return await self._say(item.task_id, text, [])
         else:
             turn = await agent.decide(item)
         actions: list[int] = []

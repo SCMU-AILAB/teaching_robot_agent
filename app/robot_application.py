@@ -112,6 +112,12 @@ class RobotApplication:
             self._build_agent,
             _speak_replies=_audio is not None,
             _exploration_factory=self._exploration_factory,
+            _homing={
+                RobotCapability.MOVE_RELATIVE,
+                RobotCapability.TURN_RELATIVE,
+                RobotCapability.LOCALIZATION,
+            }
+            <= _robot.capabilities,
         )
         self.events: ActionEventHub = ActionEventHub(self.runtime)
         self.watcher: ProactiveWatcher | None = None
