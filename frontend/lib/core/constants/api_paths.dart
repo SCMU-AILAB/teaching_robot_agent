@@ -15,6 +15,7 @@ abstract final class ApiPaths {
 
   /// GET：读取运行设置；PATCH：修改场景提示词、免按键对话与主动观察开关.
   static const String settings = '$prefix/settings';
+  static const String map = '$prefix/map';
 
   /// GET：摄像头最近一帧 JPEG.
   static const String cameraSnapshot = '$prefix/camera/snapshot';

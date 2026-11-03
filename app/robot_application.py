@@ -22,6 +22,7 @@ from domain.robot import RobotCapability
 from domain.settings import RobotSettings
 from education.knowledge_service import KnowledgeService, build_home_knowledge
 from perception.interfaces import PerceptionService
+from perception.mapping import MapBuilder, OccupancyMap
 from robot.base import RobotAdapter
 from robot.obstacle_guard import GuardedRobotAdapter
 from runtime.action_manager import ActionManager
@@ -107,6 +108,12 @@ class RobotApplication:
         self._exploration_factory: Callable[[int], ExplorationController] | None = (
             self._exploration_builder(_robot, _exploration, speak=_audio is not None)
         )
+        # 有深度避障就实时建图：车停稳时把深度扫描按里程计画进栅格
+        self.map: OccupancyMap | None = None
+        self._mapper: MapBuilder | None = None
+        if isinstance(_robot, GuardedRobotAdapter):
+            self.map = OccupancyMap()
+            self._mapper = MapBuilder(self.map, _robot.depth, _robot.get_state)
         self.host: RobotHost = RobotHost(
             self.gateway,
             self._build_agent,
@@ -118,6 +125,7 @@ class RobotApplication:
                 RobotCapability.LOCALIZATION,
             }
             <= _robot.capabilities,
+            _map=self.map,
         )
         self.events: ActionEventHub = ActionEventHub(self.runtime)
         self.watcher: ProactiveWatcher | None = None
@@ -230,6 +238,8 @@ class RobotApplication:
             self.listener.start()
         if self.watcher is not None:
             self.watcher.start()
+        if self._mapper is not None:
+            self._mapper.start()
 
     async def create_task(self, target: str) -> TaskState:
         """创建独立机器人任务，交由宿主登记而非自动开课."""
@@ -269,6 +279,8 @@ class RobotApplication:
 
     async def close(self) -> None:
         """先停主动观察与免按键收音，再取消机器人任务，最后关闭感知和设备."""
+        if self._mapper is not None:
+            await self._mapper.close()
         if self.watcher is not None:
             await self.watcher.close()
         if self.listener is not None:

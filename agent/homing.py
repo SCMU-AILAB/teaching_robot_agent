@@ -8,6 +8,7 @@ import re
 
 from app.team_gateway import TeamGateway
 from domain.models import ActionStatus, Pose2D
+from perception.mapping import OccupancyMap
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,9 @@ _ARRIVED_M = 0.15
 _HEADING_TOLERANCE_RAD = 0.1
 # 每段最多走这么远，走完重新读位置修正方向
 _SEGMENT_M = 1.0
-_MAX_SEGMENTS = 12
+_MAX_SEGMENTS = 16
+# 规划时与已知障碍保持的距离：车宽一半加余量
+_PLAN_CLEARANCE_M = 0.2
 
 ARRIVED_REPLY = "我回来啦！"
 ALREADY_HOME_REPLY = "我就在出发的地方呀。"
@@ -44,17 +47,25 @@ def _wrap(angle: float) -> float:
 class Homing:
     """一次回到出发点的执行；动作经核心网关提交，避障由底盘守护负责."""
 
-    def __init__(self, _gateway: TeamGateway, _task_id: int, _home: Pose2D) -> None:
+    def __init__(
+        self,
+        _gateway: TeamGateway,
+        _task_id: int,
+        _home: Pose2D,
+        _map: OccupancyMap | None = None,
+    ) -> None:
         """绑定任务与出发点.
 
         Args:
             _gateway: 核心网关.
             _task_id: 所属任务.
             _home: 陪伴开始时的位姿.
+            _map: 有地图时绕开已知障碍规划；没有或找不到路时走直线.
         """
         self._gateway: TeamGateway = _gateway
         self._task_id: int = _task_id
         self._home: Pose2D = _home
+        self._map: OccupancyMap | None = _map
 
     async def run(self) -> str:
         """走回出发点并转回出发时的朝向，返回给孩子的话.
@@ -70,13 +81,15 @@ class Homing:
             remaining = math.hypot(home.x - pose.x, home.y - pose.y)
             if remaining <= _ARRIVED_M:
                 break
-            bearing = _wrap(math.atan2(home.y - pose.y, home.x - pose.x) - pose.yaw)
+            target_x, target_y = self._next_point(pose)
+            leg = math.hypot(target_x - pose.x, target_y - pose.y)
+            bearing = _wrap(math.atan2(target_y - pose.y, target_x - pose.x) - pose.yaw)
             if abs(bearing) > _HEADING_TOLERANCE_RAD and not await self._act(
                 "turn_relative", {"angle_rad": bearing}
             ):
                 return self._stuck(remaining)
             if not await self._act(
-                "move_relative", {"distance_m": min(remaining, _SEGMENT_M)}
+                "move_relative", {"distance_m": min(leg, _SEGMENT_M)}
             ):
                 return self._stuck(remaining)
             moved = True
@@ -93,6 +106,14 @@ class Homing:
             if not await self._act("turn_relative", {"angle_rad": facing}):
                 return "我回到出发的地方了，不过没能转回原来的方向。"
         return ARRIVED_REPLY if moved else ALREADY_HOME_REPLY
+
+    def _next_point(self, pose: Pose2D) -> tuple[float, float]:
+        """下一个要走到的点：地图规划路径的第一个拐点，没有路径时直接是出发点."""
+        if self._map is not None:
+            path = self._map.plan(pose, self._home, _PLAN_CLEARANCE_M)
+            if path:
+                return path[0]
+        return self._home.x, self._home.y
 
     @staticmethod
     def _stuck(remaining: float) -> str:

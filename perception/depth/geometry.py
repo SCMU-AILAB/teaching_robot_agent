@@ -80,6 +80,9 @@ class Clearance:
     headings: tuple[tuple[float, float], ...]
     # 画面中部有效深度像素比例；贴近障碍时读数会骤减，供守护判断
     center_valid_ratio: float
+    # 建图用的扫描：视野按方位分扇区，每项为（方位弧度，左正；距离米；是否碰到障碍）；
+    # 没有障碍时距离为 free_range_m；距离从车体原点算起
+    scan: tuple[tuple[float, float, bool], ...] = ()
 
 
 type FloatArray = NDArray[np.float64]
@@ -155,7 +158,38 @@ def measure_clearance(
     height, width = cast(tuple[int, int], depth_mm.shape)
     center = depth_mm[height // 3 : 2 * height // 3, width // 3 : 2 * width // 3]
     ratio = float(np.count_nonzero(center)) / max(1, center.size)
-    return Clearance(captured_at, ahead, headings, ratio)
+    scan = _scan(forward, left, geometry, width)
+    return Clearance(captured_at, ahead, headings, ratio, scan)
+
+
+# 建图扫描的扇区数与每个扇区判定为障碍所需的取样点数
+_SCAN_SECTORS = 16
+_SCAN_MIN_POINTS = 6
+
+
+def _scan(
+    forward: NDArray[np.float64],
+    left: NDArray[np.float64],
+    geometry: DepthGeometry,
+    width: int,
+) -> tuple[tuple[float, float, bool], ...]:
+    """按方位把障碍点分到扇区，每个扇区取距离的第 5 百分位."""
+    half_fov = math.atan2(width / 2, geometry.fx)
+    edges: list[float] = np.linspace(-half_fov, half_fov, _SCAN_SECTORS + 1).tolist()
+    bearing: FloatArray = np.arctan2(left, forward)
+    distance: FloatArray = np.hypot(forward, left)
+    result: list[tuple[float, float, bool]] = []
+    for index in range(_SCAN_SECTORS):
+        low = edges[index]
+        high = edges[index + 1]
+        inside = (bearing >= low) & (bearing < high) & (forward > 0)
+        values: FloatArray = distance[inside]
+        if values.size < _SCAN_MIN_POINTS:
+            result.append(((low + high) / 2, geometry.free_range_m, False))
+        else:
+            reach = min(geometry.free_range_m, float(np.percentile(values, 5)))
+            result.append(((low + high) / 2, reach, True))
+    return tuple(result)
 
 
 def _corridor_clearance(

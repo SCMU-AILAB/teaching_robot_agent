@@ -139,6 +139,11 @@ def build_http_app(
         """运行设置."""
         return success(slot.require().settings())
 
+    @app.get(f"{PREFIX}/map")
+    async def get_map() -> Response:
+        """实时栅格地图."""
+        return success(await slot.require().map())
+
     @app.patch(f"{PREFIX}/settings")
     async def update_settings(body: UpdateSettingsRequest) -> Response:
         """修改场景提示词、免按键对话与主动观察开关."""

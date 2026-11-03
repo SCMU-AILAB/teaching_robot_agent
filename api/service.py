@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import base64
 import logging
 import time
 from collections import OrderedDict
@@ -227,6 +228,29 @@ class RobotApiService:
         }
 
     # ========== 设置 ==========
+
+    async def map(self) -> JsonObject:
+        """MapResponse；未配置深度相机返回 50002."""
+        occupancy = self._app.map
+        if occupancy is None:
+            raise ApiError(ErrorCode.UNAVAILABLE, "未配置深度相机，没有地图")
+        view = occupancy.view()
+        robot = (await self._app.runtime.robot.get_state()).position
+        task_id = self._app.active_task_id()
+        home = self._app.host.home(task_id) if task_id is not None else None
+        return {
+            "resolution_m": view.resolution_m,
+            "origin_x": view.origin_x,
+            "origin_y": view.origin_y,
+            "width": view.width,
+            "height": view.height,
+            "cells": base64.b64encode(view.cells).decode("ascii"),
+            "robot": {"x": robot.x, "y": robot.y, "yaw": robot.yaw},
+            "home": None
+            if home is None
+            else {"x": home.x, "y": home.y, "yaw": home.yaw},
+            "updated_at": time.time(),
+        }
 
     def settings(self) -> JsonObject:
         """SettingsResponse."""

@@ -2,6 +2,7 @@
 """按 API_CONTRACT.md v1.0 验证 HTTP 接口、事件流与服务层语义."""
 
 import asyncio
+import base64
 import io
 import json
 import tempfile
@@ -30,8 +31,11 @@ from app.robot_application import RobotApplication
 from domain.models import TaskStatus
 from perception.camera import FileCamera
 from perception.simulated import SimulatedPerception
+from robot.base import RobotAdapter
+from robot.obstacle_guard import GuardedRobotAdapter
 from robot.simulated import SimulatedAdapter
 from storage.evidence import EvidenceStore
+from tests.test_obstacle_guard import FakeDepth
 
 type Headers = tuple[tuple[str, str], ...]
 
@@ -254,13 +258,16 @@ class Harness:
 
 @asynccontextmanager
 async def harness(
-    *, audio: bool = False, preview: CameraPreview | None = None
+    *,
+    audio: bool = False,
+    preview: CameraPreview | None = None,
+    adapter: RobotAdapter | None = None,
 ) -> AsyncGenerator[Harness]:
     """装配并启动；退出时关闭服务与应用."""
     evidence = EvidenceStore()
     model = FakeMessagesListChatModel(responses=[])
     robot = RobotApplication(
-        SimulatedAdapter(),
+        adapter or SimulatedAdapter(),
         SimulatedPerception(evidence),
         model,
         _audio=build_simulated_audio(evidence, "热水壶能碰吗") if audio else None,
@@ -359,6 +366,7 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
             ("GET", "/api/v1/evidence/" + "a" * 32, None, 404, 40401),
             ("GET", "/api/v1/evidence/not-hex", None, 422, 40001),
             ("GET", "/api/v1/camera/snapshot", None, 503, 50002),
+            ("GET", "/api/v1/map", None, 503, 50002),
             ("GET", "/api/v1/camera/snapshot?max_width=10", None, 422, 40001),
         ]
         async with harness() as h:
@@ -642,6 +650,28 @@ class HttpApiTests(unittest.IsolatedAsyncioTestCase):
                 {"client_request_id": "r1"},
             )
             self.assertEqual((reply.status, reply.code), (503, 50002))
+
+
+class MapApiTests(unittest.IsolatedAsyncioTestCase):
+    """有深度避障时提供实时地图."""
+
+    async def test_map_reports_grid_robot_and_home(self) -> None:
+        """地图字节数等于宽乘高；有任务时带出发点."""
+        adapter = GuardedRobotAdapter(SimulatedAdapter(), FakeDepth())
+        async with harness(adapter=adapter) as h:
+            reply = await call(h.http, "GET", "/api/v1/map")
+            self.assertEqual(reply.status, 200)
+            self.assertIsNone(dig(reply.data, "home"))
+            width = dig(reply.data, "width")
+            height = dig(reply.data, "height")
+            cells = dig(reply.data, "cells")
+            assert isinstance(width, int) and isinstance(height, int)
+            assert isinstance(cells, str)
+            self.assertEqual(len(base64.b64decode(cells)), width * height)
+            self.assertEqual(dig(reply.data, "robot", "x"), 0.0)
+            _ = await h.create_task()
+            reply = await call(h.http, "GET", "/api/v1/map")
+            self.assertEqual(dig(reply.data, "home", "x"), 0.0)
 
 
 class SpeechApiTests(unittest.IsolatedAsyncioTestCase):

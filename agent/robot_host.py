@@ -15,6 +15,7 @@ from app.team_gateway import TeamGateway, UserInput
 from domain.models import ActionRecord, ActionStatus, Pose2D, TaskState, TaskStatus
 from domain.services import ObservationRequest
 from domain.validation import positive_int
+from perception.mapping import OccupancyMap
 from skills.speak import speech_budget_s
 from speech.text import speakable_text
 
@@ -74,6 +75,7 @@ class RobotHost:
         _speak_replies: bool = False,
         _exploration_factory: Callable[[int], ExplorationController] | None = None,
         _homing: bool = False,
+        _map: OccupancyMap | None = None,
     ) -> None:
         """注入共享服务，采用串行输入与有限动作续接策略.
 
@@ -84,6 +86,7 @@ class RobotHost:
             _speak_replies: 是否播报最终回答.
             _exploration_factory: 按任务创建探索控制器；None 时不支持探索.
             _homing: 底盘能前进、转向、定位时为 True，孩子叫“回来”时走回出发点.
+            _map: 实时栅格地图；有地图时回程绕开已知障碍.
         """
         self._gateway: TeamGateway = _gateway
         self._factory: Callable[[int], DecisionAgent] = _agent_factory
@@ -102,6 +105,7 @@ class RobotHost:
         self._explore_requests: set[int] = set()
         self._explorations: dict[int, asyncio.Task[None]] = {}
         self._homing: bool = _homing
+        self._map: OccupancyMap | None = _map
         # 陪伴开始时的位姿：孩子叫“回来”就回到这里
         self._homes: dict[int, Pose2D] = {}
 
@@ -115,6 +119,10 @@ class RobotHost:
                     snapshot = await self._gateway.get_snapshot(task_id)
                     self._homes[task_id] = snapshot.robot.position
             return await self._reply(task_id, "机器人任务已就绪。")
+
+    def home(self, task_id: int) -> Pose2D | None:
+        """任务的出发点；不支持回程或任务未登记时为 None."""
+        return self._homes.get(task_id)
 
     def request_exploration(self, task_id: int) -> None:
         """模型调用探索工具时登记；本条回答结束后在后台开始.
@@ -402,7 +410,7 @@ class RobotHost:
             # 回出发点要按里程计算转角和距离，模型算不准，也常只口头答应不动
             logger.info("[RobotHost._handle] 识别为回到出发点 task_id=%s", item.task_id)
             text = await Homing(
-                self._gateway, item.task_id, self._homes[item.task_id]
+                self._gateway, item.task_id, self._homes[item.task_id], self._map
             ).run()
             agent.record_exchange(item.text, text, moved=True)
             return await self._say(item.task_id, text, [])

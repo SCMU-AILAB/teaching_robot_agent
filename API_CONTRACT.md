@@ -1,4 +1,4 @@
-# 接口文档 v1.1
+# 接口文档 v1.2
 
 状态：**生效**。2026-10-23 项目负责人指示：仓库对外接口统一规范并最小化，以本文为唯一依据，前端按本文实现。本文取代 v0.1 草案与 `feature/speech-output-lifecycle` 分支上的 v0.2 草案；两者与本文冲突处一律以本文为准。
 
@@ -138,6 +138,20 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 | proactive_available | boolean | 是否装配了真实感知与语音；为 false 时 `proactive` 不能设为 true |
 | updated_at | float | 最近一次修改时间 |
 
+### MapResponse
+
+实时平面栅格地图：车停稳时把深度扫描按里程计位姿画入。坐标为里程计坐标（米），原点是底盘连接时的位置，x 为车最初朝向，y 向左；没有回环校正，时间长、走得远会变歪。只覆盖摄像头朝过的方向。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| resolution_m | float | 每格边长 |
+| origin_x / origin_y | float | 第 0 行第 0 列格子左下角的坐标 |
+| width / height | integer | 列数、行数（已裁到已知区域加边距） |
+| cells | string | base64 编码的 width × height 字节，按行排列，第 0 行 y 最小；每字节 0 未知、1 空地、2 障碍 |
+| robot | object | 当前位姿 `x:float`、`y:float`、`yaw:float`（弧度，逆时针为正） |
+| home | object/null | 当前任务的出发点（同上三字段）；孩子叫“回来”时回到这里；没有进行中的任务时为 null |
+| updated_at | float | 生成时间 |
+
 ### TaskSnapshotResponse
 
 页面初始化与断线重连的唯一快照。
@@ -265,6 +279,12 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 
 响应 200：SettingsResponse。字段越界、未知字段或请求体为空返回 40001；对应能力未装配时开启返回 50002。
 
+### GET /api/v1/map
+
+用途：读取实时地图，前端约每秒轮询一次。
+
+响应 200：MapResponse。未配置深度相机（`DEPTH_CAMERA=off`）时返回 50002。
+
 ### GET /api/v1/evidence/{evidence_id}
 
 用途：读取观察画面。
@@ -353,4 +373,5 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 - 2026-10-20：v0.2 草案（设备状态、摄像头预览、会话快照），未批准。
 - 2026-10-23：v1.0 生效。按项目负责人指示统一规范并最小化仓库接口，合并 v0.1/v0.2，补充底盘串口协议、外部服务约定与部署形态。
 - 2026-11-01：v1.1，按项目负责人指示新增免按键对话、主动观察与场景提示词：新增 SettingsResponse 与 `GET/PATCH /api/v1/settings`；MessageResponse 的 `source` 新增 `proactive`（机器人主动说的话，`reply_to` 为 null）；SystemResponse.audio 新增 `listening`。原有接口与字段不变。
+- 2026-11-03：v1.2，按项目负责人指示新增实时地图：新增 MapResponse 与 `GET /api/v1/map`。原有接口与字段不变。
 - 2026-10-23：v1.0.1，HTTP/SSE 服务端实现（`api/`、`app/robot_server.py`）。只补充实现说明与歧义澄清，接口与字段无增删：后端启动方式；未定义查询参数忽略；缺少事件游标返回 40001；`stream.reset` 不占序号、不带 id 及 reason 取值；证据接口只公开观察画面；services 只反映配置；任务记录保留上限；录音到时自动进入识别。
