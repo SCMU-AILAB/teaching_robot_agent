@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage
 
 from agent.context import RobotContextBuilder
 from agent.langchain_tools import build_langchain_tools
+from agent.robot_host import FAILED_REPLIES
 from agent.tools import ToolAdapter
 from app.robot_application import RobotApplication
 from domain.models import ActionStatus, TaskStatus
@@ -268,7 +269,7 @@ class RobotApplicationTests(unittest.IsolatedAsyncioTestCase):
             ):
                 reply = await app.process_next()
                 self.assertEqual(reply.task_status, TaskStatus.RUNNING)
-                self.assertIn("动作未成功", reply.text)
+                self.assertIn(reply.text, FAILED_REPLIES)
                 self.assertEqual(len(app.runtime.list_actions()), 1)
                 self.assertIsNone(app.runtime.blocked_reason)
                 _ = app.gateway.submit_text(task.task_id, "怎么了")

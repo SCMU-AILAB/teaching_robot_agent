@@ -33,14 +33,32 @@ class RobotReply:
     rejected: bool = False
 
 
+# 动作失败的说法按动作编号轮换，连续失败时不一字不差地重复
+BLOCKED_REPLIES = (
+    "前面有东西挡着，我过不去啦。要不我换个方向？",
+    "哎呀，前面被挡住了，我先停下。我们换条路走吧？",
+    "前面有东西，我不能再往前了。你想让我往哪边转？",
+)
+UNCLEAR_REPLIES = (
+    "前面我看不清，先停下来比较稳妥。换个方向试试？",
+    "我看不太清前面的路，就先不往前走了。",
+)
+FAILED_REPLIES = (
+    "刚才没做成，我先停下了。你再跟我说一次好吗？",
+    "这一下没成功，我先停住。换个说法告诉我吧？",
+)
+
+
 def failure_reply(record: ActionRecord) -> str:
     """动作失败时给孩子的说明；遇障停车说出原因."""
     failure = record.failure or ""
     marker = "ObstacleError:"
     if marker in failure:
         reason = failure.split(marker, 1)[1].split(";", 1)[0].strip()
-        return f"{reason}，换个方向试试吧。"
-    return f"动作未成功（{record.status.value}），已停下，可以换个说法再试。"
+        replies = UNCLEAR_REPLIES if "看不清" in reason else BLOCKED_REPLIES
+    else:
+        replies = FAILED_REPLIES
+    return replies[record.action_id % len(replies)]
 
 
 class RobotHost:

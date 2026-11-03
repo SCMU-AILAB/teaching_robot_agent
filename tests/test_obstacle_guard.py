@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 
+from agent.robot_host import BLOCKED_REPLIES
 from app.audio import build_simulated_audio
 from app.depth import exploration_from_env, guard_from_env
 from app.robot_application import RobotApplication
@@ -211,7 +212,7 @@ class GuardRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ):
                 _ = app.gateway.submit_text(task.task_id, "往前走一米")
                 reply = await app.process_next()
-            self.assertEqual(reply.text, "前方有障碍物，已停下，换个方向试试吧。")
+            self.assertIn(reply.text, BLOCKED_REPLIES)
             snapshot = await app.gateway.get_snapshot(task.task_id)
             spoken = [
                 a for a in snapshot.actions if a.raw_request.skill_name == "speak"

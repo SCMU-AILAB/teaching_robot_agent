@@ -173,7 +173,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         """四周 0.3 米都是障碍：原地转满一圈后结束，不前进."""
         self.world.points = tuple(ring(0.3))
         summary = await self.controller(max_duration_s=30).run()
-        self.assertTrue(summary.startswith("周围都走不通了"))
+        self.assertTrue(summary.startswith("这边都被挡住啦"))
         self.assertEqual(self.inner.moves, 0)
         self.assertAlmostEqual(abs(self.inner.pose.yaw), 2 * math.pi, delta=0.01)
 
@@ -222,7 +222,7 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(self.world, "latest", optimistic):
             summary = await self.controller(max_duration_s=30).run()
-        self.assertTrue(summary.startswith("前面总有东西挡着"))
+        self.assertTrue(summary.startswith("前面老有东西挡路"))
         snapshot = await self.gateway.get_snapshot(self.task_id)
         skills = [action.raw_request.skill_name for action in snapshot.actions]
         self.assertIn("turn_relative", skills)
@@ -289,11 +289,11 @@ class ExploreModel(BaseChatModel):
         """按最后一条消息与系统提示选择回复."""
         last = messages[-1]
         system = messages[0].text if isinstance(messages[0], SystemMessage) else ""
-        if "正在房间里探索" in system:
+        if "刚走到一处新地方" in system:
             reply = AIMessage("我好像看到了新东西。")
         elif isinstance(last, ToolMessage):
             reply = AIMessage("好的，我开始探索啦。")
-        elif "这个房间都有啥" in last.text:
+        elif "这个房间都有啥" in last.text and "宿主" not in last.text:
             reply = AIMessage(
                 "",
                 tool_calls=[
@@ -360,11 +360,27 @@ class HostExplorationTests(unittest.IsolatedAsyncioTestCase):
             await self.app.close()
 
     async def test_model_tool_starts_exploration(self) -> None:
-        """宿主没识别出的说法由模型调用探索工具启动."""
-        self.assertFalse(wants_exploration("我想看看这个房间都有啥"))
-        task_id = await self._start("我想看看这个房间都有啥")
+        """宿主没识别出、但要求走动的说法由模型调用探索工具启动."""
+        text = "带着我在屋里走一圈，看看这个房间都有啥"
+        self.assertFalse(wants_exploration(text))
+        task_id = await self._start(text)
         try:
             self.assertTrue(self.app.host.exploring(task_id))
+        finally:
+            await self.app.close()
+
+    async def test_look_question_does_not_explore(self) -> None:
+        """只问有什么、没要求走动：模型调用探索工具也不探索，车不动."""
+        await self.app.start()
+        try:
+            task = await self.app.create_task("探索")
+            with patch.object(ExploreModel, "bind_tools", return_value=self.model):
+                _ = self.app.gateway.submit_text(task.task_id, "我想看看这个房间都有啥")
+                reply = await self.app.process_next()
+            self.assertFalse(self.app.host.exploring(task.task_id))
+            self.assertNotIn("探索", reply.text)
+            await asyncio.sleep(0.2)
+            self.assertEqual((self.inner.pose.x, self.inner.pose.yaw), (0.0, 0.0))
         finally:
             await self.app.close()
 

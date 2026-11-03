@@ -53,8 +53,9 @@ class ToolAdapter:
         return self._explore is not None
 
     def start_exploration(self, plan: str) -> str:
-        """在房间里自由探索：孩子想让你四处转转、看看房间、去探索时调用.
+        """在房间里自由探索：只在孩子明确要你走起来、到处转转、去探索时调用.
 
+        孩子只是问周围、前面、这里有什么时不要调用，用 observe_scene 看一看就好。
         本条回答播完后在后台开始：边走边避障，离起点 3 米内、最多 5 分钟，发现新东西会停下讲一句；
         孩子说话会打断探索。调用后用一句话告诉孩子你要开始探索了。
 
