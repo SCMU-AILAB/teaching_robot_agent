@@ -56,6 +56,9 @@ abstract interface class ClassroomService {
     bool? proactive,
   });
 
+  /// 读取实时地图（合同 GET /map）；未配置深度相机时抛出 [ClassroomFailure]。
+  Future<MapSnapshot> loadMap();
+
   /// 断线后重新拉取快照并恢复事件流。
   Future<void> reconnect();
 

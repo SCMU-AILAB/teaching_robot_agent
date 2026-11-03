@@ -15,6 +15,7 @@ import 'widgets/activity_panel.dart';
 import 'widgets/conversation_panel.dart';
 import 'widgets/endpoint_dialog.dart';
 import 'widgets/field_error_box.dart';
+import 'widgets/map_panel.dart';
 import 'widgets/observation_panel.dart';
 import 'widgets/record_toggle_button.dart';
 import 'widgets/rolling_text.dart';
@@ -539,14 +540,26 @@ class _ClassroomPageState extends State<ClassroomPage> {
                 _composer(),
               ],
             );
-            final Widget observation = ObservationPanel(
-              state: state,
-              connection: _connectionView,
-              streamUrl: _controller.cameraStreamUrl(fps: 2),
-              snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 640),
-              onRefresh: state.taskStatus == 'running' && _controller.connected
-                  ? () => unawaited(_controller.refresh())
-                  : null,
+            final Widget observation = Column(
+              children: [
+                ObservationPanel(
+                  state: state,
+                  connection: _connectionView,
+                  streamUrl: _controller.cameraStreamUrl(fps: 2),
+                  snapshotUrl: _controller.cameraSnapshotUrl(maxWidth: 640),
+                  onRefresh:
+                      state.taskStatus == 'running' && _controller.connected
+                      ? () => unawaited(_controller.refresh())
+                      : null,
+                ),
+                const SizedBox(height: 28),
+                // 换地址会换控制器：按控制器重建，旧地址的轮询随之停止
+                MapPanel(
+                  key: ObjectKey(_controller),
+                  load: _controller.loadMap,
+                  connection: _connectionView,
+                ),
+              ],
             );
             return SingleChildScrollView(
               child: Center(

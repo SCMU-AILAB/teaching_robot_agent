@@ -538,6 +538,68 @@ void main() {
     expect((await next).taskStatus, 'completed');
   });
 
+  test('地图：解码格子与位姿，无深度相机与格式错误给出明确失败', () async {
+    Map<String, dynamic> body = <String, dynamic>{
+      'resolution_m': 0.05,
+      'origin_x': -0.5,
+      'origin_y': -0.25,
+      'width': 3,
+      'height': 2,
+      'cells': base64Encode(<int>[0, 1, 2, 2, 1, 0]),
+      'robot': <String, dynamic>{'x': 0.1, 'y': 0.0, 'yaw': 1.0},
+      'home': <String, dynamic>{'x': 0.0, 'y': 0.0, 'yaw': 0.0},
+      'updated_at': 1.0,
+    };
+    int status = 200;
+    String code = '0';
+    final DeviceClassroomService service = build(
+      MockClient((http.Request request) async {
+        expect(request.url.path, '/api/v1/map');
+        if (code != '0') {
+          return jsonResp(
+            '{"code":$code,"message":"未配置深度相机，没有地图","data":null}',
+            status,
+          );
+        }
+        return jsonResp(envelope(body));
+      }),
+    );
+    addTearDown(service.dispose);
+    final MapSnapshot map = await service.loadMap();
+    expect(map.cells, <int>[0, 1, 2, 2, 1, 0]);
+    expect((map.width, map.height, map.originX), (3, 2, -0.5));
+    expect(map.robot.yaw, 1.0);
+    expect(map.home?.x, 0.0);
+
+    body = <String, dynamic>{
+      ...body,
+      'cells': base64Encode(<int>[1, 2]),
+    };
+    await expectLater(
+      service.loadMap(),
+      throwsA(
+        isA<ClassroomFailure>().having(
+          (ClassroomFailure f) => f.message,
+          'message',
+          contains('格式'),
+        ),
+      ),
+    );
+
+    status = 503;
+    code = '50002';
+    await expectLater(
+      service.loadMap(),
+      throwsA(
+        isA<ClassroomFailure>().having(
+          (ClassroomFailure f) => f.message,
+          'message',
+          contains('深度相机'),
+        ),
+      ),
+    );
+  });
+
   test('录音开始与结束走合同的录音通道，空转写给出提示', () async {
     final List<String> calls = <String>[];
     final DeviceClassroomService service = build(

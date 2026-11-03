@@ -293,6 +293,9 @@ class ClassroomController extends ChangeNotifier {
 
   void disconnect() => _service.disconnect();
 
+  /// 读取实时地图；失败抛出 [ClassroomFailure]，由地图面板显示。
+  Future<MapSnapshot> loadMap() => _service.loadMap();
+
   /// 读取运行设置；失败抛出 [ClassroomFailure]，由设置面板显示。
   Future<RobotSettings> loadSettings() => _service.loadSettings();
 

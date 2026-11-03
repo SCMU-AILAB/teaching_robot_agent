@@ -700,6 +700,13 @@ class DeviceClassroomService implements ClassroomService {
   }
 
   @override
+  Future<MapSnapshot> loadMap() async {
+    final MapSnapshot? map = MapSnapshot.fromJson(await _get(ApiPaths.map));
+    if (map == null) throw const ClassroomFailure('地图响应格式不合法。');
+    return map;
+  }
+
+  @override
   Future<RobotSettings> loadSettings() async {
     final dynamic data = await _get(ApiPaths.settings);
     if (data is! Map<String, dynamic>) {

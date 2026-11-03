@@ -1,5 +1,6 @@
 // frontend/lib/features/classroom/mock_classroom_service.dart
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'classroom_service.dart';
 import 'session_model.dart';
@@ -321,6 +322,21 @@ class MockClassroomService implements ClassroomService {
     handsFreeAvailable: true,
     proactiveAvailable: true,
   );
+
+  /// 演示地图：3×2 格，含空地与障碍，机器人在原点。
+  @override
+  Future<MapSnapshot> loadMap() async {
+    _requireOnline();
+    return MapSnapshot(
+      resolutionM: 0.05,
+      originX: -0.05,
+      originY: -0.05,
+      width: 3,
+      height: 2,
+      cells: Uint8List.fromList(const [1, 1, 2, 0, 1, 2]),
+      robot: const MapPose(0, 0, 0),
+    );
+  }
 
   @override
   Future<RobotSettings> loadSettings() async {
