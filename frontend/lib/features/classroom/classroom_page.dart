@@ -558,6 +558,9 @@ class _ClassroomPageState extends State<ClassroomPage> {
                   key: ObjectKey(_controller),
                   load: _controller.loadMap,
                   connection: _connectionView,
+                  setHome: state.taskStatus == 'running'
+                      ? _controller.setHome
+                      : null,
                 ),
               ],
             );

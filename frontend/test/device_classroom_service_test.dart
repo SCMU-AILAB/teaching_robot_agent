@@ -600,6 +600,27 @@ void main() {
     );
   });
 
+  test('设为出发点：PUT /tasks/{id}/home，返回新出发点', () async {
+    http.Request? captured;
+    final DeviceClassroomService service = build(
+      device(
+        snapshotBody,
+        extra: (http.Request request) async {
+          if (request.method != 'PUT') return jsonResp('');
+          captured = request;
+          return jsonResp(
+            envelope(<String, dynamic>{'x': 0.5, 'y': -0.2, 'yaw': 1.0}),
+          );
+        },
+      ),
+    );
+    addTearDown(service.dispose);
+    await service.snapshot();
+    final MapPose home = await service.setHome();
+    expect(captured!.url.path, '/api/v1/tasks/1/home');
+    expect((home.x, home.y, home.yaw), (0.5, -0.2, 1.0));
+  });
+
   test('录音开始与结束走合同的录音通道，空转写给出提示', () async {
     final List<String> calls = <String>[];
     final DeviceClassroomService service = build(

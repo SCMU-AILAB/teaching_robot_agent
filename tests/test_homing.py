@@ -8,7 +8,13 @@ from unittest.mock import patch
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from agent.homing import ALREADY_HOME_REPLY, ARRIVED_REPLY, wants_return
+from agent.homing import (
+    ALREADY_HOME_REPLY,
+    ARRIVED_REPLY,
+    SET_HOME_REPLY,
+    wants_return,
+    wants_set_home,
+)
 from app.robot_application import RobotApplication
 from domain.models import ActionStatus
 from perception.simulated import SimulatedPerception
@@ -52,6 +58,30 @@ class WantsReturnTests(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertFalse(wants_return(text))
+
+
+class WantsSetHomeTests(unittest.TestCase):
+    """把这里设为出发点的说法；“以后回到这里”不能被当成叫它回来."""
+
+    def test_set_home_requests(self) -> None:
+        """常见说法."""
+        for text in (
+            "记住这里",
+            "你记住这儿",
+            "这里就是出发点",
+            "这儿是新的起点",
+            "把这里当出发点",
+            "这里设为起点",
+            "以后回到这里",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(wants_set_home(text))
+
+    def test_not_set_home(self) -> None:
+        """叫回来、普通对话都不是."""
+        for text in ("回来", "回到这里", "这里有什么", "出发吧"):
+            with self.subTest(text=text):
+                self.assertFalse(wants_set_home(text))
 
 
 class HomingTests(unittest.IsolatedAsyncioTestCase):
@@ -131,5 +161,29 @@ class HomingTests(unittest.IsolatedAsyncioTestCase):
             snapshot = await app.gateway.get_snapshot(task.task_id)
             self.assertIsNone(snapshot.blocked_reason)
             self.assertEqual(snapshot.task.status.value, "running")
+        finally:
+            await app.close()
+
+    async def test_reset_home_by_voice_then_return_there(self) -> None:
+        """走开后说“记住这里”，再走开叫回来：回到新出发点，不回最初的位置."""
+        app = self._app(SimulatedAdapter())
+        await app.start()
+        try:
+            task = await app.create_task("陪伴")
+            await self._move(app, task.task_id)
+            _ = app.gateway.submit_text(task.task_id, "记住这里")
+            reply = await app.process_next()
+            self.assertEqual(reply.text, SET_HOME_REPLY)
+            marked = (await app.gateway.get_snapshot(task.task_id)).robot.position
+            record = await app.gateway.submit_action(
+                task.task_id, "move_relative", {"distance_m": 0.8}, 10.0
+            )
+            _ = await app.gateway.wait_for_action(task.task_id, record.action_id)
+            _ = app.gateway.submit_text(task.task_id, "回来")
+            reply = await app.process_next()
+            self.assertEqual(reply.text, ARRIVED_REPLY)
+            pose = (await app.gateway.get_snapshot(task.task_id)).robot.position
+            self.assertLess(math.hypot(pose.x - marked.x, pose.y - marked.y), 0.15)
+            self.assertGreater(math.hypot(pose.x, pose.y), 0.5)
         finally:
             await app.close()

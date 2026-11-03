@@ -80,4 +80,42 @@ void main() {
     expect(calls, 0);
     expect(find.text('未连接服务器'), findsOneWidget);
   });
+
+  testWidgets('设为出发点：调用后显示结果；没有进行中的陪伴时按钮不可用', (WidgetTester tester) async {
+    int calls = 0;
+    await tester.pumpWidget(
+      host(
+        MapPanel(
+          load: () async => throw const ClassroomFailure('未配置深度相机，没有地图'),
+          connection: DeviceConnection.connected,
+          setHome: () async {
+            calls += 1;
+            return const MapPose(0.5, 0, 0);
+          },
+          interval: const Duration(hours: 1),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('map-set-home')));
+    await tester.pump();
+    await tester.pump();
+    expect(calls, 1);
+    expect(find.text('出发点已设为现在的位置。'), findsOneWidget);
+
+    await tester.pumpWidget(
+      host(
+        MapPanel(
+          load: () async => throw const ClassroomFailure('未配置深度相机，没有地图'),
+          connection: DeviceConnection.connected,
+          interval: const Duration(hours: 1),
+        ),
+      ),
+    );
+    final TextButton button = tester.widget<TextButton>(
+      find.byKey(const Key('map-set-home')),
+    );
+    expect(button.onPressed, isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

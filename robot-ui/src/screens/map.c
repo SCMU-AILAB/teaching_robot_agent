@@ -26,9 +26,15 @@ void map_render(App *app, Rectangle content) {
     ui_text(&app->theme, "还没看过", (Vector2){legend.x + 44, legend.y + 221}, 18, COLOR_TEXT);
     if (app->map.has_map) {
         (void)snprintf(value, sizeof(value), "每格 %.0f 厘米", app->map.resolution * 100.0f);
-        ui_text(&app->theme, value, (Vector2){legend.x + 18, legend.y + 270}, 16, COLOR_MUTED);
+        ui_text(&app->theme, value, (Vector2){legend.x + 18, legend.y + 258}, 16, COLOR_MUTED);
     }
-    ui_wrapped(&app->theme, "车停下时把看到的画上去；按轮子里程推算位置，走远了会有些偏。",
-               (Rectangle){legend.x + 18, legend.y + 304, legend.width - 36, 140}, 16, 25,
+    ui_wrapped(&app->theme, "按轮子里程推算位置，走远了会有些偏。说“记住这里”也能设出发点。",
+               (Rectangle){legend.x + 18, legend.y + 286, legend.width - 36, 90}, 15, 23,
                COLOR_MUTED);
+    if (ui_button((Rectangle){legend.x + 14, legend.y + legend.height - 74, legend.width - 28, 60},
+                  app->pending_home ? "设置中…" : "设为出发点",
+                  state_task_active(&app->state) && app->state.backend_connected &&
+                      !app->pending_home)) {
+        app_set_home(app);
+    }
 }

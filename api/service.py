@@ -252,6 +252,19 @@ class RobotApiService:
             "updated_at": time.time(),
         }
 
+    async def set_home(self, task_id: int) -> JsonObject:
+        """PUT /tasks/{task_id}/home：出发点改为车现在的位置，返回新出发点."""
+        _ = self._view(task_id)
+        if not self._app.host.homing_enabled:
+            raise ApiError(ErrorCode.UNAVAILABLE, "底盘不支持回到出发点")
+        if self._app.gateway.get_task(task_id).status not in _ACTIVE:
+            raise ApiError(ErrorCode.INVALID_STATE, "任务已结束或正在停止")
+        try:
+            home = await self._app.host.set_home(task_id)
+        except ValueError as error:
+            raise ApiError(ErrorCode.INVALID_STATE, "车正在动，停下后再设") from error
+        return {"x": home.x, "y": home.y, "yaw": home.yaw}
+
     def settings(self) -> JsonObject:
         """SettingsResponse."""
         settings = self._app.settings

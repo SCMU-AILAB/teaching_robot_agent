@@ -32,6 +32,7 @@ typedef struct App {
     bool pending_message;
     bool pending_task_update;
     bool pending_recording;
+    bool pending_home;
     bool snapshot_pending;
     bool evidence_pending;
     double evidence_retry_at;
@@ -61,6 +62,8 @@ void app_send_message(App *app);
 void app_toggle_recording(App *app);
 void app_cancel_task(App *app);
 void app_complete_task(App *app);
+/* 出发点改为车现在的位置（PUT /tasks/{id}/home） */
+void app_set_home(App *app);
 void app_request_snapshot(App *app);
 
 #endif

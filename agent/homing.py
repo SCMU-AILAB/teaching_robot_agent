@@ -18,6 +18,11 @@ _RETURN_REQUEST = re.compile(
     + r"|(?<![转看拿递搬扭翻掉])过来|到我这"
 )
 _NOT_REQUEST = re.compile(r"我回来|等我|回来了吗|什么时候回来|回来以后|回来后")
+# 把出发点改到车现在的位置；要先于“回来”判断：“以后回到这里”不是叫它现在回来
+_SET_HOME_REQUEST = re.compile(
+    r"记住这(里|儿)|这(里|儿)就?是(新的)?(出发点|起点)"
+    + r"|把?这(里|儿)(当|设为|作为|当作|当成)(新的)?(出发点|起点)|以后(就)?回到这(里|儿)"
+)
 # 离出发点这么近就算到了；里程计本身有误差，再近没有意义
 _ARRIVED_M = 0.15
 _HEADING_TOLERANCE_RAD = 0.1
@@ -28,7 +33,14 @@ _MAX_SEGMENTS = 16
 _PLAN_CLEARANCE_M = 0.2
 
 ARRIVED_REPLY = "我回来啦！"
+SET_HOME_REPLY = "好，我记住这里啦，以后叫我回来就回到这儿。"
+SET_HOME_MOVING_REPLY = "我还在动呢，等我停下再跟我说一次吧。"
 ALREADY_HOME_REPLY = "我就在出发的地方呀。"
+
+
+def wants_set_home(text: str) -> bool:
+    """孩子是否要把车现在的位置当作新的出发点."""
+    return _SET_HOME_REQUEST.search(text.strip()) is not None
 
 
 def wants_return(text: str) -> bool:

@@ -126,6 +126,17 @@ void app_send_message(App *app) {
     cJSON_Delete(body);
 }
 
+void app_set_home(App *app) {
+    char path[160];
+    if (app->pending_home || !state_task_active(&app->state)) {
+        return;
+    }
+    (void)snprintf(path, sizeof(path), "/api/v1/tasks/%lld/home",
+                   (long long)app->state.task.task_id);
+    app->pending_home = api_client_submit(app->api, API_HOME, API_PUT, path, "{}",
+                                          app->state.task.task_id, NULL);
+}
+
 void app_toggle_recording(App *app) {
     cJSON *body;
     char request_id[128];
@@ -252,10 +263,17 @@ static void handle_command(App *app, const ApiResponse *response) {
         case API_TASK_UPDATE: app->pending_task_update = false; break;
         case API_RECORDING_START:
         case API_RECORDING_UPDATE: app->pending_recording = false; break;
+        case API_HOME: app->pending_home = false; break;
         default: break;
     }
     if (!response_ok(response)) {
         app_notice(app, response->error[0] != '\0' ? response->error : "请求失败");
+        return;
+    }
+    if (response->kind == API_HOME) {
+        app_notice(app, "出发点已设为现在的位置");
+        /* 马上刷新地图，让新出发点显示出来 */
+        app->last_map_request = -100.0;
         return;
     }
     root = parse_envelope(response);

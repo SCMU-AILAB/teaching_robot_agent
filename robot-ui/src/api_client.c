@@ -187,6 +187,8 @@ static ApiResponse *perform_request(const ApiClient *client, const ApiRequest *r
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
     } else if (request->method == API_PATCH) {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
+    } else if (request->method == API_PUT) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
     }
     if (request->body != NULL) {
         headers = curl_slist_append(headers, "Content-Type: application/json");

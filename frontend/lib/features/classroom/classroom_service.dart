@@ -59,6 +59,9 @@ abstract interface class ClassroomService {
   /// 读取实时地图（合同 GET /map）；未配置深度相机时抛出 [ClassroomFailure]。
   Future<MapSnapshot> loadMap();
 
+  /// 把出发点改为车现在的位置（合同 PUT /tasks/{id}/home），返回新出发点。
+  Future<MapPose> setHome();
+
   /// 断线后重新拉取快照并恢复事件流。
   Future<void> reconnect();
 

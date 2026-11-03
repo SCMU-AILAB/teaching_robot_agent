@@ -339,6 +339,13 @@ class MockClassroomService implements ClassroomService {
   }
 
   @override
+  Future<MapPose> setHome() async {
+    _requireTask();
+    commands.add('set_home');
+    return const MapPose(0, 0, 0);
+  }
+
+  @override
   Future<RobotSettings> loadSettings() async {
     _requireOnline();
     return _settings;

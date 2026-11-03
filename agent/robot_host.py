@@ -9,7 +9,13 @@ from uuid import uuid4
 
 from agent.embodied_agent import AgentTurn
 from agent.exploration import EXPLORE_REPLY, ExplorationController, wants_exploration
-from agent.homing import Homing, wants_return
+from agent.homing import (
+    SET_HOME_MOVING_REPLY,
+    SET_HOME_REPLY,
+    Homing,
+    wants_return,
+    wants_set_home,
+)
 from agent.interfaces import DecisionAgent
 from app.team_gateway import TeamGateway, UserInput
 from domain.models import ActionRecord, ActionStatus, Pose2D, TaskState, TaskStatus
@@ -123,6 +129,31 @@ class RobotHost:
     def home(self, task_id: int) -> Pose2D | None:
         """任务的出发点；不支持回程或任务未登记时为 None."""
         return self._homes.get(task_id)
+
+    @property
+    def homing_enabled(self) -> bool:
+        """底盘是否支持回到出发点."""
+        return self._homing
+
+    async def set_home(self, task_id: int) -> Pose2D:
+        """把任务的出发点改为车现在的位置.
+
+        Raises:
+            ValueError: 不支持回程、任务未登记或车正在动。
+        """
+        if task_id not in self._homes:
+            raise ValueError("Task has no home")
+        robot = (await self._gateway.get_snapshot(task_id)).robot
+        if robot.is_moving:
+            raise ValueError("Robot is moving")
+        self._homes[task_id] = robot.position
+        logger.info(
+            "[RobotHost.set_home] 出发点已重置 task_id=%s x=%.2f y=%.2f",
+            task_id,
+            robot.position.x,
+            robot.position.y,
+        )
+        return robot.position
 
     def request_exploration(self, task_id: int) -> None:
         """模型调用探索工具时登记；本条回答结束后在后台开始.
@@ -406,6 +437,14 @@ class RobotHost:
             self._explore_requests.add(item.task_id)
             agent.record_exchange(item.text, EXPLORE_REPLY, moved=True)
             turn = AgentTurn(EXPLORE_REPLY)
+        elif item.task_id in self._homes and wants_set_home(item.text):
+            try:
+                _ = await self.set_home(item.task_id)
+                text = SET_HOME_REPLY
+            except ValueError:
+                text = SET_HOME_MOVING_REPLY
+            agent.record_exchange(item.text, text, moved=False)
+            return await self._say(item.task_id, text, [])
         elif item.task_id in self._homes and wants_return(item.text):
             # 回出发点要按里程计算转角和距离，模型算不准，也常只口头答应不动
             logger.info("[RobotHost._handle] 识别为回到出发点 task_id=%s", item.task_id)

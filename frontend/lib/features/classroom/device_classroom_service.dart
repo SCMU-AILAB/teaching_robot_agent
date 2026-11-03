@@ -127,6 +127,7 @@ class DeviceClassroomService implements ClassroomService {
     return _guard(switch (method) {
       'POST' => _client.post(_uri(path), headers: headers, body: encoded),
       'PATCH' => _client.patch(_uri(path), headers: headers, body: encoded),
+      'PUT' => _client.put(_uri(path), headers: headers, body: encoded),
       _ => throw ArgumentError('不支持的请求方法：$method'),
     });
   }
@@ -704,6 +705,16 @@ class DeviceClassroomService implements ClassroomService {
     final MapSnapshot? map = MapSnapshot.fromJson(await _get(ApiPaths.map));
     if (map == null) throw const ClassroomFailure('地图响应格式不合法。');
     return map;
+  }
+
+  @override
+  Future<MapPose> setHome() async {
+    final int taskId = _requireTask();
+    final MapPose? home = MapPose.fromJson(
+      await _sendJson('PUT', ApiPaths.home(taskId), <String, dynamic>{}),
+    );
+    if (home == null) throw const ClassroomFailure('出发点响应格式不合法。');
+    return home;
   }
 
   @override

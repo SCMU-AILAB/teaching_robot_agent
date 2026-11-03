@@ -24,6 +24,7 @@ abstract final class ApiPaths {
   static String task(int taskId) => '$tasks/$taskId';
 
   /// POST：发送文字消息.
+  static String home(int taskId) => '${task(taskId)}/home';
   static String messages(int taskId) => '${task(taskId)}/messages';
 
   /// POST：开始录音.

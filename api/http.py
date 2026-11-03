@@ -165,6 +165,11 @@ def build_http_app(
         status, data = await slot.require().update_task(task_id, body.status)
         return success(data, status)
 
+    @app.put(f"{PREFIX}/tasks/{{task_id}}/home")
+    async def set_home(task_id: TaskId) -> Response:
+        """把出发点改为车现在的位置."""
+        return success(await slot.require().set_home(task_id))
+
     @app.post(f"{PREFIX}/tasks/{{task_id}}/messages", status_code=202)
     async def post_message(task_id: TaskId, body: CreateMessageRequest) -> Response:
         """发送一句文字."""

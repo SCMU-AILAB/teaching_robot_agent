@@ -673,6 +673,33 @@ class MapApiTests(unittest.IsolatedAsyncioTestCase):
             reply = await call(h.http, "GET", "/api/v1/map")
             self.assertEqual(dig(reply.data, "home", "x"), 0.0)
 
+    async def test_set_home_moves_start_point(self) -> None:
+        """PUT home：出发点改为当前位置；任务不存在 40401，结束后 40010."""
+        async with harness() as h:
+            task_id = await h.create_task()
+            record = await h.robot.gateway.submit_action(
+                task_id, "move_relative", {"distance_m": 0.5}, 10.0
+            )
+            _ = await h.robot.gateway.wait_for_action(task_id, record.action_id)
+            reply = await call(h.http, "PUT", f"/api/v1/tasks/{task_id}/home")
+            self.assertEqual(reply.status, 200)
+            x = dig(reply.data, "x")
+            assert isinstance(x, float)
+            self.assertAlmostEqual(x, 0.5, delta=0.01)
+            home = h.robot.host.home(task_id)
+            assert home is not None
+            self.assertAlmostEqual(home.x, 0.5, delta=0.01)
+            reply = await call(h.http, "PUT", "/api/v1/tasks/99/home")
+            self.assertEqual((reply.status, reply.code), (404, 40401))
+            reply = await call(
+                h.http, "PATCH", f"/api/v1/tasks/{task_id}", {"status": "cancelling"}
+            )
+            await wait_until(
+                lambda: h.robot.gateway.get_task(task_id).status == TaskStatus.CANCELLED
+            )
+            reply = await call(h.http, "PUT", f"/api/v1/tasks/{task_id}/home")
+            self.assertEqual((reply.status, reply.code), (409, 40010))
+
 
 class SpeechApiTests(unittest.IsolatedAsyncioTestCase):
     """模拟语音：录音生成用户消息，回答通过 speak 动作播报."""

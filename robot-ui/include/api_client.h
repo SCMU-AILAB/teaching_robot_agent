@@ -8,7 +8,8 @@
 typedef enum ApiMethod {
     API_GET = 0,
     API_POST,
-    API_PATCH
+    API_PATCH,
+    API_PUT
 } ApiMethod;
 
 typedef enum ApiKind {
@@ -21,7 +22,8 @@ typedef enum ApiKind {
     API_RECORDING_UPDATE,
     API_CAMERA,
     API_EVIDENCE,
-    API_MAP
+    API_MAP,
+    API_HOME
 } ApiKind;
 
 typedef struct ApiResponse {

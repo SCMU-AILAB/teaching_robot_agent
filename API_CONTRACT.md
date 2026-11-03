@@ -1,4 +1,4 @@
-# 接口文档 v1.2
+# 接口文档 v1.3
 
 状态：**生效**。2026-10-23 项目负责人指示：仓库对外接口统一规范并最小化，以本文为唯一依据，前端按本文实现。本文取代 v0.1 草案与 `feature/speech-output-lifecycle` 分支上的 v0.2 草案；两者与本文冲突处一律以本文为准。
 
@@ -205,6 +205,14 @@ status：`recording`、`transcribing`、`completed`、`failed`、`cancelled`。�
 
 错误码：40001、40010、40401。
 
+### PUT /api/v1/tasks/{task_id}/home
+
+用途：把本任务的出发点改为车现在的位置；之后孩子叫“回来”就回到这里。无请求体，重复调用以最后一次为准。孩子说“记住这里”“这里就是出发点”也会重置。
+
+响应 200：`x:float`、`y:float`、`yaw:float`，新出发点（里程计坐标，同 MapResponse.robot）。
+
+错误码：40401（任务不存在）、40010（任务已结束或正在停止；车正在动）、50002（底盘不支持回到出发点）。
+
 ### POST /api/v1/tasks/{task_id}/messages
 
 用途：发送一句文字。
@@ -373,5 +381,6 @@ data: {"code":0,"message":"success","data":{"instance_id":"...","sequence":12,"t
 - 2026-10-20：v0.2 草案（设备状态、摄像头预览、会话快照），未批准。
 - 2026-10-23：v1.0 生效。按项目负责人指示统一规范并最小化仓库接口，合并 v0.1/v0.2，补充底盘串口协议、外部服务约定与部署形态。
 - 2026-11-01：v1.1，按项目负责人指示新增免按键对话、主动观察与场景提示词：新增 SettingsResponse 与 `GET/PATCH /api/v1/settings`；MessageResponse 的 `source` 新增 `proactive`（机器人主动说的话，`reply_to` 为 null）；SystemResponse.audio 新增 `listening`。原有接口与字段不变。
+- 2026-11-03：v1.3，按项目负责人指示新增 `PUT /api/v1/tasks/{task_id}/home`（出发点重置为当前位置）。原有接口与字段不变。
 - 2026-11-03：v1.2，按项目负责人指示新增实时地图：新增 MapResponse 与 `GET /api/v1/map`。原有接口与字段不变。
 - 2026-10-23：v1.0.1，HTTP/SSE 服务端实现（`api/`、`app/robot_server.py`）。只补充实现说明与歧义澄清，接口与字段无增删：后端启动方式；未定义查询参数忽略；缺少事件游标返回 40001；`stream.reset` 不占序号、不带 id 及 reason 取值；证据接口只公开观察画面；services 只反映配置；任务记录保留上限；录音到时自动进入识别。

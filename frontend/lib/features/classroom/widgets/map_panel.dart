@@ -24,6 +24,7 @@ class MapPanel extends StatefulWidget {
   const MapPanel({
     required this.load,
     required this.connection,
+    this.setHome,
     this.interval = const Duration(seconds: 1),
     super.key,
   });
@@ -34,6 +35,9 @@ class MapPanel extends StatefulWidget {
   final DeviceConnection connection;
 
   bool get connected => connection == DeviceConnection.connected;
+
+  /// 出发点改为车现在的位置；为空时按钮不可用（没有进行中的陪伴）。
+  final Future<MapPose> Function()? setHome;
   final Duration interval;
 
   @override
@@ -46,6 +50,10 @@ class _MapPanelState extends State<MapPanel> {
   String? _error;
   Timer? _timer;
   bool _loading = false;
+  bool _settingHome = false;
+
+  /// 设出发点的结果说明；成功或失败都短暂显示在地图下方。
+  String? _homeNote;
 
   @override
   void initState() {
@@ -133,6 +141,27 @@ class _MapPanelState extends State<MapPanel> {
     return done.future;
   }
 
+  Future<void> _setHome() async {
+    final Future<MapPose> Function()? setHome = widget.setHome;
+    if (setHome == null || _settingHome) return;
+    setState(() => _settingHome = true);
+    String note;
+    try {
+      await setHome();
+      note = '出发点已设为现在的位置。';
+    } on ClassroomFailure catch (failure) {
+      note = failure.message;
+    } catch (_) {
+      note = '没能设好出发点，请重试。';
+    }
+    if (!mounted) return;
+    setState(() {
+      _settingHome = false;
+      _homeNote = note;
+    });
+    _schedule(Duration.zero);
+  }
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,6 +177,16 @@ class _MapPanelState extends State<MapPanel> {
               '每格 ${(_map!.resolutionM * 100).round()} 厘米',
               style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
             ),
+          const SizedBox(width: 8),
+          TextButton.icon(
+            key: const Key('map-set-home'),
+            onPressed:
+                widget.setHome != null && widget.connected && !_settingHome
+                ? () => unawaited(_setHome())
+                : null,
+            icon: const Icon(Symbols.flag_rounded, size: 18),
+            label: const Text('设为出发点'),
+          ),
         ],
       ),
       const SizedBox(height: 8),
@@ -189,9 +228,18 @@ class _MapPanelState extends State<MapPanel> {
           _Legend(_unknownColor, '还没看过'),
         ],
       ),
+      if (_homeNote != null) ...[
+        const SizedBox(height: 6),
+        Text(
+          _homeNote!,
+          key: const Key('map-home-note'),
+          style: const TextStyle(fontSize: 12, color: _homeColor),
+        ),
+      ],
       const SizedBox(height: 6),
       const Text(
-        '车停下时把看到的画上去；按轮子里程推算位置，走远了会有些偏。',
+        '车停下时把看到的画上去；按轮子里程推算位置，走远了会有些偏。'
+        '孩子说“记住这里”也会把这里设为出发点。',
         style: TextStyle(fontSize: 12, color: Color(0xff73817b)),
       ),
     ],
