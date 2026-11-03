@@ -29,8 +29,17 @@ _HEADING_TOLERANCE_RAD = 0.1
 # 每段最多走这么远，走完重新读位置修正方向
 _SEGMENT_M = 1.0
 _MAX_SEGMENTS = 16
-# 规划时与已知障碍保持的距离：车宽一半加余量
-_PLAN_CLEARANCE_M = 0.2
+# 规划时与已知障碍保持的距离：避障通道半宽 0.2 米再加一格余量
+_PLAN_CLEARANCE_M = 0.3
+# 路上被拦停后最多绕几次；每次先等地图画进挡路的东西再重新规划
+_MAX_DETOURS = 4
+_MAP_SETTLE_S = 1.0
+# 重新规划后仍几乎正对原方向：先往侧前方斜走一小段，换个角度再规划
+_SIDESTEP_RAD = math.pi / 3
+_SIDESTEP_M = 0.4
+_SAME_HEADING_RAD = math.radians(20)
+# 卡住后孩子说这些就接着往回走
+_RETRY_REQUEST = re.compile(r"绕|换条路|换个路|再试|想办法|继续回|接着回")
 
 ARRIVED_REPLY = "我回来啦！"
 SET_HOME_REPLY = "好，我记住这里啦，以后叫我回来就回到这儿。"
@@ -41,6 +50,11 @@ ALREADY_HOME_REPLY = "我就在出发的地方呀。"
 def wants_set_home(text: str) -> bool:
     """孩子是否要把车现在的位置当作新的出发点."""
     return _SET_HOME_REQUEST.search(text.strip()) is not None
+
+
+def wants_retry(text: str) -> bool:
+    """回程卡住后，孩子是否在让它绕开接着回."""
+    return _RETRY_REQUEST.search(text.strip()) is not None
 
 
 def wants_return(text: str) -> bool:
@@ -78,6 +92,9 @@ class Homing:
         self._task_id: int = _task_id
         self._home: Pose2D = _home
         self._map: OccupancyMap | None = _map
+        self._last_blocked: bool = False
+        # 本次是否回到了出发点；卡住时宿主据此允许孩子说“绕开”接着回
+        self.arrived: bool = False
 
     async def run(self) -> str:
         """走回出发点并转回出发时的朝向，返回给孩子的话.
@@ -87,6 +104,7 @@ class Homing:
         """
         home = self._home
         moved = False
+        detours = 0
         # ========== Step1: 一段段走回出发点，每段后按新位置修正方向 ==========
         for _ in range(_MAX_SEGMENTS):
             pose = await self._pose()
@@ -103,7 +121,11 @@ class Homing:
             if not await self._act(
                 "move_relative", {"distance_m": min(leg, _SEGMENT_M)}
             ):
-                return self._stuck(remaining)
+                # 被避障拦停：画进地图后重新规划绕过去；其他失败或绕太多次就停下
+                if not self._last_blocked or detours >= _MAX_DETOURS:
+                    return self._stuck(remaining)
+                detours += 1
+                await self._detour(detours)
             moved = True
         else:
             pose = await self._pose()
@@ -117,7 +139,22 @@ class Homing:
             moved = True
             if not await self._act("turn_relative", {"angle_rad": facing}):
                 return "我回到出发的地方了，不过没能转回原来的方向。"
+        self.arrived = True
         return ARRIVED_REPLY if moved else ALREADY_HOME_REPLY
+
+    async def _detour(self, attempt: int) -> None:
+        """拦停后等地图更新；新路线仍正对挡路方向时，先斜着让开一小段."""
+        logger.info("[Homing._detour] 回程被挡，第 %s 次绕行", attempt)
+        await asyncio.sleep(_MAP_SETTLE_S)
+        pose = await self._pose()
+        target_x, target_y = self._next_point(pose)
+        bearing = _wrap(math.atan2(target_y - pose.y, target_x - pose.x) - pose.yaw)
+        if abs(bearing) > _SAME_HEADING_RAD:
+            return
+        # 左右轮流让开；让开的路上再被挡也没关系，下一轮按新位置规划
+        side = _SIDESTEP_RAD if attempt % 2 == 1 else -_SIDESTEP_RAD
+        if await self._act("turn_relative", {"angle_rad": side}):
+            _ = await self._act("move_relative", {"distance_m": _SIDESTEP_M})
 
     def _next_point(self, pose: Pose2D) -> tuple[float, float]:
         """下一个要走到的点：地图规划路径的第一个拐点，没有路径时直接是出发点."""
@@ -149,6 +186,7 @@ class Homing:
         except asyncio.CancelledError:
             await asyncio.shield(self._halt(record.action_id))
             raise
+        self._last_blocked = "ObstacleError" in (result.failure or "")
         if result.status == ActionStatus.SUCCEEDED:
             return True
         logger.info(

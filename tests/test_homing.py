@@ -1,6 +1,7 @@
 # tests/test_homing.py
 """回到出发点：识别叫回来的说法，按里程走回并转回原朝向，路上被挡如实说明."""
 
+import asyncio
 import math
 import unittest
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from robot.base import RobotAdapter
 from robot.obstacle_guard import GuardedRobotAdapter
 from robot.simulated import SimulatedAdapter
 from storage.evidence import EvidenceStore
+from tests.test_exploration import TrackedAdapter, World
 from tests.test_obstacle_guard import FakeDepth
 
 
@@ -187,3 +189,65 @@ class HomingTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(math.hypot(pose.x, pose.y), 0.5)
         finally:
             await app.close()
+
+    async def test_detours_around_wall_on_the_way_back(self) -> None:
+        """回去的路上有墙：被拦停后画进地图，重新规划绕过去回到出发点."""
+        inner = TrackedAdapter()
+        world = World(inner, ())
+        app = self._app(GuardedRobotAdapter(inner, world))
+        await app.start()
+        try:
+            task = await app.create_task("陪伴")
+            record = await app.gateway.submit_action(
+                task.task_id, "move_relative", {"distance_m": 2.0}, 10.0
+            )
+            result = await app.gateway.wait_for_action(task.task_id, record.action_id)
+            self.assertEqual(result.status, ActionStatus.SUCCEEDED)
+            # 出发点与车之间放一堵 0.8 米宽的墙：车回程第一段停在 x=1.0，
+            # 墙在它前方 0.4 米，下一段起步前的检查就会拦停（模拟底盘运动太快，
+            # 途中检查来不及，所以不把墙放在第一段路上）
+            world.points = tuple((0.6, -0.4 + 0.02 * i) for i in range(41))
+            _ = app.gateway.submit_text(task.task_id, "回来吧")
+            reply = await asyncio.wait_for(app.process_next(), 60)
+            self.assertEqual(reply.text, ARRIVED_REPLY)
+            pose = inner.pose
+            self.assertLess(math.hypot(pose.x, pose.y), 0.2)
+        finally:
+            await app.close()
+
+    async def test_retry_after_stuck(self) -> None:
+        """回程卡住后说“绕开”：接着往回走，不交给模型."""
+        inner = TrackedAdapter()
+        world = World(inner, ())
+        app = self._app(GuardedRobotAdapter(inner, world))
+        await app.start()
+        try:
+            task = await app.create_task("陪伴")
+            record = await app.gateway.submit_action(
+                task.task_id, "move_relative", {"distance_m": 1.5}, 10.0
+            )
+            _ = await app.gateway.wait_for_action(task.task_id, record.action_id)
+            # 四面都堵住：回不去
+            world.points = tuple(ring_around(inner.pose.x, inner.pose.y, 0.45))
+            _ = app.gateway.submit_text(task.task_id, "回来")
+            reply = await asyncio.wait_for(app.process_next(), 60)
+            self.assertIn("挡着", reply.text)
+            world.points = ()
+            with patch.object(FakeMessagesListChatModel, "bind_tools") as bind:
+                _ = app.gateway.submit_text(task.task_id, "你不能绕开吗")
+                reply = await asyncio.wait_for(app.process_next(), 60)
+                bind.assert_not_called()
+            self.assertEqual(reply.text, ARRIVED_REPLY)
+        finally:
+            await app.close()
+
+
+def ring_around(x: float, y: float, radius: float) -> list[tuple[float, float]]:
+    """围住 (x, y) 的一圈障碍点."""
+    return [
+        (
+            x + radius * math.cos(i * math.pi / 36),
+            y + radius * math.sin(i * math.pi / 36),
+        )
+        for i in range(72)
+    ]

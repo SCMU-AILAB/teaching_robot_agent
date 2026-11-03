@@ -13,6 +13,7 @@ from agent.homing import (
     SET_HOME_MOVING_REPLY,
     SET_HOME_REPLY,
     Homing,
+    wants_retry,
     wants_return,
     wants_set_home,
 )
@@ -114,6 +115,8 @@ class RobotHost:
         self._map: OccupancyMap | None = _map
         # 陪伴开始时的位姿：孩子叫“回来”就回到这里
         self._homes: dict[int, Pose2D] = {}
+        # 回程卡住的任务：下一句说“绕开”“再试”就接着往回走
+        self._homing_stuck: set[int] = set()
 
     async def start(self, task_id: int) -> RobotReply:
         """登记机器人任务，不创建课程或后台输入消费者."""
@@ -431,6 +434,9 @@ class RobotHost:
         """处理通用请求，动作完成后按最新快照续接模型."""
         # ========== Step2: 执行一次输入对应的有限动作链 ==========
         agent = self._agents[item.task_id]
+        if not wants_retry(item.text):
+            # 说了别的事，之前卡住的回程就不再接着
+            self._homing_stuck.discard(item.task_id)
         if self._exploration_factory is not None and wants_exploration(item.text):
             # 明确的探索请求不经模型：9B 模型常只口头答应而不调用探索工具
             logger.info("[RobotHost._handle] 识别为探索请求 task_id=%s", item.task_id)
@@ -445,12 +451,19 @@ class RobotHost:
                 text = SET_HOME_MOVING_REPLY
             agent.record_exchange(item.text, text, moved=False)
             return await self._say(item.task_id, text, [])
-        elif item.task_id in self._homes and wants_return(item.text):
+        elif item.task_id in self._homes and (
+            wants_return(item.text)
+            or (item.task_id in self._homing_stuck and wants_retry(item.text))
+        ):
             # 回出发点要按里程计算转角和距离，模型算不准，也常只口头答应不动
             logger.info("[RobotHost._handle] 识别为回到出发点 task_id=%s", item.task_id)
-            text = await Homing(
+            homing = Homing(
                 self._gateway, item.task_id, self._homes[item.task_id], self._map
-            ).run()
+            )
+            self._homing_stuck.discard(item.task_id)
+            text = await homing.run()
+            if not homing.arrived:
+                self._homing_stuck.add(item.task_id)
             agent.record_exchange(item.text, text, moved=True)
             return await self._say(item.task_id, text, [])
         else:

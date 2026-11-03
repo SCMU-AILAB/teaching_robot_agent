@@ -89,7 +89,24 @@ class World:
             return best
 
         headings = tuple((angle, clear(angle)) for angle in HEADINGS_RAD)
-        return Clearance(time.time(), clear(0.0), headings, 0.9)
+        return Clearance(time.time(), clear(0.0), headings, 0.9, self._scan(pose))
+
+    def _scan(self, pose: Pose2D) -> tuple[tuple[float, float, bool], ...]:
+        """建图扫描：视野 ±40° 分 32 个扇区，取扇区内最近的障碍点."""
+        half = math.radians(40)
+        width = 2 * half / 32
+        result: list[tuple[float, float, bool]] = []
+        for index in range(32):
+            low = -half + index * width
+            best = 4.0
+            for x, y in self.points:
+                dx, dy = x - pose.x, y - pose.y
+                bearing = math.atan2(dy, dx) - pose.yaw
+                bearing = math.atan2(math.sin(bearing), math.cos(bearing))
+                if low <= bearing < low + width:
+                    best = min(best, math.hypot(dx, dy))
+            result.append((low + width / 2, best, best < 4.0))
+        return tuple(result)
 
 
 def ring(radius: float) -> list[tuple[float, float]]:
