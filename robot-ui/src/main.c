@@ -8,7 +8,7 @@
 static void usage(const char *program) {
     (void)printf("用法：%s [--config PATH] [--backend URL] [--fullscreen] [--screen NAME]\n", program);
     (void)printf("           [--screenshot FILE] [--screenshot-delay SEC]\n");
-    (void)printf("页面：dashboard / assistant / vision / monitor；F11 全屏，F12 截图。\n默认显示待机表情，点击或触摸后进入界面；指定 --screen 时直接进入。\n");
+    (void)printf("页面：dashboard / assistant / vision / monitor / map；F11 全屏，F12 截图。\n默认显示待机表情，点击或触摸后进入界面；指定 --screen 时直接进入。\n");
 }
 
 int main(int argc, char **argv) {
@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
             else if (strcmp(name, "assistant") == 0) initial_screen = SCREEN_ASSISTANT;
             else if (strcmp(name, "vision") == 0) initial_screen = SCREEN_VISION;
             else if (strcmp(name, "monitor") == 0) initial_screen = SCREEN_MONITOR;
+            else if (strcmp(name, "map") == 0) initial_screen = SCREEN_MAP;
             else {
                 (void)fprintf(stderr, "未知页面：%s\n", name);
                 return 2;

@@ -20,7 +20,8 @@ typedef enum ApiKind {
     API_RECORDING_START,
     API_RECORDING_UPDATE,
     API_CAMERA,
-    API_EVIDENCE
+    API_EVIDENCE,
+    API_MAP
 } ApiKind;
 
 typedef struct ApiResponse {

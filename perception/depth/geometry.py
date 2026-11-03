@@ -163,8 +163,8 @@ def measure_clearance(
 
 
 # 建图扫描的扇区数与每个扇区判定为障碍所需的取样点数
-_SCAN_SECTORS = 16
-_SCAN_MIN_POINTS = 6
+_SCAN_SECTORS = 32
+_SCAN_MIN_POINTS = 4
 
 
 def _scan(

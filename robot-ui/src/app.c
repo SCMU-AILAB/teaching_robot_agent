@@ -2,6 +2,7 @@
 #include "face.h"
 #include "screens/assistant.h"
 #include "screens/dashboard.h"
+#include "screens/map.h"
 #include "screens/monitor.h"
 #include "screens/vision.h"
 #include "text.h"
@@ -283,6 +284,15 @@ static void process_responses(App *app) {
             handle_system(app, response);
         } else if (response->kind == API_SNAPSHOT) {
             handle_snapshot(app, response);
+        } else if (response->kind == API_MAP) {
+            if (response_ok(response)) {
+                cJSON *root = parse_envelope(response);
+                (void)map_view_accept(&app->map, cJSON_GetObjectItemCaseSensitive(root, "data"));
+                cJSON_Delete(root);
+            } else {
+                map_view_set_error(&app->map, response->error[0] != '\0' ? response->error
+                                                                         : "读不到地图");
+            }
         } else if (response->kind == API_CAMERA || response->kind == API_EVIDENCE) {
             if (response->kind == API_EVIDENCE) {
                 app->evidence_pending = false;
@@ -342,6 +352,11 @@ static void schedule_requests(App *app) {
         (void)api_client_submit(app->api, API_CAMERA, API_GET,
                                 "/api/v1/camera/snapshot?max_width=960", NULL, 0, NULL);
         app->last_camera_request = now;
+    }
+    if (!app->standby && app->state.backend_connected && app->router.current == SCREEN_MAP &&
+        now - app->last_map_request >= 1.0 && !api_client_busy(app->api, API_MAP)) {
+        (void)api_client_submit(app->api, API_MAP, API_GET, "/api/v1/map", NULL, 0, NULL);
+        app->last_map_request = now;
     }
     if (app->state.has_observation && app->state.observation.frame_evidence_id[0] != '\0' &&
         strcmp(app->camera.evidence_id, app->state.observation.frame_evidence_id) != 0 &&
@@ -476,8 +491,8 @@ static bool draw_nav_button(App *app, Rectangle bounds, const char *label, bool 
 }
 
 static void draw_bottom_nav(App *app) {
-    static const char *labels[] = {"总览", "对话", "视野", "监控"};
-    const float width = 232.0f;
+    static const char *labels[] = {"总览", "对话", "视野", "监控", "地图"};
+    const float width = 186.0f;
     const float gap = 12.0f;
     const float start = (UI_CANVAS_W - (width * SCREEN_COUNT + gap * (SCREEN_COUNT - 1))) * 0.5f;
     int index;
@@ -541,6 +556,7 @@ static void draw_frame(App *app) {
         case SCREEN_ASSISTANT: assistant_render(app, content); break;
         case SCREEN_VISION: vision_render(app, content); break;
         case SCREEN_MONITOR: monitor_render(app, content); break;
+        case SCREEN_MAP: map_render(app, content); break;
         default: break;
     }
     draw_bottom_nav(app);
@@ -580,6 +596,8 @@ bool app_init(App *app) {
     state_init(&app->state);
     router_init(&app->router);
     camera_init(&app->camera);
+    map_view_init(&app->map);
+    app->last_map_request = -100.0;
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         return false;
     }
@@ -651,6 +669,7 @@ void app_run(App *app) {
             if (IsKeyPressed(KEY_TWO)) app_switch_screen(app, SCREEN_ASSISTANT);
             if (IsKeyPressed(KEY_THREE)) app_switch_screen(app, SCREEN_VISION);
             if (IsKeyPressed(KEY_FOUR)) app_switch_screen(app, SCREEN_MONITOR);
+            if (IsKeyPressed(KEY_FIVE)) app_switch_screen(app, SCREEN_MAP);
             if (IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
         }
         if (IsKeyPressed(KEY_F12)) {
@@ -682,6 +701,7 @@ void app_close(App *app) {
     app->events = NULL;
     app->api = NULL;
     camera_unload(&app->camera);
+    map_view_unload(&app->map);
     if (IsWindowReady()) {
         theme_unload(&app->theme);
         CloseWindow();

@@ -40,7 +40,7 @@ class ScanTests(unittest.TestCase):
         geo = DepthGeometry(camera_height_m=0.2, camera_pitch_rad=math.radians(5))
         depth = render(geo, (Box((1.0, 1.3), (-0.3, 0.3), (0.0, 0.25)),))
         scan = measure_clearance(depth, 0.0, geo).scan
-        self.assertEqual(len(scan), 16)
+        self.assertEqual(len(scan), 32)
         center = [item for item in scan if abs(item[0]) < 0.1]
         self.assertTrue(center)
         for _, reach, hit in center:

@@ -108,3 +108,39 @@ void format_duration(double seconds, char output[32]) {
                        (int)seconds % 60);
     }
 }
+
+static int base64_value(char symbol) {
+    if (symbol >= 'A' && symbol <= 'Z') return symbol - 'A';
+    if (symbol >= 'a' && symbol <= 'z') return symbol - 'a' + 26;
+    if (symbol >= '0' && symbol <= '9') return symbol - '0' + 52;
+    if (symbol == '+') return 62;
+    if (symbol == '/') return 63;
+    return -1;
+}
+
+size_t base64_decode(const char *input, unsigned char *output, size_t capacity) {
+    size_t written = 0;
+    unsigned int buffer = 0;
+    int bits = 0;
+    const char *cursor;
+    for (cursor = input; *cursor != '\0'; cursor++) {
+        int value;
+        if (*cursor == '=') {
+            break;
+        }
+        value = base64_value(*cursor);
+        if (value < 0) {
+            return (size_t)-1;
+        }
+        buffer = (buffer << 6) | (unsigned int)value;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (written >= capacity) {
+                return (size_t)-1;
+            }
+            output[written++] = (unsigned char)((buffer >> bits) & 0xFFu);
+        }
+    }
+    return written;
+}

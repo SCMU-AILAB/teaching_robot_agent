@@ -5,6 +5,7 @@
 #include "camera.h"
 #include "config.h"
 #include "event_client.h"
+#include "map_view.h"
 #include "router.h"
 #include "state.h"
 #include "theme.h"
@@ -16,6 +17,8 @@ typedef struct App {
     ApiClient *api;
     EventClient *events;
     CameraView camera;
+    MapView map;
+    double last_map_request;
     UiState state;
     bool running;
     bool settings_open;

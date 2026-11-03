@@ -11,5 +11,7 @@ bool utf8_backspace(char *buffer);
 size_t utf8_length(const char *text);
 void format_time(double unix_seconds, char output[32]);
 void format_duration(double seconds, char output[32]);
+/* 解码标准 base64；返回字节数，输入非法或超出 capacity 时返回 (size_t)-1 */
+size_t base64_decode(const char *input, unsigned char *output, size_t capacity);
 
 #endif

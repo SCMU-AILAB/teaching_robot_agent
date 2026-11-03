@@ -68,7 +68,9 @@ add_executable(robot_ui
     src/screens/dashboard.c
     src/screens/assistant.c
     src/screens/vision.c
-    src/screens/monitor.c)
+    src/screens/monitor.c
+    src/screens/map.c
+    src/map_view.c)
 target_include_directories(robot_ui PRIVATE include)
 target_include_directories(robot_ui SYSTEM PRIVATE ${raygui_SOURCE_DIR}/src)
 target_link_libraries(robot_ui PRIVATE robot_ui_core raylib)

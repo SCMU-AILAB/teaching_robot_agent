@@ -6,6 +6,7 @@ typedef enum ScreenId {
     SCREEN_ASSISTANT,
     SCREEN_VISION,
     SCREEN_MONITOR,
+    SCREEN_MAP,
     SCREEN_COUNT
 } ScreenId;
 

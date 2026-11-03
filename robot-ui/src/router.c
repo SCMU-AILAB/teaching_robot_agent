@@ -23,6 +23,6 @@ void router_update(Router *router, double delta_seconds) {
 }
 
 const char *router_title(ScreenId screen) {
-    static const char *titles[] = {"总览", "对话", "视野", "监控"};
+    static const char *titles[] = {"总览", "对话", "视野", "监控", "地图"};
     return screen >= 0 && screen < SCREEN_COUNT ? titles[screen] : "";
 }

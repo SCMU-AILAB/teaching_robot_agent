@@ -64,7 +64,9 @@ struct ApiClient {
 };
 
 static int lane_for(ApiKind kind) {
-    return kind == API_CAMERA || kind == API_EVIDENCE ? API_LANE_MEDIA : API_LANE_CONTROL;
+    /* 画面与地图走媒体通道，慢了也不耽误停止等控制命令 */
+    return kind == API_CAMERA || kind == API_EVIDENCE || kind == API_MAP ? API_LANE_MEDIA
+                                                                         : API_LANE_CONTROL;
 }
 
 static void free_request(ApiRequest *request) {
