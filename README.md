@@ -46,6 +46,7 @@
 | 安全问答 | 每轮按孩子原话检索资料库；资料库没有就直说没有，不编造来源，不保证任何物品“安全” |
 | 移动讲解 | 麦克纳姆底盘相对前进、后退、转向；每次运动后强制重新观察再回答 |
 | 深度避障 | RealSense 深度计算车身通道内的空隙，前进中每 0.1 秒检查，不够就停车 |
+| 实时地图 | 车停稳时把深度扫描按里程计画成 5 厘米一格的平面地图（`GET /api/v1/map`，车载屏“地图”页）；孩子说“回来”时按地图绕开障碍走回陪伴出发点 |
 | 自由探索 | “去探索一下吧”：按空隙选方向一段段走，遇到资料库里有的物体就讲一句，最后总结 |
 | 主动观察 | 任务进行中且没人说话时定期观察，发现新的危险物品主动提醒 |
 | 场景提示词 | 负责人可设置机器人名字、孩子称呼、场景要求，不能覆盖安全规则 |
@@ -369,7 +370,7 @@ curl -s -o snap.jpg http://<Jetson>:8090/api/v1/camera/snapshot   # 画面正常
 
 ## HTTP API
 
-[`API_CONTRACT.md`](API_CONTRACT.md)（v1.1）是全部对外接口的唯一依据，前端路径常量在 `frontend/lib/core/constants/api_paths.dart`。接口变更须先改合同、经负责人确认再实现。运行中的后端提供交互文档 `/api/v1/docs`。
+[`API_CONTRACT.md`](API_CONTRACT.md)（v1.2）是全部对外接口的唯一依据，前端路径常量在 `frontend/lib/core/constants/api_paths.dart`。接口变更须先改合同、经负责人确认再实现。运行中的后端提供交互文档 `/api/v1/docs`。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -382,6 +383,7 @@ curl -s -o snap.jpg http://<Jetson>:8090/api/v1/camera/snapshot   # 画面正常
 | GET | `/api/v1/tasks/{id}/events` | SSE 事件流（消息、动作、观察、状态） |
 | GET | `/api/v1/camera/snapshot` | 摄像头单帧 |
 | GET | `/api/v1/evidence/{id}` | 观察事件中的画面 |
+| GET | `/api/v1/map` | 实时栅格地图、机器人位姿与出发点（需深度相机） |
 
 所有响应统一为 `{code, message, data}`，不返回堆栈。
 
