@@ -11,9 +11,9 @@ void ui_panel(Rectangle bounds, const char *title, const Theme *theme) {
     DrawRectangleRounded(bounds, 0.035f, 6, COLOR_PANEL);
     DrawRectangleRoundedLinesEx(bounds, 0.035f, 6, 1.0f, COLOR_BORDER);
     if (title != NULL && title[0] != '\0') {
-        ui_text(theme, title, (Vector2){bounds.x + 14, bounds.y + 11}, 17, COLOR_TEXT);
-        DrawLineEx((Vector2){bounds.x + 12, bounds.y + 42},
-                   (Vector2){bounds.x + bounds.width - 12, bounds.y + 42}, 1, COLOR_BORDER);
+        ui_text(theme, title, (Vector2){bounds.x + 14, bounds.y + 11}, 20, COLOR_TEXT);
+        DrawLineEx((Vector2){bounds.x + 12, bounds.y + 44},
+                   (Vector2){bounds.x + bounds.width - 12, bounds.y + 44}, 1, COLOR_BORDER);
     }
 }
 
@@ -109,14 +109,20 @@ void ui_badge(const Theme *theme, Rectangle bounds, const char *text, Color colo
     fill.a = 32;
     DrawRectangleRounded(bounds, 0.25f, 5, fill);
     DrawRectangleRoundedLinesEx(bounds, 0.25f, 5, 1, color);
-    ui_text(theme, text, (Vector2){bounds.x + 8, bounds.y + 4}, 12, COLOR_TEXT);
+    {
+        Vector2 size = MeasureTextEx(theme->body, text, 16, 0.5f);
+        ui_text(theme, text,
+                (Vector2){bounds.x + (bounds.width - size.x) * 0.5f,
+                          bounds.y + (bounds.height - size.y) * 0.5f},
+                16, COLOR_TEXT);
+    }
 }
 
 void ui_status_row(const Theme *theme, Rectangle bounds, const char *label,
                    const char *value, Color color) {
-    DrawCircle((int)(bounds.x + 7), (int)(bounds.y + 10), 4, color);
-    ui_text(theme, label, (Vector2){bounds.x + 18, bounds.y + 2}, 14, COLOR_MUTED);
-    ui_text(theme, value, (Vector2){bounds.x + bounds.width * 0.55f, bounds.y + 2}, 14, color);
+    DrawCircle((int)(bounds.x + 7), (int)(bounds.y + 12), 5, color);
+    ui_text(theme, label, (Vector2){bounds.x + 20, bounds.y + 2}, 18, COLOR_MUTED);
+    ui_text(theme, value, (Vector2){bounds.x + bounds.width * 0.5f, bounds.y + 2}, 18, color);
 }
 
 void ui_text_input(const Theme *theme, Rectangle bounds, char *text, size_t capacity,
@@ -141,29 +147,29 @@ void ui_text_input(const Theme *theme, Rectangle bounds, char *text, size_t capa
         const char *visible = text;
         float available = bounds.width - 24;
         char clipped[UI_INPUT_BUFFER_CAP];
-        if (MeasureTextEx(theme->body, text, 15, 0.5f).x <= available) {
-            ui_text(theme, text, (Vector2){bounds.x + 12, bounds.y + 15}, 15, COLOR_TEXT);
+        if (MeasureTextEx(theme->body, text, 18, 0.5f).x <= available) {
+            ui_text(theme, text, (Vector2){bounds.x + 12, bounds.y + 15}, 18, COLOR_TEXT);
         } else {
             while (*visible != '\0') {
                 int bytes = 0;
                 const char *next = visible;
                 (void)GetCodepointNext(next, &bytes);
                 next += bytes;
-                if (MeasureTextEx(theme->body, next, 15, 0.5f).x <= available) {
+                if (MeasureTextEx(theme->body, next, 18, 0.5f).x <= available) {
                     visible = next;
                 } else {
                     break;
                 }
             }
             text_copy(clipped, sizeof(clipped), visible);
-            ui_text(theme, clipped, (Vector2){bounds.x + 12, bounds.y + 15}, 15, COLOR_TEXT);
+            ui_text(theme, clipped, (Vector2){bounds.x + 12, bounds.y + 15}, 18, COLOR_TEXT);
         }
     } else {
         ui_text(theme, "输入要发送给机器人的文字…",
-                (Vector2){bounds.x + 12, bounds.y + 15}, 15, COLOR_MUTED);
+                (Vector2){bounds.x + 12, bounds.y + 15}, 18, COLOR_MUTED);
     }
     if (focused && ((int)(GetTime() * 2.0) % 2 == 0)) {
-        float width = MeasureTextEx(theme->body, text, 15, 0.5f).x;
+        float width = MeasureTextEx(theme->body, text, 18, 0.5f).x;
         float caret_x = bounds.x + 12 + width;
         if (caret_x > bounds.x + bounds.width - 12) {
             caret_x = bounds.x + bounds.width - 12;
@@ -186,8 +192,8 @@ Color ui_service_color(const char *status) {
 }
 
 const char *speech_phase_text(int phase) {
-    static const char *labels[] = {"Idle", "Recording", "Transcribing", "Processing", "Speaking", "Failed"};
-    return phase >= 0 && phase <= 5 ? labels[phase] : "Idle";
+    static const char *labels[] = {"等你说话", "正在听", "正在识别", "正在想", "正在说", "出错了"};
+    return phase >= 0 && phase <= 5 ? labels[phase] : labels[0];
 }
 
 Color speech_phase_color(int phase) {
@@ -198,4 +204,41 @@ Color speech_phase_color(int phase) {
         return COLOR_ACCENT;
     }
     return COLOR_MUTED;
+}
+
+const char *task_status_text(const char *status) {
+    if (strcmp(status, "pending") == 0 || strcmp(status, "running") == 0) return "进行中";
+    if (strcmp(status, "cancelling") == 0) return "正在停止";
+    if (strcmp(status, "completed") == 0) return "已完成";
+    if (strcmp(status, "cancelled") == 0) return "已停止";
+    if (strcmp(status, "failed") == 0) return "失败";
+    return status;
+}
+
+const char *action_status_text(const char *status) {
+    if (strcmp(status, "queued") == 0) return "排队";
+    if (strcmp(status, "running") == 0) return "执行中";
+    if (strcmp(status, "verifying") == 0) return "核对中";
+    if (strcmp(status, "cancelling") == 0) return "停止中";
+    if (strcmp(status, "succeeded") == 0) return "完成";
+    if (strcmp(status, "failed") == 0) return "失败";
+    if (strcmp(status, "cancelled") == 0) return "已取消";
+    if (strcmp(status, "timed_out") == 0) return "超时";
+    return status;
+}
+
+const char *skill_text(const char *skill) {
+    if (strcmp(skill, "move_relative") == 0) return "移动";
+    if (strcmp(skill, "turn_relative") == 0) return "转向";
+    if (strcmp(skill, "speak") == 0) return "说话";
+    if (strcmp(skill, "navigate_to") == 0) return "导航";
+    return skill;
+}
+
+const char *service_text(const char *status) {
+    if (status[0] == '\0') return "未知";
+    if (strcmp(status, "ready") == 0) return "就绪";
+    if (strcmp(status, "not_configured") == 0) return "未配置";
+    if (strcmp(status, "unavailable") == 0) return "不可用";
+    return status;
 }

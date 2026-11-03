@@ -5,6 +5,10 @@
 #include "config.h"
 
 /* 配色取自 OrinX 宣传片：近黑中性底色、橙色强调、冷白文字。 */
+/* 逻辑画布：车载屏实际为 1024×600，按此布局；其他尺寸的窗口等比缩放。 */
+#define UI_CANVAS_W 1024
+#define UI_CANVAS_H 600
+
 #define COLOR_BACKGROUND (Color){14, 14, 15, 255}
 #define COLOR_PANEL (Color){24, 24, 26, 255}
 #define COLOR_PANEL_ALT (Color){33, 33, 36, 255}

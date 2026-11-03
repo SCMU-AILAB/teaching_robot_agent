@@ -16,7 +16,8 @@ int main(int argc, char **argv) {
     const char *config_path = "config/default.json";
     char error[256];
     bool explicit_config = false;
-    ScreenId initial_screen = SCREEN_DASHBOARD;
+    /* 默认进入对话页：孩子和机器人互动的主页面 */
+    ScreenId initial_screen = SCREEN_ASSISTANT;
     bool screen_given = false;
     bool backend_given = false;
     int index;

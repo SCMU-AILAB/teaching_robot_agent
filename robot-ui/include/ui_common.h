@@ -20,5 +20,10 @@ void ui_text_input(const Theme *theme, Rectangle bounds, char *text, size_t capa
 Color ui_service_color(const char *status);
 const char *speech_phase_text(int phase);
 Color speech_phase_color(int phase);
+/* 合同状态与技能名的中文显示 */
+const char *task_status_text(const char *status);
+const char *action_status_text(const char *status);
+const char *skill_text(const char *skill);
+const char *service_text(const char *status);
 
 #endif

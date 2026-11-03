@@ -4,7 +4,7 @@
 #   1. 后台执行 robot.sh start：检查设备、设置音频、连 3080、启动后端（已在运行则跳过）；
 #   2. 立即全屏打开 robot-ui，后端就绪前界面显示离线，就绪后自动连上。
 # 关掉界面不会停后端；停止用 ./deploy/jetson/robot.sh stop。
-# 安装桌面图标：./deploy/jetson/robot_screen.sh install
+# 安装桌面图标并关闭息屏：./deploy/jetson/robot_screen.sh install
 
 set -u
 ROOT="$HOME/teaching_robot_agent"
@@ -25,6 +25,12 @@ Terminal=false
 Categories=Utility;
 EOF
     chmod +x "$entry" "$ROOT/deploy/jetson/robot_screen.sh"
+    gsettings set org.gnome.desktop.session idle-delay 0
+    gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
+    gsettings set org.gnome.desktop.screensaver lock-enabled false
+    gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type nothing
     # GNOME 桌面图标须标记为可信才能双击运行
     gio set "$entry" metadata::trusted true 2>/dev/null || true
     echo "已创建 $entry"
@@ -38,6 +44,8 @@ case "${1:-}" in
 esac
 
 mkdir -p "$(dirname "$LOG")"
+# 屏幕常亮：X 的屏保与省电每次登录会复原，启动时关掉；GNOME 的息屏与锁屏由 install 一次性关闭
+xset s off -dpms s noblank 2>/dev/null || true
 # 界面已开着就不再开第二个
 if pgrep -x robot_ui >/dev/null; then
     notify-send "机器人界面已在运行" 2>/dev/null || true

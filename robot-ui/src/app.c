@@ -5,6 +5,7 @@
 #include "screens/monitor.h"
 #include "screens/vision.h"
 #include "text.h"
+#include "touch.h"
 #include "ui_common.h"
 #include "cJSON.h"
 #include "raygui.h"
@@ -292,7 +293,7 @@ static void process_responses(App *app) {
                 }
             }
             if (response_ok(response)) {
-                (void)camera_accept(&app->camera, response, GetTime());
+                (void)camera_accept(&app->camera, response, (double)time(NULL));
             } else if (response->kind == API_CAMERA) {
                 text_copy(app->camera.error, sizeof(app->camera.error),
                           response->error[0] != '\0' ? response->error : "摄像头连接失败");
@@ -423,32 +424,36 @@ static void update_standby(App *app, bool touched) {
 
 /* 待机画面：只显示宣传片里的机器人表情，没有任何控件。 */
 static void draw_standby(const App *app) {
-    face_draw((Rectangle){240, 50, 800, 500}, state_speech_phase(&app->state),
+    face_draw((Rectangle){(UI_CANVAS_W - 800) * 0.5f, 50, 800, 500}, state_speech_phase(&app->state),
               app->state.backend_connected, GetTime(), false, app->standby_blend);
 }
 
 static void draw_top_bar(App *app) {
-    DrawRectangle(0, 0, 1280, 58, COLOR_PANEL);
-    DrawLine(0, 57, 1280, 57, COLOR_BORDER);
-    face_draw((Rectangle){14, 7, 64, 44}, state_speech_phase(&app->state),
+    /* 左上角的小脸和 ROBOT OS 字样是回到表情页的入口 */
+    Rectangle face_entry = {4, 2, 210, 56};
+    bool agent_ready = strcmp(app->state.system.agent, "ready") == 0;
+    DrawRectangle(0, 0, UI_CANVAS_W, 60, COLOR_PANEL);
+    DrawLine(0, 59, UI_CANVAS_W, 59, COLOR_BORDER);
+    face_draw((Rectangle){12, 8, 64, 44}, state_speech_phase(&app->state),
               app->state.backend_connected, GetTime(), true, 1.0f);
-    ui_text(&app->theme, "ROBOT OS", (Vector2){92, 16}, 23, COLOR_TEXT);
-    DrawRectangle(240, 21, 2, 16, COLOR_ACCENT);
-    ui_text(&app->theme, router_title(app->router.current), (Vector2){254, 19}, 16, COLOR_MUTED);
-    ui_badge(&app->theme, (Rectangle){590, 13, 158, 32},
-             app->state.system.robot_connected ? "ROBOT · ONLINE" : "ROBOT · OFFLINE",
-             app->state.system.robot_connected ? COLOR_SUCCESS : COLOR_ERROR);
-    ui_badge(&app->theme, (Rectangle){760, 13, 150, 32},
-             app->state.backend_connected ? "NETWORK · OK" : "NETWORK · LOST",
-             app->state.backend_connected ? COLOR_SUCCESS : COLOR_ERROR);
-    ui_badge(&app->theme, (Rectangle){922, 13, 168, 32},
-             strcmp(app->state.system.agent, "ready") == 0 ? "AI · READY" : "AI · NOT READY",
-             ui_service_color(app->state.system.agent));
-    if (ui_button((Rectangle){1110, 8, 86, 42}, app->settings_open ? "关闭" : "设置", true)) {
-        app->settings_open = !app->settings_open;
+    if (app->config.idle_timeout_s > 0.0 && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(app_mouse_position(app), face_entry)) {
+        app_set_standby(app, true);
     }
-    if (ui_button((Rectangle){1204, 8, 58, 42}, "全屏", true)) {
-        ToggleFullscreen();
+    ui_text(&app->theme, "ROBOT OS", (Vector2){88, 17}, 22, COLOR_TEXT);
+    DrawRectangle(220, 20, 2, 20, COLOR_ACCENT);
+    ui_text(&app->theme, router_title(app->router.current), (Vector2){234, 18}, 20, COLOR_TEXT);
+    ui_badge(&app->theme, (Rectangle){500, 12, 126, 36},
+             app->state.system.robot_connected ? "底盘 在线" : "底盘 离线",
+             app->state.system.robot_connected ? COLOR_SUCCESS : COLOR_ERROR);
+    ui_badge(&app->theme, (Rectangle){636, 12, 126, 36},
+             app->state.backend_connected ? "网络 正常" : "网络 断开",
+             app->state.backend_connected ? COLOR_SUCCESS : COLOR_ERROR);
+    ui_badge(&app->theme, (Rectangle){772, 12, 126, 36}, agent_ready ? "AI 就绪" : "AI 未就绪",
+             ui_service_color(app->state.system.agent));
+    /* 不放“全屏”按钮：触摸时误点会退出全屏；需要时在设置里切换 */
+    if (ui_button((Rectangle){910, 6, 104, 48}, app->settings_open ? "关闭" : "设置", true)) {
+        app->settings_open = !app->settings_open;
     }
 }
 
@@ -458,28 +463,28 @@ static bool draw_nav_button(App *app, Rectangle bounds, const char *label, bool 
     Color fill = active ? COLOR_ACCENT_DIM :
                  hovered ? COLOR_HOVER : COLOR_PANEL_ALT;
     Color border = active ? COLOR_ACCENT : COLOR_BORDER;
-    Color text = active ? COLOR_ACCENT : hovered ? COLOR_TEXT : COLOR_MUTED;
+    Color text = active ? COLOR_ACCENT : COLOR_TEXT;
     Vector2 size;
     DrawRectangleRounded(bounds, 0.15f, 5, fill);
-    DrawRectangleRoundedLinesEx(bounds, 0.15f, 5, active ? 1.5f : 1.0f, border);
-    size = MeasureTextEx(app->theme.body, label, 16, 0.5f);
+    DrawRectangleRoundedLinesEx(bounds, 0.15f, 5, active ? 2.0f : 1.0f, border);
+    size = MeasureTextEx(app->theme.body, label, 22, 0.5f);
     ui_text(&app->theme, label,
             (Vector2){bounds.x + (bounds.width - size.x) * 0.5f,
                       bounds.y + (bounds.height - size.y) * 0.5f},
-            16, text);
-    if (active) {
-        DrawRectangle((int)bounds.x + 24, 594, (int)bounds.width - 48, 3, COLOR_ACCENT);
-    }
+            22, text);
     return hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && !active;
 }
 
 static void draw_bottom_nav(App *app) {
-    static const char *labels[] = {"Dashboard", "Assistant", "Vision", "Monitor"};
+    static const char *labels[] = {"总览", "对话", "视野", "监控"};
+    const float width = 232.0f;
+    const float gap = 12.0f;
+    const float start = (UI_CANVAS_W - (width * SCREEN_COUNT + gap * (SCREEN_COUNT - 1))) * 0.5f;
     int index;
-    DrawRectangle(0, 540, 1280, 60, COLOR_PANEL);
-    DrawLine(0, 540, 1280, 540, COLOR_BORDER);
+    DrawRectangle(0, 532, UI_CANVAS_W, 68, COLOR_PANEL);
+    DrawLine(0, 532, UI_CANVAS_W, 532, COLOR_BORDER);
     for (index = 0; index < SCREEN_COUNT; index++) {
-        Rectangle bounds = {324.0f + index * 162.0f, 546, 150, 50};
+        Rectangle bounds = {start + index * (width + gap), 539, width, 56};
         if (draw_nav_button(app, bounds, labels[index], app->router.current == (ScreenId)index)) {
             app_switch_screen(app, (ScreenId)index);
         }
@@ -487,35 +492,37 @@ static void draw_bottom_nav(App *app) {
 }
 
 static void draw_settings(App *app) {
-    Rectangle bounds = {362, 142, 556, 300};
+    Rectangle bounds = {(UI_CANVAS_W - 640) * 0.5f, 120, 640, 340};
     char value[384];
     if (!app->settings_open) {
         return;
     }
-    DrawRectangle(0, 0, 1280, 600, (Color){0, 0, 0, 150});
+    DrawRectangle(0, 0, UI_CANVAS_W, UI_CANVAS_H, (Color){0, 0, 0, 150});
     ui_panel(bounds, "终端设置", &app->theme);
     (void)snprintf(value, sizeof(value), "后端：%s", app->config.base_url);
-    ui_wrapped(&app->theme, value, (Rectangle){382, 198, 516, 50}, 15, 23, COLOR_TEXT);
-    (void)snprintf(value, sizeof(value), "渲染：1280 × 600 · %d FPS · Camera %.1f fps",
-                   app->config.target_fps, app->config.camera_fps);
-    ui_text(&app->theme, value, (Vector2){382, 258}, 14, COLOR_MUTED);
-    ui_text(&app->theme, "快捷键：F11 全屏 · 1–4 切换页面", (Vector2){382, 292}, 14, COLOR_MUTED);
-    if (ui_button((Rectangle){382, 346, 236, 54}, "切换全屏模式", true)) {
+    ui_wrapped(&app->theme, value, (Rectangle){bounds.x + 22, bounds.y + 66, bounds.width - 44, 56},
+               18, 26, COLOR_TEXT);
+    (void)snprintf(value, sizeof(value), "画面：%d × %d · %d FPS · 摄像头 %.1f fps",
+                   UI_CANVAS_W, UI_CANVAS_H, app->config.target_fps, app->config.camera_fps);
+    ui_text(&app->theme, value, (Vector2){bounds.x + 22, bounds.y + 132}, 17, COLOR_MUTED);
+    ui_text(&app->theme, "点左上角的小脸回到表情页 · 键盘 F11 全屏、1–4 切页",
+            (Vector2){bounds.x + 22, bounds.y + 166}, 17, COLOR_MUTED);
+    if (ui_button((Rectangle){bounds.x + 22, bounds.y + 250, 288, 64}, "切换全屏", true)) {
         ToggleFullscreen();
     }
-    if (ui_button((Rectangle){634, 346, 244, 54}, "关闭设置", true)) {
+    if (ui_button((Rectangle){bounds.x + 330, bounds.y + 250, 288, 64}, "关闭设置", true)) {
         app->settings_open = false;
     }
 }
 
 static void draw_frame(App *app) {
-    float scale_x = (float)GetScreenWidth() / 1280.0f;
-    float scale_y = (float)GetScreenHeight() / 600.0f;
+    float scale_x = (float)GetScreenWidth() / (float)UI_CANVAS_W;
+    float scale_y = (float)GetScreenHeight() / (float)UI_CANVAS_H;
     float scale = scale_x < scale_y ? scale_x : scale_y;
-    Vector2 offset = {(GetScreenWidth() - 1280 * scale) * 0.5f,
-                      (GetScreenHeight() - 600 * scale) * 0.5f};
+    Vector2 offset = {(GetScreenWidth() - UI_CANVAS_W * scale) * 0.5f,
+                      (GetScreenHeight() - UI_CANVAS_H * scale) * 0.5f};
     Camera2D view = {.offset = offset, .target = {0, 0}, .rotation = 0, .zoom = scale};
-    Rectangle content = {16, 66, 1248, 466};
+    Rectangle content = {10, 68, UI_CANVAS_W - 20, 456};
     SetMouseScale(1.0f / scale, 1.0f / scale);
     SetMouseOffset(-(int)offset.x, -(int)offset.y);
     BeginDrawing();
@@ -538,19 +545,21 @@ static void draw_frame(App *app) {
     }
     draw_bottom_nav(app);
     if (app->notice[0] != '\0' && GetTime() < app->notice_until) {
-        Rectangle notice = {230, 488, 820, 42};
+        Rectangle notice = {(UI_CANVAS_W - 760) * 0.5f, 470, 760, 50};
         DrawRectangleRounded(notice, 0.15f, 5, COLOR_NOTICE_FILL);
         DrawRectangleRoundedLinesEx(notice, 0.15f, 5, 1, COLOR_WARNING);
-        ui_text(&app->theme, app->notice, (Vector2){246, 500}, 14, COLOR_TEXT);
+        ui_wrapped(&app->theme, app->notice,
+                   (Rectangle){notice.x + 16, notice.y + 12, notice.width - 32, 28}, 18, 26,
+                   COLOR_TEXT);
     }
     draw_settings(app);
     if (app->standby_blend > 0.0f) {
         /* 刚唤醒：待机黑场淡出，界面渐显。 */
-        DrawRectangle(0, 0, 1280, 600, Fade(COLOR_BACKGROUND, app->standby_blend));
+        DrawRectangle(0, 0, UI_CANVAS_W, UI_CANVAS_H, Fade(COLOR_BACKGROUND, app->standby_blend));
     }
     if (app->router.transition_remaining > 0.0) {
         unsigned char alpha = (unsigned char)fmin(160.0, app->router.transition_remaining / 0.18 * 160.0);
-        DrawRectangle(0, 58, 1280, 484, (Color){14, 14, 15, alpha});
+        DrawRectangle(0, 60, UI_CANVAS_W, 472, (Color){14, 14, 15, alpha});
     }
     EndMode2D();
     EndDrawing();
@@ -582,12 +591,13 @@ bool app_init(App *app) {
     }
     SetTargetFPS(app->config.target_fps);
     SetExitKey(KEY_NULL);
+    touch_install();
     if (app->config.fullscreen) {
         ToggleFullscreen();
     }
     theme_load(&app->theme, &app->config);
     GuiSetFont(app->theme.body);
-    GuiSetStyle(DEFAULT, TEXT_SIZE, 15);
+    GuiSetStyle(DEFAULT, TEXT_SIZE, 20);
     GuiSetStyle(BUTTON, BASE_COLOR_NORMAL, ColorToInt(COLOR_PANEL_ALT));
     GuiSetStyle(BUTTON, BASE_COLOR_FOCUSED, ColorToInt(COLOR_ACCENT_DIM));
     GuiSetStyle(BUTTON, BASE_COLOR_PRESSED, ColorToInt(COLOR_ACCENT_STRONG));
@@ -628,7 +638,10 @@ bool app_init(App *app) {
 
 void app_run(App *app) {
     while (app->running && !WindowShouldClose()) {
-        bool touched = user_touched();
+        bool touched;
+        touch_frame_begin();
+        touched = user_touched();
+        bool was_standby;
         router_update(&app->router, GetFrameTime());
         if (IsKeyPressed(KEY_F11)) {
             ToggleFullscreen();
@@ -648,9 +661,11 @@ void app_run(App *app) {
         process_events(app);
         schedule_requests(app);
         update_standby(app, touched);
+        was_standby = app->standby;
         draw_frame(app);
-        /* 唤醒放在绘制之后：触发唤醒的那次点击不会被刚出现的按钮接收。 */
-        if (app->standby && touched && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        /* 唤醒放在绘制之后：触发唤醒的那次点击不会被刚出现的按钮接收；
+         * 本帧刚点左上角小脸进入表情页的，不能被同一次点击立即唤醒。 */
+        if (was_standby && app->standby && touched && !IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             app_set_standby(app, false);
         }
         if (app->screenshot_path[0] != '\0' && GetTime() >= app->screenshot_after) {

@@ -63,6 +63,7 @@ add_executable(robot_ui
     src/face.c
     src/router.c
     src/theme.c
+    src/touch.c
     src/ui_common.c
     src/screens/dashboard.c
     src/screens/assistant.c

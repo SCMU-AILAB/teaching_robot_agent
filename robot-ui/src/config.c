@@ -15,7 +15,7 @@ static void set_error(char *error, unsigned long size, const char *message) {
 void config_defaults(AppConfig *config) {
     memset(config, 0, sizeof(*config));
     text_copy(config->base_url, sizeof(config->base_url), "http://127.0.0.1:8000");
-    config->window_width = 1280;
+    config->window_width = 1024;
     config->window_height = 600;
     config->target_fps = 30;
     config->camera_fps = 3.0;
