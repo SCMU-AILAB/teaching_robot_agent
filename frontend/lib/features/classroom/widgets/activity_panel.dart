@@ -5,7 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../session_model.dart';
 import 'status_label.dart';
 
-/// 只读呈现教学进度和动作反馈，不提供任意动作执行入口。
+/// 只读呈现陪伴进度和机器人动作，不提供任意动作执行入口。
 class ActivityPanel extends StatelessWidget {
   const ActivityPanel({required this.state, super.key});
   final SessionModel state;
@@ -14,21 +14,25 @@ class ActivityPanel extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text('课堂进度', style: Theme.of(context).textTheme.titleMedium),
+      Text('陪伴进度', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 16),
       Wrap(
         spacing: 20,
         runSpacing: 12,
         children: [
           for (final (int index, String title, bool active) step in [
-            (1, '场景观察', state.observed),
-            (2, '讲解与播报', state.messages.isNotEmpty),
+            (1, '看看周围', state.observed),
+            (
+              2,
+              '孩子提问',
+              state.messages.any((ClassMessage m) => m.role == 'student'),
+            ),
             (
               3,
-              '学生回答',
-              state.stage == 'awaiting_answer' ||
-                  state.messages.any((ClassMessage m) => m.role == 'student'),
+              '讲解与安全提醒',
+              state.messages.any((ClassMessage m) => m.role != 'student'),
             ),
+            (4, '移动讲解', state.actions.any((ClassAction a) => a.motion)),
           ])
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -57,7 +61,24 @@ class ActivityPanel extends StatelessWidget {
       const SizedBox(height: 10),
       Row(
         children: [
-          const Text('动作记录', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('机器人动作', style: TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(width: 12),
+          if (state.actions.any((ClassAction a) => a.moving))
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Symbols.directions_car_rounded,
+                  size: 16,
+                  color: Color(0xff147d64),
+                ),
+                SizedBox(width: 4),
+                Text(
+                  '车在移动',
+                  style: TextStyle(fontSize: 12, color: Color(0xff147d64)),
+                ),
+              ],
+            ),
           const Spacer(),
           Text(
             '${state.actions.length} 项',

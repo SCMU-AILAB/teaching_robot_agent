@@ -5,7 +5,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import '../../../core/constants/app_radius.dart';
 import 'rolling_text.dart';
 
-/// 「开始课堂 / 停止课堂」二合一按钮。
+/// 「开始陪伴 / 停止陪伴」二合一按钮。
 ///
 /// 同一个按钮按任务状态切换语义，颜色、图标与文案均做平滑过渡，
 /// 避免两个独立按钮并排出现或消失造成的视觉跳变。
@@ -120,7 +120,7 @@ class _TaskToggleButtonState extends State<TaskToggleButton>
     final bool startEnabled = !widget.active && widget.onStart != null;
     final bool stopEnabled = widget.active && !widget.cancelling;
     final bool enabled = startEnabled || stopEnabled;
-    // 只切换「开始 / 停止」两个动词字，尾部「课堂」保持静止。
+    // 只切换「开始 / 停止」两个动词字，尾部「陪伴」保持静止。
     final String verb = widget.active ? '停止' : '开始';
     // 形状与半径恒定，提到动画外只构造一次。
     final ShapeBorder shape = AppRadius.controlShape();
@@ -188,7 +188,7 @@ class _TaskToggleButtonState extends State<TaskToggleButton>
                           height: 14 * 1.45,
                           child: Center(
                             child: Text(
-                              '课堂',
+                              '陪伴',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,

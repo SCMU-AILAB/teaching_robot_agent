@@ -233,7 +233,8 @@ void main() {
       'student',
       'assistant',
     ]);
-    expect(state.actions.single.label, 'speak');
+    expect(state.actions.single.label, '说话');
+    expect(state.actions.single.motion, isFalse);
     expect(state.playback, 'completed');
   });
 
@@ -330,7 +331,8 @@ void main() {
       '那插座呢？',
       '插座里有电，不要用手碰。',
     ]);
-    expect(state.actions.last.label, 'move_relative');
+    expect(state.actions.last.label, '移动');
+    expect(state.actions.last.motion, isTrue);
   });
 
   test('被拒绝的消息补一条机器人说明并写入设备说明', () async {
@@ -441,6 +443,99 @@ void main() {
     final SessionModel state = await next;
     expect(state.messages.single.role, 'student');
     expect(state.stage, 'explaining');
+  });
+
+  test('主动提醒按 source=proactive 标记，普通回答不标记', () async {
+    final Map<String, dynamic> proactive = message(
+      'p-1',
+      'assistant',
+      '左边有剪刀，刀口很锋利，不要拿着跑。',
+    )..['source'] = 'proactive';
+    final DeviceClassroomService service = build(
+      device(
+        () => snapshotBody(
+          messages: <Map<String, dynamic>>[
+            message('u-1', 'user', '你好'),
+            message('r-1', 'assistant', '你好呀'),
+            proactive,
+          ],
+        ),
+      ),
+    );
+    addTearDown(service.dispose);
+    final SessionModel state = await service.snapshot();
+    expect(state.messages.map((ClassMessage m) => m.proactive).toList(), <bool>[
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  test('动作描述带距离、方向与失败原因', () {
+    Map<String, dynamic> with_(
+      String skill,
+      Map<String, dynamic> args, {
+      String? failure,
+    }) => action(1, skill, failure == null ? 'succeeded' : 'failed')
+      ..['args'] = args
+      ..['failure'] = failure;
+    expect(
+      DeviceClassroomService.actionLabel(
+        with_('move_relative', <String, dynamic>{'distance_m': 0.2}),
+      ),
+      '前进 20 厘米',
+    );
+    expect(
+      DeviceClassroomService.actionLabel(
+        with_('move_relative', <String, dynamic>{'distance_m': -0.3}),
+      ),
+      '后退 30 厘米',
+    );
+    expect(
+      DeviceClassroomService.actionLabel(
+        with_('turn_relative', <String, dynamic>{'angle_rad': 0.5236}),
+      ),
+      '左转 30°',
+    );
+    expect(
+      DeviceClassroomService.actionLabel(
+        with_('turn_relative', <String, dynamic>{
+          'angle_rad': -1.5708,
+        }, failure: '前方有障碍物'),
+      ),
+      '右转 90°：前方有障碍物',
+    );
+  });
+
+  test('确认完成提交 status=completed', () async {
+    http.Request? captured;
+    final DeviceClassroomService service = build(
+      device(
+        snapshotBody,
+        extra: (http.Request request) async {
+          if (request.method != 'PATCH') return jsonResp('');
+          captured = request;
+          return jsonResp(
+            envelope(<String, dynamic>{
+              'task_id': 1,
+              'status': 'completed',
+              'user_target': '认识桌面物体',
+              'created_at': 1.0,
+              'ended_at': 2.0,
+            }),
+          );
+        },
+      ),
+    );
+    addTearDown(service.dispose);
+    await service.snapshot();
+    final Future<SessionModel> next = service.events.first;
+    await service.finishTask();
+    expect(captured!.url.path, '/api/v1/tasks/1');
+    expect(jsonDecode(captured!.body), <String, dynamic>{
+      'status': 'completed',
+    });
+    expect((await next).taskStatus, 'completed');
   });
 
   test('录音开始与结束走合同的录音通道，空转写给出提示', () async {

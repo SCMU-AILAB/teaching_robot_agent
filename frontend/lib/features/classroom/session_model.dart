@@ -11,7 +11,7 @@ class SessionModel {
     this.stage = 'not_started',
     this.recording = 'idle',
     this.playback = 'idle',
-    this.observation = '等待课堂开始后观察桌面。',
+    this.observation = '开始陪伴后，机器人会看看周围。',
     this.observed = false,
     this.stale = false,
     this.messages = const [],
@@ -79,19 +79,30 @@ class SessionModel {
 }
 
 /// 对话消息使用独立编号，重复事件不会重复追加。
+///
+/// [role] 为 student（孩子）或 assistant（机器人）；[proactive] 表示机器人
+/// 主动说的话（合同 source=proactive：主动提醒、探索讲解与总结）。
 class ClassMessage {
-  const ClassMessage(this.id, this.role, this.text);
+  const ClassMessage(this.id, this.role, this.text, {this.proactive = false});
   final int id;
   final String role;
   final String text;
+  final bool proactive;
 }
 
-/// 页面只展示模拟动作，不拥有真实动作执行能力。
+/// 机器人动作的只读展示：label 为可读描述，status 为合同动作状态。
 class ClassAction {
-  const ClassAction(this.id, this.label, this.status);
+  const ClassAction(this.id, this.label, this.status, {this.motion = false});
   final int id;
   final String label;
   final String status;
+
+  /// 是否为车体运动（前进、后退、转向、导航）。
+  final bool motion;
+
+  /// 正在执行的运动：车在动。
+  bool get moving =>
+      motion && const ['queued', 'running', 'verifying'].contains(status);
 }
 
 enum DemoScenario {

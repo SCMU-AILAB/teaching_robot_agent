@@ -1,6 +1,7 @@
 // frontend/lib/features/classroom/device_classroom_service.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
@@ -29,7 +30,7 @@ class DeviceClassroomService implements ClassroomService {
 
   /// 两次重置间隔短于此值视为连续重置，需要退避。
   static const Duration _resetWindow = Duration(seconds: 10);
-  static const String _idleObservation = '机器人回答涉及现场物体时会先观察桌面。';
+  static const String _idleObservation = '机器人回答涉及身边物体时会先看一看。';
 
   final StreamController<SessionModel> _events = StreamController.broadcast();
   final StreamController<bool> _connections = StreamController.broadcast();
@@ -243,7 +244,7 @@ class DeviceClassroomService implements ClassroomService {
     _taskStatus = task['status']?.toString() ?? _taskStatus;
   }
 
-  /// MessageResponse：user 映射为学生消息，assistant 为机器人回答。
+  /// MessageResponse：user 映射为孩子的话，assistant 为机器人回答或主动提醒。
   ///
   /// 被拒绝的用户消息补一条机器人说明，页面据此结束“等待回答”。
   void _applyMessage(dynamic message) {
@@ -251,7 +252,12 @@ class DeviceClassroomService implements ClassroomService {
     final String? id = message['message_id']?.toString();
     if (id == null) return;
     final String role = message['role'] == 'user' ? 'student' : 'assistant';
-    _putMessage(id, role, message['text']?.toString() ?? '');
+    _putMessage(
+      id,
+      role,
+      message['text']?.toString() ?? '',
+      proactive: message['source'] == 'proactive',
+    );
     if (role != 'student') return;
     final String status = message['status']?.toString() ?? '';
     if (status == 'accepted' || status == 'processing') {
@@ -270,15 +276,15 @@ class DeviceClassroomService implements ClassroomService {
   }
 
   /// 按合同编号新增或更新消息，界面编号保持首次出现的顺序。
-  void _putMessage(String key, String role, String text) {
-    final int? existing = _messageIds[key];
-    if (existing != null) {
-      _messages[existing] = ClassMessage(existing, role, text);
-      return;
-    }
-    _messageSeq += 1;
-    _messageIds[key] = _messageSeq;
-    _messages[_messageSeq] = ClassMessage(_messageSeq, role, text);
+  void _putMessage(
+    String key,
+    String role,
+    String text, {
+    bool proactive = false,
+  }) {
+    final int id = _messageIds[key] ?? ++_messageSeq;
+    _messageIds[key] = id;
+    _messages[id] = ClassMessage(id, role, text, proactive: proactive);
   }
 
   void _applyAction(dynamic action) {
@@ -405,13 +411,42 @@ class DeviceClassroomService implements ClassroomService {
         for (final int id in actionIds)
           ClassAction(
             id,
-            _actions[id]!['skill_name']?.toString() ?? '动作',
+            actionLabel(_actions[id]!),
             _actions[id]!['status']?.toString() ?? '',
+            motion: _motionSkills.contains(_actions[id]!['skill_name']),
           ),
       ],
       recordingSeconds: _recordingSeconds,
       note: _note,
     );
+  }
+
+  static const Set<String> _motionSkills = <String>{
+    'move_relative',
+    'turn_relative',
+    'navigate_to',
+  };
+
+  /// ActionResponse 的可读描述：移动带距离、转向带角度，失败附原因。
+  static String actionLabel(Map<String, dynamic> action) {
+    final dynamic args = action['args'];
+    double? arg(String key) =>
+        args is Map<String, dynamic> ? (args[key] as num?)?.toDouble() : null;
+    final double? distance = arg('distance_m');
+    final double? angle = arg('angle_rad');
+    final String label = switch (action['skill_name']?.toString()) {
+      'move_relative' when distance != null =>
+        '${distance >= 0 ? '前进' : '后退'} ${(distance.abs() * 100).round()} 厘米',
+      'move_relative' => '移动',
+      'turn_relative' when angle != null =>
+        '${angle >= 0 ? '左转' : '右转'} ${(angle.abs() * 180 / math.pi).round()}°',
+      'turn_relative' => '转向',
+      'speak' => '说话',
+      'navigate_to' => '导航',
+      final String? other => other ?? '动作',
+    };
+    final String failure = action['failure']?.toString() ?? '';
+    return failure.isEmpty ? label : '$label：$failure';
   }
 
   void _emit() {
@@ -569,14 +604,11 @@ class DeviceClassroomService implements ClassroomService {
   /// [topicId] 为课堂演示保留，v1.0 不接受该字段，忽略。
   @override
   Future<void> createTask(String target, {String? topicId}) async {
-    final dynamic data = await _sendJson(
-      'POST',
-      ApiPaths.tasks,
-      <String, dynamic>{
-        'client_request_id': _clientRequestId('task'),
-        'user_target': target,
-      },
-    );
+    final dynamic data =
+        await _sendJson('POST', ApiPaths.tasks, <String, dynamic>{
+          'client_request_id': _clientRequestId('task'),
+          if (target.isNotEmpty) 'user_target': target,
+        });
     final int? taskId = data is Map<String, dynamic>
         ? (data['task_id'] as num?)?.toInt()
         : null;
@@ -656,6 +688,18 @@ class DeviceClassroomService implements ClassroomService {
   }
 
   @override
+  Future<void> finishTask() async {
+    final int taskId = _requireTask();
+    final dynamic data = await _sendJson(
+      'PATCH',
+      ApiPaths.task(taskId),
+      <String, dynamic>{'status': 'completed'},
+    );
+    _applyTask(data);
+    _emit();
+  }
+
+  @override
   Future<RobotSettings> loadSettings() async {
     final dynamic data = await _get(ApiPaths.settings);
     if (data is! Map<String, dynamic>) {
@@ -685,7 +729,7 @@ class DeviceClassroomService implements ClassroomService {
 
   /// v1.0 的观察由机器人发起：以一句提问请机器人重新看一看。
   @override
-  Future<void> refreshObservation({String question = '请看看现在桌上有什么。'}) =>
+  Future<void> refreshObservation({String question = '请看看周围有什么。'}) =>
       submitText(question);
 
   int _requireTask() {

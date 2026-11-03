@@ -25,9 +25,9 @@ import 'widgets/task_toggle_button.dart';
 
 /// 数据源装配：页面只接 Jetson 设备端真实数据，不再有模拟数据源。
 ///
+/// 家长或操作者在电脑上使用的陪伴控制台；小车屏幕另有板载界面（robot-ui）。
 /// 服务地址在运行时解析（[resolveDeviceBaseUrl]）：设置里保存的地址优先，
-/// 其次是构建期注入、页面同源、本机端口。Mac 端通过公网 IP 连 Jetson 时，
-/// 在页面右上角的「设备地址」里填写即可，不需要重新构建。
+/// 其次是构建期注入、页面同源、本机端口；换地址在右上角「设备地址」里填写。
 class ClassroomPage extends StatefulWidget {
   const ClassroomPage({this.controller, super.key});
   final ClassroomController? controller;
@@ -215,7 +215,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
           ),
           const SizedBox(width: 12),
           const Text(
-            '教学机器人',
+            '家庭陪伴机器人',
             style: TextStyle(fontWeight: FontWeight.w700, fontSize: 21),
           ),
           const SizedBox(width: 12),
@@ -228,8 +228,8 @@ class _ClassroomPageState extends State<ClassroomPage> {
             child: Text(
               // 任务编号来自设备端快照，未开始时只标明数据来源。
               _controller.state.taskId > 0
-                  ? '课堂 #${_controller.state.taskId}'
-                  : '设备课堂',
+                  ? '陪伴 #${_controller.state.taskId}'
+                  : '学习陪伴 · 安全教育',
               style: const TextStyle(fontSize: 11, color: Color(0xff147d64)),
             ),
           ),
@@ -311,8 +311,8 @@ class _ClassroomPageState extends State<ClassroomPage> {
       enabled: !state.active && _controller.connected,
       maxLength: 2000,
       decoration: const InputDecoration(
-        labelText: '课堂目标',
-        hintText: '输入本次课堂要完成的目标',
+        labelText: '今天的安排（可不填）',
+        hintText: '例如：在客厅认识家里的电器，讲讲用电安全',
         counterText: '',
       ),
       onSubmitted: (_) => unawaited(_controller.createTask(_target.text)),
@@ -327,12 +327,35 @@ class _ClassroomPageState extends State<ClassroomPage> {
           ? () => unawaited(_controller.stop())
           : null,
     );
-    // 课堂目标行错误框贴在目标输入下方，宽度跟随输入列。
+    // 确认完成只能由人来点：处理中或录音中设备端会拒绝并说明原因。
+    final Widget finish = OutlinedButton.icon(
+      key: const Key('task-finish'),
+      onPressed:
+          state.taskStatus == 'running' &&
+              _controller.connected &&
+              !_controller.busy &&
+              !_controller.awaitingReply
+          ? () => unawaited(_controller.finish())
+          : null,
+      icon: const Icon(Symbols.task_alt_rounded, size: 18),
+      label: const Text('确认完成'),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        shape: AppRadius.controlShape(),
+      ),
+    );
+    // 安排行错误框贴在输入下方，宽度跟随输入列。
     final Widget errorBox = _inlineError('task');
     return compact
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [target, errorBox, const SizedBox(height: 12), button],
+            children: [
+              target,
+              errorBox,
+              const SizedBox(height: 12),
+              button,
+              if (state.active) ...[const SizedBox(height: 8), finish],
+            ],
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -341,6 +364,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
                 children: [
                   Expanded(child: target),
                   const SizedBox(width: 16),
+                  if (state.active) ...[finish, const SizedBox(width: 12)],
                   button,
                 ],
               ),
@@ -348,6 +372,31 @@ class _ClassroomPageState extends State<ClassroomPage> {
             ],
           );
   }
+
+  /// 常用说法：点一下等于孩子说了这句，让观察、安全问答与移动讲解一眼可见。
+  static const List<(IconData, String)> _quickPrompts = [
+    (Symbols.visibility_rounded, '看看周围有什么'),
+    (Symbols.help_rounded, '这个东西能碰吗？'),
+    (Symbols.electrical_services_rounded, '讲讲用电安全'),
+    (Symbols.turn_left_rounded, '向左转一点'),
+    (Symbols.straight_rounded, '往前走二十厘米'),
+    (Symbols.explore_rounded, '去探索一下吧'),
+  ];
+
+  Widget _quickPromptBar(bool enabled) => Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: [
+      for (final (IconData icon, String text) in _quickPrompts)
+        ActionChip(
+          avatar: Icon(icon, size: 16, color: const Color(0xff147d64)),
+          label: Text(text, style: const TextStyle(fontSize: 13)),
+          onPressed: enabled
+              ? () => unawaited(_controller.submitText(text))
+              : null,
+        ),
+    ],
+  );
 
   Widget _composer() {
     final SessionModel state = _controller.state;
@@ -361,13 +410,15 @@ class _ClassroomPageState extends State<ClassroomPage> {
         state.taskStatus == 'running' &&
         _controller.connected &&
         !_controller.busy;
-    // 发送加载态：点击瞬间起转，老师回答事件到达即停。
+    // 发送加载态：点击瞬间起转，机器人回答事件到达即停。
     // 纯事件驱动（awaitingReply 由回答消息收口），接入真实推理后无需改动。
     final bool sending = _controller.awaitingReply;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
+        _quickPromptBar(available && !recording && !sending),
+        const SizedBox(height: 14),
         Row(
           children: [
             Expanded(
@@ -387,7 +438,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
                     maxLines: 4,
                     maxLength: 4000,
                     decoration: const InputDecoration(
-                      hintText: '输入你的发现或问题…',
+                      hintText: '替孩子输入一句话，或直接对机器人说…',
                       counterText: '',
                     ),
                     onSubmitted: (_) => unawaited(_send()),
@@ -516,7 +567,7 @@ class _ClassroomPageState extends State<ClassroomPage> {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             const Text(
-                              '一起观察，一起学习',
+                              '看一看、问一问、学安全',
                               style: TextStyle(
                                 fontSize: 26,
                                 fontWeight: FontWeight.w600,
@@ -557,7 +608,8 @@ class _ClassroomPageState extends State<ClassroomPage> {
                         ActivityPanel(state: state),
                         const Divider(height: 36),
                         const Text(
-                          '设备端实时数据 · 摄像头画面来自 Jetson 设备，教学回答仍为服务端模拟',
+                          '回答由本地大模型实时生成；安全提醒依据人工编写的资料库，'
+                          '不是现场风险检测，不能代替大人看护。',
                           style: TextStyle(
                             fontSize: 12,
                             color: Color(0xff73817b),

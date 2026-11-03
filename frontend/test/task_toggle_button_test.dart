@@ -33,7 +33,7 @@ void main() {
     // 动词逐字渲染，「课堂」保持完整且静止。
     expect(find.text('开'), findsOneWidget);
     expect(find.text('始'), findsOneWidget);
-    expect(find.text('课堂'), findsOneWidget);
+    expect(find.text('陪伴'), findsOneWidget);
     await tester.tap(find.byKey(const Key('task-toggle')));
     expect(starts, 1);
     expect(stops, 0);
@@ -44,7 +44,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 700));
     expect(find.text('停'), findsOneWidget);
     expect(find.text('止'), findsOneWidget);
-    expect(find.text('课堂'), findsOneWidget);
+    expect(find.text('陪伴'), findsOneWidget);
     await tester.tap(find.byKey(const Key('task-toggle')));
     expect(stops, 1);
   });

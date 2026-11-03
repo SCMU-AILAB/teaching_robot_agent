@@ -81,11 +81,11 @@ class _EndpointDialogState extends State<EndpointDialog> {
       );
       if (mounted) setState(() => _probe = summary);
     } on TimeoutException {
-      if (mounted) setState(() => _error = '连接超时（6 秒），检查公网 IP 与端口映射');
+      if (mounted) setState(() => _error = '连接超时（6 秒），确认电脑和机器人在同一个局域网');
     } on FormatException catch (failure) {
       if (mounted) setState(() => _error = '地址通了但不是设备服务：${failure.message}');
     } catch (_) {
-      if (mounted) setState(() => _error = '连接失败，检查地址、端口映射与设备是否在线');
+      if (mounted) setState(() => _error = '连接失败，检查地址、端口与机器人是否开机');
     } finally {
       if (mounted) setState(() => _probing = false);
     }
@@ -122,13 +122,13 @@ class _EndpointDialogState extends State<EndpointDialog> {
             autofocus: true,
             decoration: const InputDecoration(
               labelText: '服务地址',
-              hintText: 'http://<公网IP>:8090',
+              hintText: 'http://192.168.x.x:8090',
             ),
             onSubmitted: (_) => _save(),
           ),
           const SizedBox(height: 10),
           const Text(
-            'Mac 端通过公网 IP 连 Jetson 时填它的对外地址；内网调试填 192.168.x.x:8090。',
+            '填机器人（Jetson）的局域网地址，端口 8090。机器人接口只在局域网开放，不要映射到公网。',
             style: TextStyle(
               fontSize: 12,
               color: Color(0xff73817b),

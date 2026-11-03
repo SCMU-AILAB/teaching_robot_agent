@@ -93,6 +93,52 @@ void main() {
     expect(controller.connected, isTrue);
   });
 
+  testWidgets('快捷说法代替孩子提问，主动提醒单独标记，确认完成走完成入口', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1366, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final MockClassroomService service = MockClassroomService(
+      step: const Duration(milliseconds: 100),
+    );
+    final ClassroomController controller = ClassroomController(service);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: ClassroomPage(controller: controller)),
+    );
+    await tester.pump();
+    // 不填安排直接开始陪伴。
+    await tester.tap(find.byKey(const Key('task-toggle')));
+    await advance(tester);
+    await tester.ensureVisible(find.text('去探索一下吧'));
+    await tester.tap(find.text('去探索一下吧'));
+    await advance(tester);
+    expect(service.commands, contains('submit_text'));
+    expect(
+      controller.state.messages
+          .where((ClassMessage m) => m.role == 'student')
+          .map((ClassMessage m) => m.text),
+      contains('去探索一下吧'),
+    );
+    await tester.ensureVisible(find.byKey(const Key('task-finish')));
+    await tester.tap(find.byKey(const Key('task-finish')));
+    await advance(tester);
+    expect(service.commands, contains('finish_task'));
+    expect(controller.state.taskStatus, 'completed');
+    // 合同序号由数据源递增；这里模拟一条后到的主动提醒。
+    controller.applyEvent(
+      controller.state.copyWith(
+        sequence: controller.state.sequence + 1,
+        messages: <ClassMessage>[
+          ...controller.state.messages,
+          const ClassMessage(99, 'assistant', '左边有剪刀，要小心。', proactive: true),
+        ],
+      ),
+    );
+    await advance(tester);
+    expect(find.text('机器人 · 主动提醒'), findsOneWidget);
+  });
+
   testWidgets('页面录音按钮完成输入，文字请求失败保留草稿', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1366, 1000);
     tester.view.devicePixelRatio = 1;
@@ -548,15 +594,18 @@ void main() {
     service.dispose();
   });
 
-  testWidgets('课堂目标为空时本地拦截，不伪造创建请求', (WidgetTester tester) async {
+  testWidgets('不填安排也能开始陪伴，超长安排本地拦截', (WidgetTester tester) async {
     final MockClassroomService service = MockClassroomService();
     final ClassroomController controller = ClassroomController(service);
     addTearDown(controller.dispose);
-    expect(await controller.createTask('   '), isFalse);
+    expect(await controller.createTask('a' * 2001), isFalse);
     expect(controller.errorSource, 'task');
-    expect(controller.error, contains('课堂目标'));
-    expect(controller.state.taskStatus, 'idle');
     expect(service.commands, isEmpty);
+    expect(await controller.createTask('   '), isTrue);
+    expect(service.commands, <String>['create_task']);
+    expect(controller.state.target, ClassroomController.defaultTarget);
+    await tester.pump(const Duration(seconds: 5));
+    controller.disconnect();
     service.dispose();
   });
 

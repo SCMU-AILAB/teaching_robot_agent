@@ -293,9 +293,15 @@ class MockClassroomService implements ClassroomService {
   }
 
   @override
-  Future<void> refreshObservation({
-    String question = '请描述画面中的物体及其相对位置。',
-  }) async {
+  Future<void> finishTask() async {
+    _requireTask();
+    commands.add('finish_task');
+    _cancelTimers();
+    _emit(_state.copyWith(taskStatus: 'completed'));
+  }
+
+  @override
+  Future<void> refreshObservation({String question = '请看看周围有什么。'}) async {
     _requireTask();
     commands.add('refresh_observation');
     _emit(

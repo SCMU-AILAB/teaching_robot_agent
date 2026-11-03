@@ -44,12 +44,12 @@ class ObservationPanel extends StatelessWidget {
         children: [
           const Icon(Symbols.videocam_rounded, size: 21),
           const SizedBox(width: 9),
-          Text('观察视野', style: Theme.of(context).textTheme.titleMedium),
+          Text('机器人看到的', style: Theme.of(context).textTheme.titleMedium),
           if (_connected) ...[const SizedBox(width: 10), _sourceChip()],
           const Spacer(),
           IconButton(
             onPressed: onRefresh,
-            tooltip: '刷新观察',
+            tooltip: '让机器人再看看',
             icon: const Icon(Symbols.refresh_rounded, size: 20),
           ),
         ],
@@ -80,7 +80,7 @@ class ObservationPanel extends StatelessWidget {
       const SizedBox(height: 18),
       Row(
         children: [
-          const Text('场景观察', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text('看到的物体', style: TextStyle(fontWeight: FontWeight.w600)),
           const Spacer(),
           if (connection == DeviceConnection.disconnected)
             const Text(
@@ -89,7 +89,7 @@ class ObservationPanel extends StatelessWidget {
             )
           else if (_connected && state.observed)
             Text(
-              state.stale ? '观察已过期' : '设备观察',
+              state.stale ? '车动过了，需要重新看' : '最近一次观察',
               style: const TextStyle(fontSize: 12, color: Color(0xff73817b)),
             ),
         ],

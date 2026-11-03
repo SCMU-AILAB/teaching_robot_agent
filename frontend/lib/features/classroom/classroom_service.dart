@@ -13,7 +13,7 @@ abstract interface class ClassroomService {
   /// 初始化或断线重连时的任务快照（合同 GET /tasks/{id}）。
   Future<SessionModel> snapshot();
 
-  /// 创建教学任务（合同 POST /tasks）；topicId 省略由核心选择主题。
+  /// 创建陪伴任务（合同 POST /tasks）；topicId 为旧课堂演示保留。
   Future<void> createTask(String target, {String? topicId});
 
   /// 提交文字（合同 POST /tasks/{id}/messages）。
@@ -40,8 +40,11 @@ abstract interface class ClassroomService {
   /// 停止任务（合同 PATCH /tasks/{id}，status=cancelling）。
   Future<void> stopTask();
 
+  /// 确认完成（合同 PATCH /tasks/{id}，status=completed）；只能由用户确认。
+  Future<void> finishTask();
+
   /// 请机器人重新观察；v1.0 的观察由机器人发起，实现为一句提问。
-  Future<void> refreshObservation({String question = '请描述画面中的物体及其相对位置。'});
+  Future<void> refreshObservation({String question = '请看看周围有什么。'});
 
   /// 读取运行设置（合同 GET /settings）。
   Future<RobotSettings> loadSettings();

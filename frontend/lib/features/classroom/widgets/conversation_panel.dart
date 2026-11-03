@@ -12,9 +12,9 @@ import 'status_label.dart';
 
 /// 展示完整对话及独立播放状态，长文本可滚动阅读。
 ///
-/// 消息按 iMessage 布局：老师在左（主题绿），学生在右（iMessage 蓝）。
+/// 消息按 iMessage 布局：机器人在左（主题绿，主动提醒为琥珀色标记），孩子在右（iMessage 蓝）。
 /// 学生消息从输入框飞入；期间到达的回答先排队，飞入完成后再弹出，
-/// 保证「我的话先说完，老师再开口」的时序。
+/// 保证「孩子的话先说完，机器人再开口」的时序。
 class ConversationPanel extends StatefulWidget {
   const ConversationPanel({
     required this.state,
@@ -35,6 +35,9 @@ class ConversationPanel extends StatefulWidget {
 }
 
 class _ConversationPanelState extends State<ConversationPanel> {
+  /// 主动提醒的标记色：与普通回答区分，提示这是机器人自己发现的。
+  static const Color _proactiveColor = Color(0xffb26a00);
+
   final ScrollController _scroll = ScrollController();
 
   /// 输入框内容宽（打字时的文字排版宽度）；学生气泡与飞行幽灵共用同一约束。
@@ -170,7 +173,7 @@ class _ConversationPanelState extends State<ConversationPanel> {
           children: [
             const Icon(Symbols.forum_rounded, size: 20),
             const SizedBox(width: 9),
-            Text('课堂对话', style: Theme.of(context).textTheme.titleMedium),
+            Text('对话', style: Theme.of(context).textTheme.titleMedium),
             const Spacer(),
             StatusLabel(widget.state.stage),
           ],
@@ -190,7 +193,7 @@ class _ConversationPanelState extends State<ConversationPanel> {
                       ),
                       SizedBox(height: 16),
                       Text(
-                        '准备好，一起探索吧',
+                        '和机器人聊聊身边的东西',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
@@ -198,7 +201,8 @@ class _ConversationPanelState extends State<ConversationPanel> {
                       ),
                       SizedBox(height: 5),
                       Text(
-                        '开始课堂后，这里会显示老师的回答。',
+                        '开始陪伴后，孩子可以直接开口问；机器人发现危险物品也会主动提醒。',
+                        textAlign: TextAlign.center,
                         style: TextStyle(color: Color(0xff75808a)),
                       ),
                     ],
@@ -222,10 +226,19 @@ class _ConversationPanelState extends State<ConversationPanel> {
                           : CrossAxisAlignment.start,
                       children: [
                         Text(
-                          student ? '你' : '机器人老师',
-                          style: const TextStyle(
+                          student
+                              ? '孩子'
+                              : message.proactive
+                              ? '机器人 · 主动提醒'
+                              : '机器人',
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xff748079),
+                            color: message.proactive
+                                ? _proactiveColor
+                                : const Color(0xff748079),
+                            fontWeight: message.proactive
+                                ? FontWeight.w600
+                                : FontWeight.w400,
                           ),
                         ),
                         const SizedBox(height: 5),
@@ -253,13 +266,19 @@ class _ConversationPanelState extends State<ConversationPanel> {
                             : MainAxisAlignment.start,
                         children: [
                           if (!student) ...[
-                            const CircleAvatar(
+                            CircleAvatar(
                               radius: 16,
-                              backgroundColor: Color(0xffe5f2ec),
+                              backgroundColor: message.proactive
+                                  ? const Color(0xfffcefd9)
+                                  : const Color(0xffe5f2ec),
                               child: Icon(
-                                Symbols.smart_toy_rounded,
+                                message.proactive
+                                    ? Symbols.warning_rounded
+                                    : Symbols.smart_toy_rounded,
                                 size: 18,
-                                color: Color(0xff147d64),
+                                color: message.proactive
+                                    ? _proactiveColor
+                                    : const Color(0xff147d64),
                                 fill: 1,
                               ),
                             ),
@@ -279,7 +298,7 @@ class _ConversationPanelState extends State<ConversationPanel> {
                                     onComplete: _release,
                                     child: block,
                                   )
-                                // 老师回答：浮入 + 整块弹两下，仅首次插入播放。
+                                // 机器人回答：浮入 + 整块弹两下，仅首次插入播放。
                                 : BubbleArriveTransition(
                                     key: ValueKey('arrive-${message.id}'),
                                     play: play,

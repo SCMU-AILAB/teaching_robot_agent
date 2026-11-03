@@ -31,13 +31,13 @@ class ClassroomController extends ChangeNotifier {
   bool busy = false;
   String? error;
 
-  /// 发送后等待老师回答的加载态：点击发送即置位，收到老师消息事件才清除。
+  /// 发送后等待机器人回答的加载态：点击发送即置位，收到机器人消息事件才清除。
   ///
   /// 完全事件驱动、不含任何写死时长——后期接入真实推理时，回答以事件
   /// 形式经 [applyEvent] 到达，置位/清除时机无需改动。
   bool awaitingReply = false;
 
-  /// 本次等待的基线消息 id：只有 id 更大的老师消息才算本次回复。
+  /// 本次等待的基线消息 id：只有 id 更大的机器人消息才算本次回复。
   int _replyFloorId = 0;
 
   /// 错误归属的控件：task / message / record / send / connection。
@@ -94,22 +94,25 @@ class ClassroomController extends ChangeNotifier {
     _notify();
   }
 
-  /// 「等待老师回答」加载态的事件收口——文字与录音共用，纯事件驱动。
+  /// 「等待机器人回答」加载态的事件收口——文字与录音共用，纯事件驱动。
   ///
-  /// - 老师回答（id 大于基线的非学生消息）到达 → 结束加载；
+  /// - 机器人回答（id 大于基线的非学生消息）到达 → 结束加载；
   /// - 录音链启动（transcribing）→ 与文字点击同效，立即进入加载；
   /// - 转写收口（failed/completed）→ 若无在途学生提问则不会再有回答，
   ///   微任务复查后收口（成功链的学生消息紧随 completed 到达，复查可保住）。
   void _settleReply(SessionModel model) {
     if (model.recording == 'transcribing') {
       // 录音转写即「提交」：立即进入加载，与文字发送的点击瞬时反馈一致。
-      // 必须先臂载并抬高基线，否则旧的老师消息会被误判为「回答到达」。
+      // 必须先臂载并抬高基线，否则旧的机器人消息会被误判为「回答到达」。
       _replyFloorId = _maxMessageId();
       awaitingReply = true;
       return;
     }
     for (final ClassMessage message in model.messages) {
-      if (message.role != 'student' && message.id > _replyFloorId) {
+      // 主动提醒不是对这句话的回答，不能结束等待。
+      if (message.role != 'student' &&
+          !message.proactive &&
+          message.id > _replyFloorId) {
         awaitingReply = false;
         return;
       }
@@ -184,15 +187,21 @@ class ClassroomController extends ChangeNotifier {
     _acceptSnapshot(await _service.snapshot());
   }, source: 'connection');
 
-  /// 创建课堂：目标为空或超长时本地拦截，不发无效请求。
+  /// 未填写今天的安排时使用的任务目标。
+  static const String defaultTarget = '家庭学习陪伴与安全教育';
+
+  /// 开始陪伴：安排可不填；超长时本地拦截，不发无效请求。
   Future<bool> createTask(String target) {
     final String trimmed = target.trim();
-    if (trimmed.isEmpty || trimmed.length > 2000) {
-      _fail('请输入 1–2000 字的课堂目标。', 'task');
+    if (trimmed.length > 2000) {
+      _fail('今天的安排最多 2000 字。', 'task');
       _notify();
       return Future<bool>.value(false);
     }
-    return _run(() => _service.createTask(trimmed), source: 'task');
+    return _run(
+      () => _service.createTask(trimmed.isEmpty ? defaultTarget : trimmed),
+      source: 'task',
+    );
   }
 
   /// 页面可见连接状态，连接结果未回来前为 [DeviceConnection.connecting]。
@@ -209,7 +218,7 @@ class ClassroomController extends ChangeNotifier {
   Uri? cameraSnapshotUrl({int? maxWidth}) =>
       _service.cameraSnapshotUrl(maxWidth: maxWidth);
 
-  /// 发送文字：点击瞬间进入加载态，直到老师回答事件到达或失败才结束。
+  /// 发送文字：点击瞬间进入加载态，直到机器人回答事件到达或失败才结束。
   Future<bool> submitText(String text) async {
     if (_disposed || busy || awaitingReply) return false;
     // 校验先行：无效输入不进入加载态，箭头不会空转。
@@ -264,6 +273,9 @@ class ClassroomController extends ChangeNotifier {
     }
     _notify();
   }
+
+  /// 确认完成：只由用户确认；处理中或录音中由设备端拒绝并说明原因。
+  Future<bool> finish() => _run(() => _service.finishTask(), source: 'task');
 
   Future<bool> reconnect() => _run(() async {
     await _service.reconnect();
