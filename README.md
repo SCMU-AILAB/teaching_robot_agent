@@ -310,7 +310,7 @@ SSH 密钥同上一节第 ② 步。之后用一键脚本：
 | 前端 | 运行 | 说明 |
 | --- | --- | --- |
 | Flutter 操作终端 | `cd frontend && flutter pub get && flutter run -d macos`（或 `flutter build web`） | 对话、摄像头、动作记录、机器人设置；设备地址在应用内设置，见 [frontend/README.md](frontend/README.md) |
-| 板载触摸屏 | `cd robot-ui && cmake -S . -B build && cmake --build build && ./build/robot_ui --backend http://127.0.0.1:8090` | Jetson 1280×600 屏，见 [robot-ui/README.md](robot-ui/README.md) |
+| 板载触摸屏 | 构建：`robot-ui/scripts/build_jetson.sh`；装桌面图标：`deploy/jetson/robot_screen.sh install`，之后双击桌面「机器人界面」即启动后端并全屏显示 | 车载屏，见 [robot-ui/README.md](robot-ui/README.md) |
 
 Web 版后端没有跨源响应头，须与后端同源托管。
 
